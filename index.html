@@ -471,9 +471,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     'REGISTERED ADDRESS':'registered_address', 'ZIP CODE':'zip_code', 'TAX TYPE':'tax_type',
     FORMS:'forms', 'TRADE NAME':'trade_name', 'LINE OF BUSINESS / INDUSTRY':'line_of_business',
     EMAIL:'email', 'CONTACT PERSON':'contact_person', 'CONTACT NO':'contact_no',
+    'END OF SERVICE DATE': 'end_contract',
   };
   function mapClientFromDb(row){
-    const c = {_id: row.id, 'END CONTRACT': row.end_contract || ''};
+    const c = {_id: row.id};
     Object.keys(CLIENT_COL_MAP).forEach(appKey => { c[appKey] = row[CLIENT_COL_MAP[appKey]] || ''; });
     return c;
   }
@@ -825,13 +826,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         <td style="max-width:200px;color:var(--ink-soft);font-size:11.5px;">${esc(c['REGISTERED ADDRESS'])}</td>
         <td class="mono" style="white-space:nowrap;">${fmtDateLoose(c['BUSINESS REG. DATE'])}</td>
         <td class="mono" style="white-space:nowrap;">${fmtDateLoose(c['BOOKKEEPING DATE'])}</td>
+        <td class="mono" style="white-space:nowrap;">${fmtDateLoose(c['END OF SERVICE DATE'])}</td>
         <td style="max-width:160px;color:var(--ink-soft);font-size:11.5px;">${esc(c['CONTACT PERSON'])}${c['CONTACT NO']? ' · '+esc(c['CONTACT NO']):''}</td>
         <td><button class="tiny edit-client-btn" data-id="${c._id}">Edit</button></td>
       </tr>`;
     }).join('');
     tableArea.innerHTML = `
       <table>
-        <thead><tr><th>Business</th><th>TIN</th><th>RDO</th><th>Tax Type</th><th>Forms</th><th>Client?</th><th>Address</th><th>Business Reg. Date</th><th>Bookkeeping Date</th><th>Contact</th><th></th></tr></thead>
+        <thead><tr><th>Business</th><th>TIN</th><th>RDO</th><th>Tax Type</th><th>Forms</th><th>Client?</th><th>Address</th><th>Business Reg. Date</th><th>Bookkeeping Date</th><th>End of Service</th><th>Contact</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
     tableArea.querySelectorAll('.edit-client-btn').forEach(btn=>{
@@ -841,7 +843,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
   function exportCsv(){
     if(clients.length === 0){ toast('No clients to export'); return; }
-    const cols = ['CLIENT?','RDO','TIN','NAME','TAXPAYER CLASSIFICATION','TIN REG. DATE','BUSINESS REG. DATE','BOOKKEEPING DATE','REGISTERED ADDRESS','ZIP CODE','TAX TYPE','FORMS','TRADE NAME','LINE OF BUSINESS / INDUSTRY','EMAIL','CONTACT PERSON','CONTACT NO'];
+    const cols = ['CLIENT?','RDO','TIN','NAME','TAXPAYER CLASSIFICATION','TIN REG. DATE','BUSINESS REG. DATE','BOOKKEEPING DATE','END OF SERVICE DATE','REGISTERED ADDRESS','ZIP CODE','TAX TYPE','FORMS','TRADE NAME','LINE OF BUSINESS / INDUSTRY','EMAIL','CONTACT PERSON','CONTACT NO'];
     const rows = clients.map(c => cols.map(k=>`"${String(c[k]||'').replace(/"/g,'""')}"`).join(','));
     const csv = [cols.join(','), ...rows].join('\n');
     const blob = new Blob([csv], {type:'text/csv'});
@@ -859,6 +861,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     ['TAXPAYER CLASSIFICATION','Taxpayer Classification',''], ['TAX TYPE','Tax Type (VAT/NVAT/etc.)',''],
     ['TIN REG. DATE','TIN Reg. Date (YYYY-MM-DD)',''], ['BUSINESS REG. DATE','Business Reg. Date (YYYY-MM-DD)',''],
     ['BOOKKEEPING DATE','Bookkeeping Start Date (YYYY-MM-DD)',''],
+    ['END OF SERVICE DATE','End of Service Date (YYYY-MM-DD) — leave blank while active',''],
     ['REGISTERED ADDRESS','Registered Address','full'], ['ZIP CODE','Zip Code',''],
     ['LINE OF BUSINESS / INDUSTRY','Line of Business','full'], ['FORMS','Forms (comma-separated, e.g. 1701, RF, 2551Q)','full'],
     ['EMAIL','Email',''], ['CONTACT PERSON','Contact Person',''], ['CONTACT NO','Contact No.',''],
@@ -927,9 +930,35 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       }
       closeModal(); renderRegistry(); initRegistryFilters();
       toast(isNew? 'Naidagdag sa registry.' : 'Na-update.');
+      if(rec['END OF SERVICE DATE']){
+        await applyEndOfServiceNA(rec._id, rec['END OF SERVICE DATE'], rec.NAME);
+      }
     });
   }
   function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
+
+  // Whenever a client gets an End of Service Date, any of their not-yet-done tasks
+  // due AFTER that date are no longer in scope -- mark them N/A automatically (both
+  // locally and in the live database) rather than leaving them to keep showing as
+  // pending/overdue obligations forever. Already-DONE tasks are left untouched (real
+  // completed work stays on record). Safe to re-run -- purely idempotent.
+  async function applyEndOfServiceNA(clientId, endDate, clientName){
+    const affected = tasks.filter(t => t.clientId === clientId && t.status !== 'DONE' && t.due > endDate);
+    if(!affected.length) return;
+    const note = `N/A — end of service as of ${endDate}.`;
+    const { error } = await sb.from('cor_tasks')
+      .update({status:'NA', done_by:null, done_date:null, notes: note})
+      .eq('client_id', clientId)
+      .neq('status', 'DONE')
+      .gt('due_date', endDate);
+    if(error){
+      console.error(error);
+      toast('Na-save ang client, pero may error sa pag-mark ng future tasks as N/A — subukan ulit.');
+      return;
+    }
+    affected.forEach(t => { t.status = 'NA'; t.doneBy=''; t.doneDate=''; t.notes = note; });
+    toast(`${affected.length} future task(s) ${clientName? 'ni '+clientName+' ':''}ang na-mark na N/A dahil sa end of service date.`);
+  }
 
   /* ===================== SCAN & ADD (OCR) TAB ===================== */
   const scanZone = document.getElementById('scan-zone');
