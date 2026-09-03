@@ -1330,23 +1330,37 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return !!data;
   }
 
+  // Supabase/PostgREST caps a single .select() at a max-rows limit (commonly
+  // 1000) even when there's no error, so any table that can grow past that
+  // (cor_tasks currently has 4000+ rows) must be paged through in full,
+  // otherwise the app silently works with a truncated subset of the data.
+  async function fetchAllRows(table){
+    const PAGE = 1000;
+    let from = 0;
+    let all = [];
+    while(true){
+      const { data, error } = await sb.from(table).select('*').range(from, from + PAGE - 1);
+      if(error) throw error;
+      all = all.concat(data || []);
+      if(!data || data.length < PAGE) break;
+      from += PAGE;
+    }
+    return all;
+  }
+
   async function loadAllData(){
-    const [clientsRes, tasksRes, accRes, ostRes] = await Promise.all([
-      sb.from('cor_clients').select('*'),
-      sb.from('cor_tasks').select('*'),
-      sb.from('cor_credentials_accounts').select('*'),
-      sb.from('cor_credentials_ost').select('*'),
+    const [clientsData, tasksData, accData, ostData] = await Promise.all([
+      fetchAllRows('cor_clients'),
+      fetchAllRows('cor_tasks'),
+      fetchAllRows('cor_credentials_accounts'),
+      fetchAllRows('cor_credentials_ost'),
     ]);
-    if(clientsRes.error) throw clientsRes.error;
-    if(tasksRes.error) throw tasksRes.error;
-    if(accRes.error) throw accRes.error;
-    if(ostRes.error) throw ostRes.error;
-    clients = (clientsRes.data||[]).map(mapClientFromDb);
+    clients = clientsData.map(mapClientFromDb);
     clientById = {};
     clients.forEach(c=>clientById[c._id]=c);
-    tasks = (tasksRes.data||[]).map(mapTaskFromDb);
-    credsAccounts = mapCredsAccountsFromDb(accRes.data);
-    credsOst = mapCredsOstFromDb(ostRes.data);
+    tasks = tasksData.map(mapTaskFromDb);
+    credsAccounts = mapCredsAccountsFromDb(accData);
+    credsOst = mapCredsOstFromDb(ostData);
     initRegistryFilters();
     initTrackerFilters();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
