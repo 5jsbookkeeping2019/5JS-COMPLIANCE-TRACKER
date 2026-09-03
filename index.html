@@ -390,10 +390,16 @@
     <!-- CREDENTIALS TAB -->
     <div class="tab-panel" id="panel-creds">
       <div class="warn-banner">⚠ <b>Sensitive na data.</b> Naglalaman ito ng BIR eFPS/eBIR at SEC OST portal usernames/passwords ng mga clients. Iwasang i-share ang screen habang bukas ang tab na ito.</div>
-      <h3 style="font-family:'IBM Plex Serif',serif;color:var(--brand);margin-top:0;">BIR Portal Accounts</h3>
-      <div class="table-scroll" id="accounts-table"></div>
-      <h3 style="font-family:'IBM Plex Serif',serif;color:var(--brand);margin-top:22px;">SEC OST Accounts</h3>
-      <div class="table-scroll" id="ost-table"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0;">
+        <h3 style="font-family:'IBM Plex Serif',serif;color:var(--brand);margin:0;">BIR Portal Accounts</h3>
+        <button class="secondary" id="add-account-btn">+ Add account</button>
+      </div>
+      <div class="table-scroll" style="margin-top:10px;" id="accounts-table"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;">
+        <h3 style="font-family:'IBM Plex Serif',serif;color:var(--brand);margin:0;">SEC OST Accounts</h3>
+        <button class="secondary" id="add-ost-btn">+ Add OST account</button>
+      </div>
+      <div class="table-scroll" style="margin-top:10px;" id="ost-table"></div>
     </div>
   </div>
   <div class="toast" id="toast"></div>
@@ -490,11 +496,26 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
   function mapCredsAccountsFromDb(rows){
     return { headers:['ACCOUNT','TIN','NAME','USERNAME','PASSWORD','EMAIL / mobile'],
-      rows: (rows||[]).map(r=>({ACCOUNT:r.account||'', TIN:r.tin||'', NAME:r.name||'', USERNAME:r.username||'', PASSWORD:r.password||'', 'EMAIL / mobile':r.email_or_mobile||''})) };
+      rows: (rows||[]).map(r=>({_id:r.id, ACCOUNT:r.account||'', TIN:r.tin||'', NAME:r.name||'', USERNAME:r.username||'', PASSWORD:r.password||'', 'EMAIL / mobile':r.email_or_mobile||''})) };
   }
   function mapCredsOstFromDb(rows){
     return { headers:['GIS/AFS','SEC','USER','PASSWORD','EMAIL'],
-      rows: (rows||[]).map(r=>({'GIS/AFS':r.gis_afs||'', SEC:r.sec||'', USER:r.username||'', PASSWORD:r.password||'', EMAIL:r.email||''})) };
+      rows: (rows||[]).map(r=>({_id:r.id, 'GIS/AFS':r.gis_afs||'', SEC:r.sec||'', USER:r.username||'', PASSWORD:r.password||'', EMAIL:r.email||''})) };
+  }
+  const CREDS_ACCOUNTS_COL_MAP = {ACCOUNT:'account', TIN:'tin', NAME:'name', USERNAME:'username', PASSWORD:'password', 'EMAIL / mobile':'email_or_mobile'};
+  const CREDS_OST_COL_MAP = {'GIS/AFS':'gis_afs', SEC:'sec', USER:'username', PASSWORD:'password', EMAIL:'email'};
+  const CREDS_ACCOUNTS_FIELDS = [
+    ['ACCOUNT','Account / System Name','full'], ['NAME','Client Name',''], ['TIN','TIN',''],
+    ['USERNAME','Username',''], ['PASSWORD','Password',''], ['EMAIL / mobile','Email / Mobile','full'],
+  ];
+  const CREDS_OST_FIELDS = [
+    ['SEC','SEC Registration No.',''], ['GIS/AFS','GIS/AFS Status',''],
+    ['USER','Username',''], ['PASSWORD','Password',''], ['EMAIL','Email','full'],
+  ];
+  function credsAppToDbRow(rec, colMap){
+    const row = {};
+    Object.keys(colMap).forEach(k => { row[colMap[k]] = (rec[k]===undefined || rec[k]==='') ? null : rec[k]; });
+    return row;
   }
 
   function taskClient(t){ return clientById[t.clientId] || {NAME:'(unknown)', TIN:''}; }
@@ -1096,9 +1117,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
 
   /* ===================== CREDENTIALS TAB ===================== */
+  document.getElementById('add-account-btn').addEventListener('click', ()=>openCredsModal('accounts', null));
+  document.getElementById('add-ost-btn').addEventListener('click', ()=>openCredsModal('ost', null));
+
   function renderCreds(){
-    document.getElementById('accounts-table').innerHTML = credsTableHtml(credsAccounts);
-    document.getElementById('ost-table').innerHTML = credsTableHtml(credsOst);
+    document.getElementById('accounts-table').innerHTML = credsTableHtml(credsAccounts, 'accounts');
+    document.getElementById('ost-table').innerHTML = credsTableHtml(credsOst, 'ost');
     document.querySelectorAll('.pw-toggle').forEach(b=>{
       b.addEventListener('click', ()=>{
         const cell = b.previousElementSibling;
@@ -1107,8 +1131,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         else { cell.textContent = '••••••••'; b.textContent='Show'; }
       });
     });
+    document.querySelectorAll('.edit-creds-btn').forEach(b=>{
+      b.addEventListener('click', ()=>openCredsModal(b.dataset.kind, b.dataset.id));
+    });
   }
-  function credsTableHtml(sheet, preferredCols){
+  function credsTableHtml(sheet, kind){
     if(!sheet.rows || !sheet.rows.length) return '<div class="small-note">Walang laman.</div>';
     const cols = sheet.headers.filter(h=>h);
     const rows = sheet.rows.map(r=>{
@@ -1118,9 +1145,70 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           return `<td><span class="pw-mask">••••••••</span><button class="tiny pw-toggle" data-real="${esc(val)}" style="margin-left:6px;">Show</button></td>`;
         }
         return `<td>${esc(r[c])}</td>`;
-      }).join('') + '</tr>';
+      }).join('') + `<td><button class="tiny edit-creds-btn" data-kind="${kind}" data-id="${esc(r._id)}">Edit</button></td></tr>`;
     }).join('');
-    return `<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+    return `<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join('')}<th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  function openCredsModal(kind, id){
+    const isNew = !id;
+    const fields = kind==='accounts' ? CREDS_ACCOUNTS_FIELDS : CREDS_OST_FIELDS;
+    const colMap = kind==='accounts' ? CREDS_ACCOUNTS_COL_MAP : CREDS_OST_COL_MAP;
+    const table = kind==='accounts' ? credsAccounts : credsOst;
+    const tableName = kind==='accounts' ? 'cor_credentials_accounts' : 'cor_credentials_ost';
+    const label = kind==='accounts' ? 'BIR Portal Account' : 'SEC OST Account';
+    const existing = isNew ? null : table.rows.find(r=>r._id===id);
+    const rec = isNew ? {} : Object.assign({}, existing);
+    const root = document.getElementById('modal-root');
+    const fieldsHtml = fields.map(([key,flabel,cls])=>`
+      <div class="field ${cls||''}"><label>${esc(flabel)}</label><input data-key="${esc(key)}" value="${esc(rec[key])}"></div>
+    `).join('');
+    root.innerHTML = `<div class="modal-backdrop" id="modal-backdrop">
+      <div class="modal">
+        <h2>${isNew? 'Add '+label : 'Edit '+label}</h2>
+        <div class="review-grid">${fieldsHtml}</div>
+        <div style="margin-top:20px;display:flex;gap:10px;justify-content:space-between;">
+          <div>${!isNew? '<button class="danger-link" id="delete-creds-btn">Alisin</button>':''}</div>
+          <div style="display:flex;gap:10px;">
+            <button class="secondary" id="cancel-modal-btn">Cancel</button>
+            <button class="primary" id="save-modal-btn">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+    document.getElementById('cancel-modal-btn').addEventListener('click', closeModal);
+    document.getElementById('modal-backdrop').addEventListener('click', e=>{ if(e.target.id==='modal-backdrop') closeModal(); });
+    const delBtn = document.getElementById('delete-creds-btn');
+    if(delBtn) delBtn.addEventListener('click', async ()=>{
+      if(!confirm('Alisin ang account na ito?')) return;
+      delBtn.disabled = true;
+      const { error } = await sb.from(tableName).delete().eq('id', id);
+      if(error){ console.error(error); toast('Hindi na-delete sa database — subukan ulit.'); delBtn.disabled = false; return; }
+      table.rows = table.rows.filter(r=>r._id!==id);
+      closeModal(); renderCreds();
+      toast('Naalis.');
+    });
+    document.getElementById('save-modal-btn').addEventListener('click', async ()=>{
+      const saveBtn = document.getElementById('save-modal-btn');
+      const inputs = root.querySelectorAll('[data-key]');
+      inputs.forEach(inp => { rec[inp.dataset.key] = inp.value.trim(); });
+      const firstKey = fields[0][0];
+      if(!rec[firstKey]){ toast('Kailangan ng ' + fields[0][1]); return; }
+      saveBtn.disabled = true;
+      const dbRow = credsAppToDbRow(rec, colMap);
+      if(isNew){
+        const { data, error } = await sb.from(tableName).insert(dbRow).select().single();
+        if(error){ console.error(error); toast('Hindi na-save sa database — subukan ulit.'); saveBtn.disabled = false; return; }
+        rec._id = data.id;
+        table.rows.push(rec);
+      } else {
+        const { error } = await sb.from(tableName).update(dbRow).eq('id', id);
+        if(error){ console.error(error); toast('Hindi na-save sa database — subukan ulit.'); saveBtn.disabled = false; return; }
+        Object.assign(existing, rec);
+      }
+      closeModal(); renderCreds();
+      toast(isNew? 'Naidagdag.' : 'Na-update.');
+    });
   }
 
   /* ===================== EXPORT (backup only) ===================== */
