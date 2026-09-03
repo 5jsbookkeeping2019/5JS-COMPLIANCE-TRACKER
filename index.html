@@ -390,14 +390,20 @@
     <!-- CREDENTIALS TAB -->
     <div class="tab-panel" id="panel-creds">
       <div class="warn-banner">⚠ <b>Sensitive na data.</b> Naglalaman ito ng BIR eFPS/eBIR at SEC OST portal usernames/passwords ng mga clients. Iwasang i-share ang screen habang bukas ang tab na ito.</div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0;gap:10px;flex-wrap:wrap;">
         <h3 style="font-family:'IBM Plex Serif',serif;color:var(--brand);margin:0;">BIR Portal Accounts</h3>
-        <button class="secondary" id="add-account-btn">+ Add account</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <input class="search-input" id="creds-acc-search" placeholder="Search account, TIN, name, username...">
+          <button class="secondary" id="add-account-btn">+ Add account</button>
+        </div>
       </div>
       <div class="table-scroll" style="margin-top:10px;" id="accounts-table"></div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;gap:10px;flex-wrap:wrap;">
         <h3 style="font-family:'IBM Plex Serif',serif;color:var(--brand);margin:0;">SEC OST Accounts</h3>
-        <button class="secondary" id="add-ost-btn">+ Add OST account</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <input class="search-input" id="creds-ost-search" placeholder="Search SEC no., username, email...">
+          <button class="secondary" id="add-ost-btn">+ Add OST account</button>
+        </div>
       </div>
       <div class="table-scroll" style="margin-top:10px;" id="ost-table"></div>
     </div>
@@ -1119,10 +1125,26 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   /* ===================== CREDENTIALS TAB ===================== */
   document.getElementById('add-account-btn').addEventListener('click', ()=>openCredsModal('accounts', null));
   document.getElementById('add-ost-btn').addEventListener('click', ()=>openCredsModal('ost', null));
+  const credsAccSearch = document.getElementById('creds-acc-search');
+  const credsOstSearch = document.getElementById('creds-ost-search');
+  credsAccSearch.addEventListener('input', renderCreds);
+  credsOstSearch.addEventListener('input', renderCreds);
+
+  // Filters by any visible column EXCEPT password — never match/search on the secret itself.
+  function filterCredsRows(sheet, query){
+    if(!query) return sheet.rows;
+    const q = query.toLowerCase();
+    const cols = sheet.headers.filter(h=>h && !/PASSWORD/i.test(h));
+    return sheet.rows.filter(r => cols.some(c => String(r[c]||'').toLowerCase().includes(q)));
+  }
 
   function renderCreds(){
-    document.getElementById('accounts-table').innerHTML = credsTableHtml(credsAccounts, 'accounts');
-    document.getElementById('ost-table').innerHTML = credsTableHtml(credsOst, 'ost');
+    const accQ = (credsAccSearch.value||'').trim();
+    const ostQ = (credsOstSearch.value||'').trim();
+    const filteredAcc = { headers: credsAccounts.headers, rows: filterCredsRows(credsAccounts, accQ) };
+    const filteredOst = { headers: credsOst.headers, rows: filterCredsRows(credsOst, ostQ) };
+    document.getElementById('accounts-table').innerHTML = credsTableHtml(filteredAcc, 'accounts', !!accQ);
+    document.getElementById('ost-table').innerHTML = credsTableHtml(filteredOst, 'ost', !!ostQ);
     document.querySelectorAll('.pw-toggle').forEach(b=>{
       b.addEventListener('click', ()=>{
         const cell = b.previousElementSibling;
@@ -1135,8 +1157,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       b.addEventListener('click', ()=>openCredsModal(b.dataset.kind, b.dataset.id));
     });
   }
-  function credsTableHtml(sheet, kind){
-    if(!sheet.rows || !sheet.rows.length) return '<div class="small-note">Walang laman.</div>';
+  function credsTableHtml(sheet, kind, hasQuery){
+    if(!sheet.rows || !sheet.rows.length) return `<div class="small-note">${hasQuery? 'Walang tumugma sa search.' : 'Walang laman.'}</div>`;
     const cols = sheet.headers.filter(h=>h);
     const rows = sheet.rows.map(r=>{
       return '<tr>' + cols.map(c=>{
