@@ -346,6 +346,7 @@
             <option value="N">Has note</option>
             <option value="A">N/A (not applicable)</option>
           </select>
+          <input class="search-input" id="tr-notes-filter" placeholder="Filter by notes (hal. ZERO FILING)...">
         </div>
         <div class="toolbar-right">
           <span class="small-note" id="tr-count" style="margin:0;"></span>
@@ -691,18 +692,39 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const trFormFilter = document.getElementById('tr-form-filter');
   const trPeriodFilter = document.getElementById('tr-period-filter');
   const trStatusFilter = document.getElementById('tr-status-filter');
-  [trSearch].forEach(el=>el.addEventListener('input', renderTracker));
+  const trNotesFilter = document.getElementById('tr-notes-filter');
+  [trSearch, trNotesFilter].forEach(el=>el.addEventListener('input', renderTracker));
   [trFormFilter, trPeriodFilter, trStatusFilter].forEach(el=>el.addEventListener('change', renderTracker));
 
+  // Rebuilding the <select> options (needed whenever the task list changes,
+  // e.g. a live update from another staff member) used to always reset the
+  // dropdown back to "All" — wiping out whatever the person had selected.
+  // Preserve the current selection across the rebuild whenever it's still
+  // a valid option.
   function initTrackerFilters(){
+    const prevForm = trFormFilter.value, prevPeriod = trPeriodFilter.value;
     const forms = Array.from(new Set(tasks.map(t=>t.form))).sort();
     trFormFilter.innerHTML = '<option value="">All forms</option>' + forms.map(f=>`<option value="${esc(f)}">${esc(f)}</option>`).join('');
     const periods = Array.from(new Set(tasks.map(t=>t.period))).sort();
     trPeriodFilter.innerHTML = '<option value="">All periods</option>' + periods.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('');
+    if(forms.includes(prevForm)) trFormFilter.value = prevForm;
+    if(periods.includes(prevPeriod)) trPeriodFilter.value = prevPeriod;
   }
+
+  // Keep the Task Tracker's table filling all the way down to the bottom of
+  // the screen (like the Filing Calendar tab already does), instead of
+  // stopping at a fixed height and leaving blank space on a tall monitor.
+  function sizeTrackerTable(){
+    const el = document.getElementById('tracker-table');
+    if(!el || el.offsetParent === null) return; // tab not visible right now
+    const top = el.getBoundingClientRect().top + window.scrollY;
+    el.style.maxHeight = `calc(100vh - ${Math.round(top)}px - 24px)`;
+  }
+  window.addEventListener('resize', sizeTrackerTable);
 
   function renderTracker(){
     const q = (trSearch.value||'').toLowerCase();
+    const nq = (trNotesFilter.value||'').toLowerCase();
     const ff = trFormFilter.value, pf = trPeriodFilter.value, sf = trStatusFilter.value;
     let pool = tasks.filter(t=>{
       if(ff && t.form!==ff) return false;
@@ -712,6 +734,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       else if(sf==='P' && t.status!=='PENDING') return false;
       else if(sf==='N' && !t.notes) return false;
       else if(sf==='A' && t.status!=='NA') return false;
+      if(nq && !(t.notes||'').toLowerCase().includes(nq)) return false;
       if(q){
         const c = taskClient(t);
         const hay = (c.NAME+' '+c.TIN+' '+t.form+' '+t.period+' '+(t.notes||'')).toLowerCase();
@@ -780,6 +803,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         if(error){ console.error(error); toast('Babala: hindi na-save sa database — subukan ulit.'); }
       });
     });
+    sizeTrackerTable();
   }
 
   /* ===================== CLIENT REGISTRY TAB ===================== */
@@ -1431,7 +1455,17 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(session){ await onAuthed(session); }
       else { showLoginGate(''); }
       sb.auth.onAuthStateChange((event, session)=>{
-        if(event === 'SIGNED_IN' && session){ onAuthed(session); }
+        // Supabase re-checks the session (and can re-fire SIGNED_IN) every
+        // time the browser tab regains focus -- e.g. switching back from
+        // another app. If we already loaded data for this same user, that's
+        // just a background token refresh, not a fresh login: skip the full
+        // reload so it doesn't flash the loading screen and reset whatever
+        // filters/scroll position the person had set on the Task Tracker.
+        const appAlreadyShowing = document.getElementById('app-wrap').style.display !== 'none';
+        if(event === 'SIGNED_IN' && session){
+          if(appAlreadyShowing && currentUserEmail === session.user.email) return;
+          onAuthed(session);
+        }
         if(event === 'SIGNED_OUT'){ showLoginGate(''); }
       });
     }catch(err){
