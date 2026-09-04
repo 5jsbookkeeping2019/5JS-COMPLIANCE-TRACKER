@@ -166,6 +166,9 @@
   #cor-app .table-scroll{max-height:560px;overflow:auto;border:1px solid var(--paper-line);border-radius:var(--radius);}
   #cor-app .table-scroll table{font-size:12px;}
   #cor-app .table-scroll thead th{position:sticky;top:0;background:var(--card);z-index:2;}
+  #cor-app .table-scroll .frozen-col{position:sticky;background:var(--card);z-index:1;box-shadow:1px 0 0 var(--paper-line);}
+  #cor-app .table-scroll thead th.frozen-col{z-index:3;background:var(--card);}
+  #cor-app .table-scroll tbody tr:hover td.frozen-col{background:#FBF8F1;}
   #cor-app .tag-list{display:flex;flex-wrap:wrap;gap:4px;}
   #cor-app .tag{font-family:'IBM Plex Mono',monospace;font-size:10px;background:var(--gold-soft);color:#7a5a1f;border-radius:10px;padding:2px 8px;}
   #cor-app .status-pill{font-family:'IBM Plex Mono',monospace;font-size:10.5px;border-radius:10px;padding:3px 9px;display:inline-block;white-space:nowrap;}
@@ -413,13 +416,16 @@
       <div class="registry-head">
         <div class="filter-row">
           <input class="search-input" id="sales-search" placeholder="Search client, TIN, trade name...">
+          <select class="filter" id="sales-year-filter"><option value="">All years</option></select>
           <select class="filter" id="sales-taxtype-filter"><option value="">All tax types</option></select>
+          <select class="filter" id="sales-missing-filter"><option value="">Show all (walang missing-field filter)</option></select>
+          <button class="secondary" id="add-sales-btn">+ Add client</button>
         </div>
         <div class="toolbar-right">
           <span class="small-note" id="sales-count" style="margin:0;"></span>
         </div>
       </div>
-      <div class="small-note">Pinagsamang VAT at Non-VAT (NVAT) na clients, per quarter — mula sa Sales Summary file. Direktang i-edit ang kahit anong cell (kagaya ng Task Tracker) — awtomatikong nase-save sa live database.</div>
+      <div class="small-note">Pinagsamang VAT at Non-VAT (NVAT) na clients, per quarter — mula sa Sales Summary file. Direktang i-edit ang kahit anong cell (kagaya ng Task Tracker) — awtomatikong nase-save sa live database. Gamitin ang "Show all" dropdown para makita kung sino ang wala pang laman sa isang partikular na field (hal. Q3 Sales) — hindi kasama dito ang mga totoong "0" (kumpirmadong zero filing), blangko lang.</div>
       <div class="table-scroll" style="margin-top:10px;" id="sales-table"></div>
     </div>
   </div>
@@ -488,7 +494,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // cor_sales_summary columns, in display order: [db_col, header_label, kind]
   // kind 'num' -> right-aligned/peso-formatted, 'text' -> left-aligned as-is.
   const SALES_SUMMARY_COLS = [
-    ['name','Client','text'], ['tin','TIN','text'], ['trade_name','Trade Name','text'],
+    ['year','Year','num'], ['name','Client','text'], ['tin','TIN','text'], ['trade_name','Trade Name','text'],
     ['tax_type','Tax Type','text'], ['tax_option','Tax Option','text'], ['mq','M/Q','text'],
     ['pf','PF','num'], ['agent','Agent','text'], ['birth_incorp_date','Birthday/Incorp.','text'],
     ['civil_status','Civil Stat','text'], ['rental_tax_compensation','Rental Tax / Comp.','text'],
@@ -1324,42 +1330,98 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
   /* ===================== SALES SUMMARY TAB ===================== */
   const salesSearch = document.getElementById('sales-search');
+  const salesYearFilter = document.getElementById('sales-year-filter');
   const salesTaxTypeFilter = document.getElementById('sales-taxtype-filter');
+  const salesMissingFilter = document.getElementById('sales-missing-filter');
+  const addSalesBtn = document.getElementById('add-sales-btn');
   salesSearch.addEventListener('input', renderSalesSummary);
+  salesYearFilter.addEventListener('change', renderSalesSummary);
   salesTaxTypeFilter.addEventListener('change', renderSalesSummary);
+  salesMissingFilter.addEventListener('change', renderSalesSummary);
+
+  // Only numeric, per-client fields make sense for a "who's missing this"
+  // filter (text remarks are fine to leave blank on purpose; year isn't a
+  // field someone "forgets to fill in").
+  const SALES_NUMERIC_COLS = SALES_SUMMARY_COLS.filter(c=>c[2]==='num' && c[0]!=='year');
+  salesMissingFilter.innerHTML = '<option value="">Show all (walang missing-field filter)</option>' +
+    SALES_NUMERIC_COLS.map(([key,label])=>`<option value="${esc(key)}">Walang laman: ${esc(label)}</option>`).join('');
+
+  // The first 4 columns (Year, Client, TIN, Trade Name) stay pinned on
+  // screen while the rest of the (very wide) table scrolls horizontally.
+  const SALES_FROZEN_KEYS = ['year','name','tin','trade_name'];
+  const SALES_FROZEN_WIDTHS = {year:60, name:150, tin:120, trade_name:150};
+  const SALES_FROZEN_LEFT = {};
+  (function(){
+    let acc = 0;
+    SALES_FROZEN_KEYS.forEach(k=>{ SALES_FROZEN_LEFT[k] = acc; acc += SALES_FROZEN_WIDTHS[k]; });
+  })();
+
+  addSalesBtn.addEventListener('click', async ()=>{
+    addSalesBtn.disabled = true;
+    const defaultYear = salesYearFilter.value ? parseInt(salesYearFilter.value,10) : new Date().getFullYear();
+    const { data, error } = await sb.from('cor_sales_summary').insert({year: defaultYear}).select().single();
+    addSalesBtn.disabled = false;
+    if(error){ console.error(error); toast('Hindi na-add — subukan ulit.'); return; }
+    const rec = mapSalesSummaryFromDb([data])[0];
+    salesSummary.push(rec);
+    renderSalesSummary();
+    toast('Bagong row naidagdag — punan na ang mga field.');
+  });
 
   function initSalesSummaryFilters(){
-    const prev = salesTaxTypeFilter.value;
+    const prevTax = salesTaxTypeFilter.value;
     const types = Array.from(new Set(salesSummary.map(r=>r.tax_type).filter(Boolean))).sort();
     salesTaxTypeFilter.innerHTML = '<option value="">All tax types</option>' + types.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
-    if(types.includes(prev)) salesTaxTypeFilter.value = prev;
+    if(types.includes(prevTax)) salesTaxTypeFilter.value = prevTax;
+
+    const prevYear = salesYearFilter.value;
+    const years = Array.from(new Set(salesSummary.map(r=>r.year).filter(y=>y!==null && y!==undefined))).sort((a,b)=>b-a);
+    const hadOptions = salesYearFilter.options.length > 1;
+    salesYearFilter.innerHTML = '<option value="">All years</option>' + years.map(y=>`<option value="${y}">${y}</option>`).join('');
+    if(years.some(y=>String(y)===prevYear)){
+      salesYearFilter.value = prevYear;
+    } else if(!hadOptions && years.includes(new Date().getFullYear())){
+      // first load: default to the current year so the view isn't swamped
+      // with every prior year's rows at once.
+      salesYearFilter.value = String(new Date().getFullYear());
+    }
   }
 
   function renderSalesSummary(){
     const q = (salesSearch.value||'').toLowerCase();
+    const yf = salesYearFilter.value;
     const tf = salesTaxTypeFilter.value;
+    const mf = salesMissingFilter.value;
     let pool = salesSummary.filter(r=>{
+      if(yf && String(r.year)!==yf) return false;
       if(tf && r.tax_type !== tf) return false;
+      if(mf && !(r[mf]===null || r[mf]===undefined || r[mf]==='')) return false;
       if(q){
         const hay = (r.name+' '+r.tin+' '+(r.trade_name||'')).toLowerCase();
         if(!hay.includes(q)) return false;
       }
       return true;
     });
-    pool.sort((a,b)=> String(a.name||'').localeCompare(String(b.name||'')));
-    document.getElementById('sales-count').textContent = `${pool.length.toLocaleString()} client(s) match`;
+    pool.sort((a,b)=> (b.year||0)-(a.year||0) || String(a.name||'').localeCompare(String(b.name||'')));
+    document.getElementById('sales-count').textContent = `${pool.length.toLocaleString()} row(s) match`;
     if(!pool.length){
       document.getElementById('sales-table').innerHTML = `<div class="small-note">${salesSummary.length? 'Walang tumugma sa search/filter.' : 'Wala pang data — i-run muna ang sales_summary_schema.sql at sales_summary_seed.sql sa Supabase.'}</div>`;
       return;
     }
-    const headRow = SALES_SUMMARY_COLS.map(([,label])=>`<th>${esc(label)}</th>`).join('');
+    const headRow = SALES_SUMMARY_COLS.map(([key,label])=>{
+      const frozen = SALES_FROZEN_KEYS.includes(key);
+      const style = frozen ? `left:${SALES_FROZEN_LEFT[key]}px;width:${SALES_FROZEN_WIDTHS[key]}px;` : '';
+      return `<th class="${frozen?'frozen-col':''}" style="${style}">${esc(label)}</th>`;
+    }).join('') + '<th></th>';
     const rows = pool.map(r=>{
       const cells = SALES_SUMMARY_COLS.map(([key,,kind])=>{
         const val = r[key];
-        const width = kind==='num' ? 90 : (key==='tin' ? 110 : 130);
-        return `<td><input class="inline-text sales-cell${kind==='num'?' mono':''}" data-key="${esc(key)}" style="width:${width}px;" value="${val!==null && val!==undefined ? esc(val) : ''}"></td>`;
+        const frozen = SALES_FROZEN_KEYS.includes(key);
+        const width = frozen ? SALES_FROZEN_WIDTHS[key] : (kind==='num' ? 90 : (key==='tin' ? 110 : 130));
+        const tdStyle = frozen ? `left:${SALES_FROZEN_LEFT[key]}px;` : '';
+        return `<td class="${frozen?'frozen-col':''}" style="${tdStyle}"><input class="inline-text sales-cell${kind==='num'?' mono':''}" data-key="${esc(key)}" style="width:${width}px;" value="${val!==null && val!==undefined ? esc(val) : ''}"></td>`;
       }).join('');
-      return `<tr data-id="${esc(r._id)}">${cells}</tr>`;
+      return `<tr data-id="${esc(r._id)}">${cells}<td><button class="tiny delete-sales-btn" data-id="${esc(r._id)}">Delete</button></td></tr>`;
     }).join('');
     document.getElementById('sales-table').innerHTML = `<table><thead><tr>${headRow}</tr></thead><tbody>${rows}</tbody></table>`;
     document.querySelectorAll('#sales-table tbody tr').forEach(tr=>{
@@ -1382,6 +1444,19 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           const { error } = await sb.from('cor_sales_summary').update({[key]: val}).eq('id', id);
           if(error){ console.error(error); toast('Babala: hindi na-save sa database — subukan ulit.'); }
         });
+      });
+    });
+    document.querySelectorAll('.delete-sales-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const id = btn.dataset.id;
+        const rec = salesSummary.find(x=>x._id===id);
+        if(!confirm(`Tanggalin ang row ni "${rec? rec.name : ''}"? Hindi na ito mababawi.`)) return;
+        btn.disabled = true;
+        const { error } = await sb.from('cor_sales_summary').delete().eq('id', id);
+        if(error){ console.error(error); toast('Hindi natanggal — subukan ulit.'); btn.disabled = false; return; }
+        salesSummary = salesSummary.filter(x=>x._id!==id);
+        renderSalesSummary();
+        toast('Natanggal na.');
       });
     });
   }
