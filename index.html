@@ -766,8 +766,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       return `<tr data-tid="${t.id}">
         <td>${esc(c.NAME)}<div style="color:var(--ink-soft);font-size:10.5px;">TIN ${fmtTin(c.TIN)}</div></td>
         <td class="mono">${esc(t.form)}</td>
-        <td>${esc(t.period)}${(t.sales!==null || t.taxDue!==null) ? `<div style="color:var(--ink-soft);font-size:10px;">${t.sales!==null?'Sales '+fmtPeso(t.sales):''}${t.sales!==null && t.taxDue!==null?' · ':''}${t.taxDue!==null?'Tax due '+fmtPeso(t.taxDue):''}</div>` : ''}</td>
+        <td>${esc(t.period)}${t.sales!==null ? `<div style="color:var(--ink-soft);font-size:10px;">Sales ${fmtPeso(t.sales)}</div>` : ''}</td>
         <td class="mono">${fmtDate(t.due)}</td>
+        <td><input class="inline-text taxduef" style="width:80px;" value="${t.taxDue!==null? esc(t.taxDue) : ''}" placeholder="0"></td>
         <td>
           <select class="inline-status status-select">
             <option value="PENDING" ${t.status==='PENDING'?'selected':''}>Pending</option>
@@ -783,8 +784,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       </tr>`;
     }).join('');
     document.getElementById('tracker-table').innerHTML = `<table>
-      <thead><tr><th>Client</th><th>Form</th><th>Period</th><th>Due</th><th>Status</th><th>Done by</th><th>Date</th><th>Notes</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="8" style="text-align:center;color:var(--ink-soft);padding:24px;">Walang task na tumugma.</td></tr>'}</tbody>
+      <thead><tr><th>Client</th><th>Form</th><th>Period</th><th>Due</th><th>Tax Due</th><th>Status</th><th>Done by</th><th>Date</th><th>Notes</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="9" style="text-align:center;color:var(--ink-soft);padding:24px;">Walang task na tumugma.</td></tr>'}</tbody>
     </table>`;
     document.getElementById('tracker-table').querySelectorAll('tr[data-tid]').forEach(tr=>{
       const tid = tr.dataset.tid;
@@ -799,6 +800,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         }
         renderCalStats();
         const { error } = await sb.from('cor_tasks').update(patch).eq('id', t.id);
+        if(error){ console.error(error); toast('Babala: hindi na-save sa database — subukan ulit.'); }
+      });
+      tr.querySelector('.taxduef').addEventListener('change', async e=>{
+        const raw = e.target.value.trim();
+        const num = raw==='' ? null : parseFloat(raw.replace(/,/g,''));
+        t.taxDue = (num===null || isNaN(num)) ? null : num;
+        e.target.value = t.taxDue!==null ? t.taxDue : '';
+        const { error } = await sb.from('cor_tasks').update({tax_due: t.taxDue}).eq('id', t.id);
         if(error){ console.error(error); toast('Babala: hindi na-save sa database — subukan ulit.'); }
       });
       tr.querySelector('.donebyf').addEventListener('change', async e=>{
@@ -968,7 +977,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       }
       closeModal(); renderRegistry(); initRegistryFilters();
       toast(isNew? 'Naidagdag sa registry.' : 'Na-update.');
-      if(rec['END OF SERVICE DATE']){
+      const statusUpper = String(rec['CLIENT?']||'').trim().toUpperCase();
+      if(statusUpper === 'NO' || statusUpper === 'CLOSED'){
+        await applyInactiveClientNA(rec._id, rec['CLIENT?'], rec.NAME);
+      } else if(rec['END OF SERVICE DATE']){
         await applyEndOfServiceNA(rec._id, rec['END OF SERVICE DATE'], rec.NAME);
       }
     });
@@ -996,6 +1008,32 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
     affected.forEach(t => { t.status = 'NA'; t.doneBy=''; t.doneDate=''; t.notes = note; });
     toast(`${affected.length} future task(s) ${clientName? 'ni '+clientName+' ':''}ang na-mark na N/A dahil sa end of service date.`);
+  }
+
+  // Whenever a client's CLIENT? status is set to NO or CLOSED, they're no
+  // longer a client at all -- mark every one of their not-yet-done tasks
+  // (PENDING/NOTE, any period, not just future ones) as N/A automatically
+  // instead of leaving staff to hunt down and flip each task by hand.
+  // FOR CLOSURE is deliberately NOT included here: those clients still get
+  // their registered forms filed (zero-filing) until they're actually
+  // closed. Already-DONE (and already-NA) tasks are left untouched. Safe to
+  // re-run -- purely idempotent.
+  async function applyInactiveClientNA(clientId, status, clientName){
+    const affected = tasks.filter(t => t.clientId === clientId && t.status !== 'DONE' && t.status !== 'NA');
+    if(!affected.length) return;
+    const note = `N/A — client status is ${status}.`;
+    const { error } = await sb.from('cor_tasks')
+      .update({status:'NA', done_by:null, done_date:null, notes: note})
+      .eq('client_id', clientId)
+      .neq('status', 'DONE')
+      .neq('status', 'NA');
+    if(error){
+      console.error(error);
+      toast('Na-save ang client, pero may error sa pag-mark ng tasks as N/A — subukan ulit.');
+      return;
+    }
+    affected.forEach(t => { t.status = 'NA'; t.doneBy=''; t.doneDate=''; t.notes = note; });
+    toast(`${affected.length} task(s) ${clientName? 'ni '+clientName+' ':''}ang na-mark na N/A dahil hindi na client (${status}).`);
   }
 
   /* ===================== SCAN & ADD (OCR) TAB ===================== */
