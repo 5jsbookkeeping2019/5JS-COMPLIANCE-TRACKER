@@ -305,6 +305,7 @@
       <button class="tab-btn" data-tab="registry">Client Registry</button>
       <button class="tab-btn" data-tab="scan">Scan &amp; Add (OCR)</button>
       <button class="tab-btn" data-tab="creds">Credentials</button>
+      <button class="tab-btn" data-tab="sales">Sales Summary</button>
     </div>
 
     <!-- CALENDAR TAB -->
@@ -408,6 +409,19 @@
       </div>
       <div class="table-scroll" style="margin-top:10px;" id="ost-table"></div>
     </div>
+    <div class="tab-panel" id="panel-sales">
+      <div class="registry-head">
+        <div class="filter-row">
+          <input class="search-input" id="sales-search" placeholder="Search client, TIN, trade name...">
+          <select class="filter" id="sales-taxtype-filter"><option value="">All tax types</option></select>
+        </div>
+        <div class="toolbar-right">
+          <span class="small-note" id="sales-count" style="margin:0;"></span>
+        </div>
+      </div>
+      <div class="small-note">Pinagsamang VAT at Non-VAT (NVAT) na clients, per quarter — mula sa Sales Summary file. Direktang i-edit ang kahit anong cell (kagaya ng Task Tracker) — awtomatikong nase-save sa live database.</div>
+      <div class="table-scroll" style="margin-top:10px;" id="sales-table"></div>
+    </div>
   </div>
   <div class="toast" id="toast"></div>
   <div id="modal-root"></div>
@@ -469,6 +483,36 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   let tasks = [];
   let credsAccounts = {headers:['ACCOUNT','TIN','NAME','USERNAME','PASSWORD','EMAIL / mobile'], rows:[]};
   let credsOst = {headers:['GIS/AFS','SEC','USER','PASSWORD','EMAIL'], rows:[]};
+  let salesSummary = [];
+
+  // cor_sales_summary columns, in display order: [db_col, header_label, kind]
+  // kind 'num' -> right-aligned/peso-formatted, 'text' -> left-aligned as-is.
+  const SALES_SUMMARY_COLS = [
+    ['name','Client','text'], ['tin','TIN','text'], ['trade_name','Trade Name','text'],
+    ['tax_type','Tax Type','text'], ['tax_option','Tax Option','text'], ['mq','M/Q','text'],
+    ['pf','PF','num'], ['agent','Agent','text'], ['birth_incorp_date','Birthday/Incorp.','text'],
+    ['civil_status','Civil Stat','text'], ['rental_tax_compensation','Rental Tax / Comp.','text'],
+    ['q1_sales','Q1 Sales','num'], ['q1_expenses','Q1 Expenses','num'], ['q1_pt_tax_due','Q1 PT Due','num'],
+    ['q1_pt_remarks','Q1 PT Remarks','text'], ['q1_pt_payment_remarks','Q1 PT Payment','text'],
+    ['q1_it_tax_due','Q1 IT Due','num'], ['q1_it_remarks','Q1 IT Remarks','text'], ['q1_it_payment_remarks','Q1 IT Payment','text'],
+    ['q2_sales','Q2 Sales','num'], ['q2_expenses','Q2 Expenses','num'], ['q2_pt_tax_due','Q2 PT Due','num'],
+    ['q2_pt_remarks','Q2 PT Remarks','text'], ['q2_pt_payment_remarks','Q2 PT Payment','text'],
+    ['q2_it_tax_due','Q2 IT Due','num'], ['q2_it_remarks','Q2 IT Remarks','text'], ['q2_it_payment_remarks','Q2 IT Payment','text'],
+    ['q3_sales','Q3 Sales','num'], ['q3_expenses','Q3 Expenses','num'], ['q3_pt_tax_due','Q3 PT Due','num'],
+    ['q3_pt_remarks','Q3 PT Remarks','text'], ['q3_pt_payment_remarks','Q3 PT Payment','text'],
+    ['q3_it_tax_due','Q3 IT Due','num'], ['q3_it_remarks','Q3 IT Remarks','text'], ['q3_it_payment_remarks','Q3 IT Payment','text'],
+    ['q4_sales','Q4 Sales','num'], ['q4_expenses','Q4 Expenses','num'], ['q4_pt_tax_due','Q4 PT Due','num'],
+    ['q4_pt_remarks','Q4 PT Remarks','text'], ['q4_pt_payment_remarks','Q4 PT Payment','text'],
+    ['total_sales','Total Sales','num'], ['total_expenses','Total Expenses','num'], ['net_income','Net Income','num'],
+    ['annual_1701_tax_due','1701 Due','num'], ['annual_1701_remarks','1701 Remarks','text'],
+  ];
+  function mapSalesSummaryFromDb(rows){
+    return (rows||[]).map(r=>{
+      const rec = {_id: r.id};
+      SALES_SUMMARY_COLS.forEach(([key])=>{ rec[key] = r[key]; });
+      return rec;
+    });
+  }
 
   const STATUS_DISPLAY = {NA:'N/A'};
   function fmtPeso(n){
@@ -574,6 +618,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(tab === 'tracker') renderTracker();
     if(tab === 'registry') renderRegistry();
     if(tab === 'creds') renderCreds();
+    if(tab === 'sales') renderSalesSummary();
   }
 
   document.getElementById('dismiss-banner').addEventListener('click', ()=>{
@@ -1277,6 +1322,70 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return `<table><thead><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join('')}<th></th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
+  /* ===================== SALES SUMMARY TAB ===================== */
+  const salesSearch = document.getElementById('sales-search');
+  const salesTaxTypeFilter = document.getElementById('sales-taxtype-filter');
+  salesSearch.addEventListener('input', renderSalesSummary);
+  salesTaxTypeFilter.addEventListener('change', renderSalesSummary);
+
+  function initSalesSummaryFilters(){
+    const prev = salesTaxTypeFilter.value;
+    const types = Array.from(new Set(salesSummary.map(r=>r.tax_type).filter(Boolean))).sort();
+    salesTaxTypeFilter.innerHTML = '<option value="">All tax types</option>' + types.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
+    if(types.includes(prev)) salesTaxTypeFilter.value = prev;
+  }
+
+  function renderSalesSummary(){
+    const q = (salesSearch.value||'').toLowerCase();
+    const tf = salesTaxTypeFilter.value;
+    let pool = salesSummary.filter(r=>{
+      if(tf && r.tax_type !== tf) return false;
+      if(q){
+        const hay = (r.name+' '+r.tin+' '+(r.trade_name||'')).toLowerCase();
+        if(!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    pool.sort((a,b)=> String(a.name||'').localeCompare(String(b.name||'')));
+    document.getElementById('sales-count').textContent = `${pool.length.toLocaleString()} client(s) match`;
+    if(!pool.length){
+      document.getElementById('sales-table').innerHTML = `<div class="small-note">${salesSummary.length? 'Walang tumugma sa search/filter.' : 'Wala pang data — i-run muna ang sales_summary_schema.sql at sales_summary_seed.sql sa Supabase.'}</div>`;
+      return;
+    }
+    const headRow = SALES_SUMMARY_COLS.map(([,label])=>`<th>${esc(label)}</th>`).join('');
+    const rows = pool.map(r=>{
+      const cells = SALES_SUMMARY_COLS.map(([key,,kind])=>{
+        const val = r[key];
+        const width = kind==='num' ? 90 : (key==='tin' ? 110 : 130);
+        return `<td><input class="inline-text sales-cell${kind==='num'?' mono':''}" data-key="${esc(key)}" style="width:${width}px;" value="${val!==null && val!==undefined ? esc(val) : ''}"></td>`;
+      }).join('');
+      return `<tr data-id="${esc(r._id)}">${cells}</tr>`;
+    }).join('');
+    document.getElementById('sales-table').innerHTML = `<table><thead><tr>${headRow}</tr></thead><tbody>${rows}</tbody></table>`;
+    document.querySelectorAll('#sales-table tbody tr').forEach(tr=>{
+      const id = tr.dataset.id;
+      const rec = salesSummary.find(x=>x._id===id);
+      if(!rec) return;
+      tr.querySelectorAll('.sales-cell').forEach(input=>{
+        input.addEventListener('change', async e=>{
+          const key = e.target.dataset.key;
+          const colDef = SALES_SUMMARY_COLS.find(c=>c[0]===key);
+          let val = e.target.value.trim();
+          if(colDef[2]==='num'){
+            val = val==='' ? null : parseFloat(val.replace(/,/g,''));
+            if(val!==null && isNaN(val)) val = null;
+          } else {
+            val = val==='' ? null : val;
+          }
+          rec[key] = val;
+          e.target.value = val!==null && val!==undefined ? val : '';
+          const { error } = await sb.from('cor_sales_summary').update({[key]: val}).eq('id', id);
+          if(error){ console.error(error); toast('Babala: hindi na-save sa database — subukan ulit.'); }
+        });
+      });
+    });
+  }
+
   function openCredsModal(kind, id){
     const isNew = !id;
     const fields = kind==='accounts' ? CREDS_ACCOUNTS_FIELDS : CREDS_OST_FIELDS;
@@ -1425,11 +1534,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
 
   async function loadAllData(){
-    const [clientsData, tasksData, accData, ostData] = await Promise.all([
+    const [clientsData, tasksData, accData, ostData, salesData] = await Promise.all([
       fetchAllRows('cor_clients'),
       fetchAllRows('cor_tasks'),
       fetchAllRows('cor_credentials_accounts'),
       fetchAllRows('cor_credentials_ost'),
+      // cor_sales_summary is a newer, optional table -- don't let a missing
+      // table (schema not run yet) break the rest of the app from loading.
+      fetchAllRows('cor_sales_summary').catch(err=>{ console.error(err); return []; }),
     ]);
     clients = clientsData.map(mapClientFromDb);
     clientById = {};
@@ -1437,8 +1549,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     tasks = tasksData.map(mapTaskFromDb);
     credsAccounts = mapCredsAccountsFromDb(accData);
     credsOst = mapCredsOstFromDb(ostData);
+    salesSummary = mapSalesSummaryFromDb(salesData);
     initRegistryFilters();
     initTrackerFilters();
+    initSalesSummaryFilters();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
