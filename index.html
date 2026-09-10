@@ -1541,8 +1541,20 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         });
       });
     });
+    // Income Tax (1701Q/1701/1702Q/1702) and VAT/Percentage Tax (2550Q/
+    // 2551Q/SLSP) are normally CONSOLIDATED and filed at the Head Office --
+    // a Branch usually doesn't file these on its own. So these two
+    // auto-check rules only fire when Registering Office is NOT "Branch"
+    // (blank/unset still auto-checks, same as before, since most clients
+    // are head offices and we don't want to silently stop helping just
+    // because staff hasn't filled in that field yet).
+    const isBranch = () => {
+      const sel = root.querySelector('[data-key="REGISTERING OFFICE"]');
+      return sel && sel.value === 'Branch';
+    };
     const taxTypeSelect = root.querySelector('[data-key="TAX TYPE"]');
     if(taxTypeSelect) taxTypeSelect.addEventListener('change', ()=>{
+      if(isBranch()) return;
       const v = taxTypeSelect.value;
       if(v === 'VAT'){
         autoCheckForm(root, '2550Q', 'VAT ang Tax Type.');
@@ -1555,10 +1567,38 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
     const classifSelect = root.querySelector('[data-key="TAXPAYER CLASSIFICATION"]');
     if(classifSelect) classifSelect.addEventListener('change', ()=>{
+      if(isBranch()) return;
       if(INDIVIDUAL_CLASSIFICATIONS.has(classifSelect.value)){
         autoCheckForm(root, '1701Q', 'Individual/Single Prop/Professional ang Taxpayer Classification.');
         autoCheckForm(root, '1701', 'Individual/Single Prop/Professional ang Taxpayer Classification.');
       }
+    });
+    // Switching Registering Office TO "Branch" doesn't auto-uncheck
+    // anything already ticked (same "cascade only adds" rule as
+    // everywhere else) -- just a heads-up so staff double-checks.
+    const regOfficeSelect = root.querySelector('[data-key="REGISTERING OFFICE"]');
+    if(regOfficeSelect) regOfficeSelect.addEventListener('change', ()=>{
+      if(regOfficeSelect.value === 'Branch'){
+        toast('Branch ito — karaniwang consolidated sa Head Office ang Income Tax (1701Q/1701/1702Q/1702) at VAT/Percentage Tax (2550Q/2551Q/SLSP). I-review ang BIR Forms grid sa ibaba.');
+      }
+    });
+    // TIN-based Head Office/Branch auto-suggestion -- same BIR convention
+    // used in the bulk-backfill SQL: the LAST 3 DIGITS of the TIN are the
+    // branch code ("000" = Head Office, anything else = Branch). Fires as
+    // staff types/pastes the TIN, but ONLY suggests -- never overwrites a
+    // Registering Office the staff (or a prior save) already set, same
+    // "never silently overwrite a manual choice" rule as everywhere else
+    // in this cascade. Dispatches 'change' afterward so the isBranch()-
+    // gated rules above react immediately to the suggestion.
+    const tinInput = root.querySelector('[data-key="TIN"]');
+    if(tinInput && regOfficeSelect) tinInput.addEventListener('input', ()=>{
+      if(String(regOfficeSelect.value||'').trim() !== '') return; // staff already set it manually
+      const digits = String(tinInput.value||'').replace(/\D/g,'');
+      if(digits.length < 3) return; // not enough of the TIN typed yet to read a branch code
+      const suggestion = digits.slice(-3) === '000' ? 'Head Office' : 'Branch';
+      regOfficeSelect.value = suggestion;
+      regOfficeSelect.dispatchEvent(new Event('change'));
+      toast(`Registering Office: awtomatikong na-suggest na "${suggestion}" base sa huling 3 digit ng TIN (${digits.slice(-3)}). Pwede pa ring palitan nang manu-mano.`);
     });
     // A client can have more than one line of business (LOB_CATEGORY_KEYS),
     // so each slot independently triggers the same rule -- e.g. a retailer
@@ -1637,10 +1677,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const taxType = String(c['TAX TYPE']||'');
     const isCorp = /corp|partnership|\binc\b/i.test(classif);
     const isVat = /\bVAT\b/i.test(taxType) && !/non[\-\s]?vat/i.test(taxType);
+    const isBranch = String(c['REGISTERING OFFICE']||'') === 'Branch';
     const yes = v => String(v||'').trim().toUpperCase()==='YES';
     const forms = [];
-    if(classif) forms.push(isCorp?'1702Q':'1701Q', isCorp?'1702':'1701');
-    if(taxType && taxType !== 'Branch') forms.push(isVat?'2550Q':'2551Q');
+    // Income Tax and VAT/Percentage Tax are normally consolidated and filed
+    // at the Head Office -- a Branch usually doesn't file these on its own
+    // (only EWT/Withholding on Compensation are independently a branch's).
+    if(!isBranch){
+      if(classif) forms.push(isCorp?'1702Q':'1701Q', isCorp?'1702':'1701');
+      if(taxType) forms.push(isVat?'2550Q':'2551Q');
+    }
     if(yes(c['REG EWT'])) forms.push('0619E','1601EQ');
     if(yes(c['REG WITHHOLDING COMP'])) forms.push('1601C');
     return forms.join(', ');
