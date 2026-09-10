@@ -615,6 +615,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     'BOOKS OF ACCOUNTS TYPE':'books_of_accounts_type', 'WITHHOLDING TYPES':'withholding_types',
     'REG INCOME TAX':'reg_income_tax', 'REG VAT/PT':'reg_vat_pt', 'REG EWT':'reg_ewt', 'REG WITHHOLDING COMP':'reg_wc',
     'BUSINESS SIZE':'business_size', 'CLIENT STATUS REMARKS':'client_status_remarks',
+    'REGISTERING OFFICE':'registering_office', 'LINE OF BUSINESS CATEGORY':'line_of_business_category',
   };
   function mapClientFromDb(row){
     const c = {_id: row.id};
@@ -1371,6 +1372,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       ['Branch','Branch'],
       ['Non-Profit Organization','Non-Profit Organization'],
     ]],
+    // Registering Office -- separate from Tax Type (a branch can still be
+    // VAT or Non-VAT). Kept as its own dropdown per the user's spec instead
+    // of overloading the Tax Type field with "Branch".
+    ['REGISTERING OFFICE','Registering Office','','select',[
+      ['','— Piliin —'],
+      ['Head Office','Head Office'],
+      ['Branch','Branch'],
+    ]],
     // Business Size per RA 11976 (EOPT) / RR 8-2024 -- separate dimension from
     // "Taxpayer Classification" above (which is Individual vs Corporation).
     // Thresholds are ANNUAL GROSS SALES: Micro <3M, Small 3M-<20M,
@@ -1397,6 +1406,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     ['END OF SERVICE DATE','End of Service Date (YYYY-MM-DD) — leave blank while active',''],
     ['REGISTERED ADDRESS','Registered Address','full'], ['ZIP CODE','Zip Code',''],
     ['LINE OF BUSINESS / INDUSTRY','Line of Business','full'],
+    // Line of Business Category -- separate from the free-text description
+    // above. Drives the Inventory List / Lessee Information Sheet auto-check
+    // rules below (mirrors the same field in the Tax Engine Google Sheet
+    // template, so both stay consistent).
+    ['LINE OF BUSINESS CATEGORY','Line of Business Category','','select',[
+      ['','— Piliin —'],
+      ['Trading / Retail / Merchandising','Trading / Retail / Merchandising'],
+      ['Manufacturing','Manufacturing'],
+      ['Real Estate Lessor / Rental','Real Estate Lessor / Rental'],
+      ['Professional / Service','Professional / Service'],
+      ['Other','Other'],
+    ]],
     // Tax Forms -- rendered as a grid of row-grouped checkboxes (see
     // formsGridHtml/FORMS_GRID_ROWS below) instead of a free-text list.
     // Still stored in the same FORMS column as a comma-separated string, so
@@ -1436,8 +1457,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     {label:'Expanded Withholding Tax', forms:['0619E','1601EQ','QAP','1604E']},
     {label:'Withholding on Compensation', forms:['1601C','1604C','Alphalist','2316']},
     {label:'Final Withholding Tax', forms:['0619F','1601FQ','1604F']},
+    // Line-of-business-driven compliance items -- not tied to a registered
+    // tax type checkbox, but to the client's actual business activity per
+    // their 2303 (mirrors the same two items added to the Tax Engine Sheet).
+    {label:'Other Compliance (per Line of Business)', forms:['Inventory List','Lessee Information Sheet']},
   ];
   const FORMS_CASCADE = { '0619E':['1604E','QAP'], '1601C':['1604C','Alphalist'] };
+  // Taxpayer Classification values that count as "Individual" for the
+  // Tax-Type/Classification-driven auto-check rules below (same bucketing
+  // used in the Tax Engine Sheet's hidden helper table).
+  const INDIVIDUAL_CLASSIFICATIONS = new Set([
+    'Single Proprietor','Professional','Professional & Single Proprietor',
+    'Mixed Income Earner','Estate','Trust',
+    'Non-Resident Alien Engaged in Trade/Business',
+  ]);
+  const LOB_INVENTORY_LIST_CATS = new Set(['Trading / Retail / Merchandising','Manufacturing']);
   // Renders <option>s for a CLIENT_FIELDS select field. If the client's
   // current value doesn't match any predefined option (old free-text data,
   // a typo, a value the dropdown doesn't cover yet), an extra option is
@@ -1471,9 +1505,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       </div>
     `;
   }
-  // Wires the cascade rules onto a rendered forms grid, and makes the Tax
-  // Type select auto-check SLSP when set to VAT. `root` is the modal/area
-  // element containing both the forms grid and the TAX TYPE select.
+  // Small helper: auto-check a form checkbox (if present, unchecked) and
+  // toast why -- used by every rule below so the behavior/messaging stays
+  // consistent.
+  function autoCheckForm(root, form, reason){
+    const cb = root.querySelector(`.forms-grid-cb[data-form="${form}"]`);
+    if(cb && !cb.checked){ cb.checked = true; toast(`Na-add ang ${form} — ${reason}`); }
+  }
+  // Wires the cascade rules onto a rendered forms grid: form->form cascades
+  // (FORMS_CASCADE), plus auto-check rules driven by Tax Type, Taxpayer
+  // Classification, and Line of Business Category -- modeled on how the BIR
+  // system itself derives a taxpayer's applicable returns from their COR
+  // (2303): Tax Type drives VAT/Percentage Tax returns, Classification
+  // drives Income Tax Return type, Line of Business drives Inventory List /
+  // Lessee Information Sheet. `root` is the modal/area element containing
+  // the forms grid and these fields.
   function wireFormsGridCascade(root){
     root.querySelectorAll('.forms-grid-cb').forEach(cb=>{
       cb.addEventListener('change', ()=>{
@@ -1486,9 +1532,30 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
     const taxTypeSelect = root.querySelector('[data-key="TAX TYPE"]');
     if(taxTypeSelect) taxTypeSelect.addEventListener('change', ()=>{
-      if(taxTypeSelect.value === 'VAT'){
-        const slspCb = root.querySelector('.forms-grid-cb[data-form="SLSP"]');
-        if(slspCb && !slspCb.checked){ slspCb.checked = true; toast('Na-add ang SLSP dahil VAT ang Tax Type.'); }
+      const v = taxTypeSelect.value;
+      if(v === 'VAT'){
+        autoCheckForm(root, '2550Q', 'VAT ang Tax Type.');
+        autoCheckForm(root, 'SLSP', 'VAT ang Tax Type.');
+      } else if(v === 'Non-VAT'){
+        autoCheckForm(root, '2551Q', 'Non-VAT ang Tax Type.');
+      } else if(v === 'Non-VAT (8% Flat Rate)'){
+        autoCheckForm(root, '1701Q', '8% Flat Rate ang Tax Type (in lieu of percentage tax).');
+      }
+    });
+    const classifSelect = root.querySelector('[data-key="TAXPAYER CLASSIFICATION"]');
+    if(classifSelect) classifSelect.addEventListener('change', ()=>{
+      if(INDIVIDUAL_CLASSIFICATIONS.has(classifSelect.value)){
+        autoCheckForm(root, '1701Q', 'Individual/Single Prop/Professional ang Taxpayer Classification.');
+        autoCheckForm(root, '1701', 'Individual/Single Prop/Professional ang Taxpayer Classification.');
+      }
+    });
+    const lobSelect = root.querySelector('[data-key="LINE OF BUSINESS CATEGORY"]');
+    if(lobSelect) lobSelect.addEventListener('change', ()=>{
+      const v = lobSelect.value;
+      if(LOB_INVENTORY_LIST_CATS.has(v)){
+        autoCheckForm(root, 'Inventory List', 'may binebentang goods ang Line of Business.');
+      } else if(v === 'Real Estate Lessor / Rental'){
+        autoCheckForm(root, 'Lessee Information Sheet', 'Real Estate Lessor/Rental ang Line of Business.');
       }
     });
   }
