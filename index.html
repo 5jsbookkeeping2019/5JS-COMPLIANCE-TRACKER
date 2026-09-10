@@ -477,7 +477,8 @@
           <span class="small-note" id="tax2307-count" style="margin:0;"></span>
         </div>
       </div>
-      <div class="small-note">Log ng withholding tax transactions (rental, purchase, commission, atbp.) na binabawas ng client (payor) mula sa binabayarang third-party (payee — kadalasa'y hindi client, hal. lessor o supplier). Direktang i-edit ang cells; awtomatikong nase-save sa live database. Awtomatikong nabubuo ang Tax Withheld kapag nilagyan ng Gross Amount at Tax Rate — pwede pa ring i-override nang manu-mano. Pindutin ang "Print 2307" sa isang row para makabuo ng printable Certificate of Creditable Tax Withheld (BIR Form 2307) na kasama ang LAHAT ng entries ng parehong payor + payee + taon + quarter. <strong>Paki-verify muna ang ATC codes at tax rates laban sa kasalukuyang BIR issuance</strong> bago i-print/ibigay sa payee.</div>
+      <div class="small-note">Log ng withholding tax transactions (rental, purchase, commission, atbp.) na binabawas ng client (payor) mula sa binabayarang third-party (payee — kadalasa'y hindi client, hal. lessor o supplier). Direktang i-edit ang cells; awtomatikong nase-save sa live database. Awtomatikong nabubuo ang Tax Withheld kapag nilagyan ng Gross Amount at Tax Rate — pwede pa ring i-override nang manu-mano. Pindutin ang "Print 2307" sa isang row para makabuo ng printable Certificate of Creditable Tax Withheld (BIR Form 2307) na kasama ang LAHAT ng entries ng parehong payor + payee + taon + quarter. <strong>Paki-verify muna ang ATC codes at tax rates laban sa kasalukuyang BIR issuance</strong> bago i-print/ibigay sa payee. Ilagay/piliin ang Client ID (mula sa Client Registry) sa unang column para awtomatikong mapunan ang Payor/Payor TIN — hindi mo na kailangang i-type ulit ang mga 'yun.</div>
+      <datalist id="tax2307-client-id-options"></datalist>
       <datalist id="tax2307-income-type-options">
         <option value="RENTAL">
         <option value="PURCHASE OF GOODS">
@@ -497,13 +498,19 @@
             <option value="">All quarters</option>
             <option value="Q1">Q1</option><option value="Q2">Q2</option><option value="Q3">Q3</option><option value="Q4">Q4</option>
           </select>
+          <select class="filter" id="sawt-cert-filter">
+            <option value="">All (May Actual 2307?)</option>
+          </select>
+          <select class="filter" id="sawt-claim-filter">
+            <option value="">All (Claim Status)</option>
+          </select>
           <button class="secondary" id="add-sawt-btn">+ Add entry</button>
         </div>
         <div class="toolbar-right">
           <span class="small-note" id="sawt-count" style="margin:0;"></span>
         </div>
       </div>
-      <div class="small-note">Log ng BIR Form 2307 na NATANGGAP ng client (kabaligtaran ng 2307 Register — dito, ang client ang PAYEE na kinaltasan ng ibang party, hal. e-marketplace o customer). Ito ang pinagmumulan ng SAWT / creditable withholding tax na iki-claim sa 1701Q/1702Q. Direktang i-edit ang cells. Ipinapakita rin sa ibaba ang total tax withheld per filter — para agad makuha ang quarterly SAWT total.</div>
+      <div class="small-note">Log ng BIR Form 2307 na NATANGGAP ng client (kabaligtaran ng 2307 Register — dito, ang client ang PAYEE na kinaltasan ng ibang party, hal. e-marketplace o customer). Ito ang pinagmumulan ng SAWT / creditable withholding tax na iki-claim sa 1701Q/1702Q. Direktang i-edit ang cells. Ipinapakita rin sa ibaba ang total tax withheld per filter — para agad makuha ang quarterly SAWT total. Ang withholding na nakikita sa Daily Sales Record ay hindi laging may kasamang aktwal na 2307 certificate agad, at hindi rin ito laging kaagad ginagamit (madalas Q3 o Annual ITR pa) — gamitin ang "May Actual 2307?" para markahan kung natanggap na talaga ang certificate, at ang "Claim Status" para malaman kung ginamit na ba ito o naka-batch pa lang, hiwalay sa kung ANONG quarter ito na-receive.</div>
       <div class="table-scroll" style="margin-top:10px;" id="sawt-table"></div>
     </div>
   </div>
@@ -2375,6 +2382,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   /* ===================== 2307 REGISTER TAB ===================== */
   let entries2307 = [];
   const ENTRY_2307_COLS = [
+    ['client_id_no','Client ID','text'],
     ['payor_name','Payor (Client)','text'], ['payor_tin','Payor TIN','text'],
     ['payee_name','Payee Name','text'], ['payee_tin','Payee TIN','text'], ['payee_address','Payee Address','text'],
     ['income_type','Income Type','text'], ['atc_code','ATC','text'], ['tax_rate','Rate %','num'],
@@ -2451,17 +2459,32 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
     pool.sort((a,b)=> (b.period_year||0)-(a.period_year||0) || String(a.payor_name||'').localeCompare(String(b.payor_name||'')) || String(a.payee_name||'').localeCompare(String(b.payee_name||'')));
     document.getElementById('tax2307-count').textContent = `${pool.length.toLocaleString()} entry(ies) match`;
+    const entry2307IdListEl = document.getElementById('tax2307-client-id-options');
+    if(entry2307IdListEl){
+      entry2307IdListEl.innerHTML = clients.filter(c=>c['CLIENT ID NO.']).map(c=>
+        `<option value="${esc(c['CLIENT ID NO.'])}">${esc(c['CLIENT ID NO.'])} — ${esc(c.NAME)}</option>`
+      ).join('');
+    }
     if(!pool.length){
       document.getElementById('tax2307-table').innerHTML = `<div class="small-note">${entries2307.length? 'Walang tumugma sa search/filter.' : 'Wala pang data — i-run muna ang cor_2307_register_schema.sql sa Supabase, tapos mag-"+ Add entry".'}</div>`;
       return;
     }
+    // When a row's Client ID resolves to a real Registry entry, the Payor/
+    // Payor TIN cells are shown read-only and sourced live from the
+    // Registry -- same "type/pick the Client ID once" pattern as Sales
+    // Summary, so payor details never drift out of sync with the Registry.
+    const ENTRY2307_AUTO_FILLED_KEYS = ['payor_name','payor_tin'];
     const headRow = ENTRY_2307_COLS.map(([,label])=>`<th>${esc(label)}</th>`).join('') + '<th></th><th></th>';
     const rows = pool.map(r=>{
+      const matched = r.client_id_no ? findClientByIdNo(r.client_id_no) : null;
       const cells = ENTRY_2307_COLS.map(([key,,kind])=>{
-        const val = r[key];
+        const isAutoFilled = matched && ENTRY2307_AUTO_FILLED_KEYS.includes(key);
+        const val = isAutoFilled ? (key==='payor_name'? matched.NAME : matched.TIN) : r[key];
         const width = kind==='num' ? 85 : (key==='payee_address' ? 170 : (key==='income_type' ? 140 : 120));
-        const listAttr = key==='income_type' ? ' list="tax2307-income-type-options"' : '';
-        return `<td><input class="inline-text entry2307-cell${kind==='num'?' mono':''}" data-key="${esc(key)}" style="width:${width}px;"${listAttr} value="${val!==null && val!==undefined ? esc(val) : ''}"></td>`;
+        const listAttr = key==='income_type' ? ' list="tax2307-income-type-options"' : (key==='client_id_no' ? ' list="tax2307-client-id-options"' : '');
+        const roAttrs = isAutoFilled ? ' readonly title="Galing sa Client Registry (Client ID: '+esc(r.client_id_no)+') — i-edit sa Registry kung mali."' : '';
+        const roStyle = isAutoFilled ? 'background:var(--paper-line);color:var(--ink-soft);' : '';
+        return `<td><input class="inline-text entry2307-cell${kind==='num'?' mono':''}" data-key="${esc(key)}" style="width:${width}px;${roStyle}"${listAttr}${roAttrs} value="${val!==null && val!==undefined ? esc(val) : ''}"></td>`;
       }).join('');
       return `<tr data-id="${esc(r._id)}">${cells}<td><button class="tiny print-2307-btn" data-id="${esc(r._id)}">Print 2307</button></td><td><button class="tiny delete-2307-btn" data-id="${esc(r._id)}">Delete</button></td></tr>`;
     }).join('');
@@ -2495,8 +2518,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
               if(twInput) twInput.value = computed;
             }
           }
+          if(key==='client_id_no'){
+            // Re-resolve immediately: if the typed/picked ID matches a real
+            // client, snapshot their current Name/TIN into this row too (so
+            // exports/prints against cor_2307_entries keep working without
+            // a join) and re-render so those cells switch to their
+            // read-only, Registry-sourced display.
+            const matched = val ? findClientByIdNo(val) : null;
+            if(matched){
+              rec.payor_name = matched.NAME || null; rec.payor_tin = matched.TIN || null;
+              patch.payor_name = rec.payor_name; patch.payor_tin = rec.payor_tin;
+            }
+          }
           const { error } = await sb.from('cor_2307_entries').update(patch).eq('id', id);
           if(error){ console.error(error); toast('Babala: hindi na-save sa database — subukan ulit.'); }
+          if(key==='client_id_no') renderEntries2307();
         });
       });
     });
@@ -2666,13 +2702,28 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
   /* ===================== SAWT / 2307 RECEIVED TAB ===================== */
   let sawtEntries = [];
+  // "May Actual 2307?" -- explicit, separate from Certificate No. being
+  // blank: a withholding amount often shows up in the Daily Sales Record
+  // (and gets logged here) well before the physical/PDF certificate is
+  // actually in hand, so an empty Cert. No. field alone doesn't distinguish
+  // "not filled in yet" from "genuinely no certificate received".
+  const SAWT_HAS_CERT_OPTS = ['', 'Yes', 'Pending', 'No'];
+  // Claim Status -- these withheld amounts are usually NOT used right away
+  // (Q1/Q2 SAWT); most get accumulated and only actually claimed starting
+  // Q3 or on the Annual ITR, to cut down on quarterly SAWT prep work. This
+  // is deliberately separate from Period Quarter (WHEN it was received) --
+  // Claim Status tracks WHEN/IF it was actually used.
+  const SAWT_CLAIM_STATUS_OPTS = ['', 'Not Yet Claimed', 'Claimed sa SAWT Q1', 'Claimed sa SAWT Q2', 'Claimed sa SAWT Q3', 'Claimed sa SAWT Q4', 'Claimed sa Annual ITR'];
   const SAWT_COLS = [
     ['client_name','Client (Payee)','text'], ['client_tin','Client TIN','text'],
     ['payor_name','Payor Name','text'], ['payor_tin','Payor TIN','text'], ['payor_address','Payor Address','text'],
     ['income_type','Income Type','text'], ['atc_code','ATC','text'], ['tax_rate','Rate %','num'],
     ['period_year','Year','num'], ['period_quarter','Quarter','text'],
     ['gross_amount','Gross Amount','num'], ['tax_withheld','Tax Withheld','num'],
-    ['certificate_no','Cert. No.','text'], ['date_received','Date Received','text'], ['remarks','Remarks','text'],
+    ['certificate_no','Cert. No.','text'], ['date_received','Date Received','text'],
+    ['has_certificate','May Actual 2307?','select',SAWT_HAS_CERT_OPTS],
+    ['claim_status','Claim Status','select',SAWT_CLAIM_STATUS_OPTS],
+    ['remarks','Remarks','text'],
   ];
   function mapSawtFromDb(rows){
     return (rows||[]).map(r=>{
@@ -2685,10 +2736,24 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const sawtSearch = document.getElementById('sawt-search');
   const sawtYearFilter = document.getElementById('sawt-year-filter');
   const sawtQuarterFilter = document.getElementById('sawt-quarter-filter');
+  const sawtCertFilter = document.getElementById('sawt-cert-filter');
+  const sawtClaimFilter = document.getElementById('sawt-claim-filter');
   const addSawtBtn = document.getElementById('add-sawt-btn');
   sawtSearch.addEventListener('input', renderSawt);
   sawtYearFilter.addEventListener('change', renderSawt);
   sawtQuarterFilter.addEventListener('change', renderSawt);
+  sawtCertFilter.addEventListener('change', renderSawt);
+  sawtClaimFilter.addEventListener('change', renderSawt);
+  // Fixed enum options (not derived from data, since these should show the
+  // full set of possible statuses even before any row uses a given one --
+  // e.g. staff should be able to filter "Pending" certificates even on day
+  // one, not only after one exists).
+  sawtCertFilter.innerHTML = '<option value="">All (May Actual 2307?)</option>' +
+    SAWT_HAS_CERT_OPTS.filter(Boolean).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('') +
+    '<option value="__BLANK__">(blangko pa)</option>';
+  sawtClaimFilter.innerHTML = '<option value="">All (Claim Status)</option>' +
+    SAWT_CLAIM_STATUS_OPTS.filter(Boolean).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('') +
+    '<option value="__BLANK__">(blangko pa)</option>';
 
   function initSawtFilters(){
     const prevYear = sawtYearFilter.value;
@@ -2731,9 +2796,19 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const q = (sawtSearch.value||'').toLowerCase();
     const yf = sawtYearFilter.value;
     const qf = sawtQuarterFilter.value;
+    const cf = sawtCertFilter.value;
+    const clf = sawtClaimFilter.value;
     let pool = sawtEntries.filter(r=>{
       if(yf && String(r.period_year)!==yf) return false;
       if(qf && r.period_quarter!==qf) return false;
+      if(cf){
+        if(cf==='__BLANK__'){ if(r.has_certificate) return false; }
+        else if(r.has_certificate!==cf) return false;
+      }
+      if(clf){
+        if(clf==='__BLANK__'){ if(r.claim_status) return false; }
+        else if(r.claim_status!==clf) return false;
+      }
       if(q){
         const hay = [r.client_name, r.client_tin, r.payor_name, r.payor_tin].filter(Boolean).join(' ').toLowerCase();
         if(!hay.includes(q)) return false;
@@ -2749,9 +2824,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
     const headRow = SAWT_COLS.map(([,label])=>`<th>${esc(label)}</th>`).join('') + '<th></th>';
     const rows = pool.map(r=>{
-      const cells = SAWT_COLS.map(([key,,kind])=>{
+      const cells = SAWT_COLS.map(([key,,kind,opts])=>{
         const val = r[key];
-        const width = kind==='num' ? 85 : (key==='payor_address' ? 170 : 120);
+        const width = kind==='num' ? 85 : (kind==='select' ? 150 : (key==='payor_address' ? 170 : 120));
+        if(kind==='select'){
+          const optsHtml = opts.map(o=>`<option value="${esc(o)}"${(val||'')===o?' selected':''}>${o?esc(o):'—'}</option>`).join('');
+          return `<td><select class="inline-text sawt-cell" data-key="${esc(key)}" style="width:${width}px;">${optsHtml}</select></td>`;
+        }
         return `<td><input class="inline-text sawt-cell${kind==='num'?' mono':''}" data-key="${esc(key)}" style="width:${width}px;" value="${val!==null && val!==undefined ? esc(val) : ''}"></td>`;
       }).join('');
       return `<tr data-id="${esc(r._id)}">${cells}<td><button class="tiny delete-sawt-btn" data-id="${esc(r._id)}">Delete</button></td></tr>`;
