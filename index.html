@@ -394,6 +394,12 @@
           <select class="filter" id="reg-regmode-filter">
             <option value="">All Registration Modes</option>
           </select>
+          <select class="filter" id="reg-taxtype-filter">
+            <option value="">All Tax Types</option>
+          </select>
+          <select class="filter" id="reg-classif-filter">
+            <option value="">All Taxpayer Classifications</option>
+          </select>
           <button class="secondary" id="add-client-btn">+ Add client manually</button>
         </div>
         <div class="toolbar-right">
@@ -1096,9 +1102,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const searchInput = document.getElementById('search-input');
   const regStatusFilter = document.getElementById('reg-status-filter');
   const regRegModeFilter = document.getElementById('reg-regmode-filter');
+  const regTaxTypeFilter = document.getElementById('reg-taxtype-filter');
+  const regClassifFilter = document.getElementById('reg-classif-filter');
   searchInput.addEventListener('input', renderRegistry);
   regStatusFilter.addEventListener('change', renderRegistry);
   regRegModeFilter.addEventListener('change', renderRegistry);
+  regTaxTypeFilter.addEventListener('change', renderRegistry);
+  regClassifFilter.addEventListener('change', renderRegistry);
   document.getElementById('export-csv').addEventListener('click', exportCsv);
   document.getElementById('add-client-btn').addEventListener('click', ()=>openClientModal(null));
 
@@ -1109,15 +1119,27 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const regModes = Array.from(new Set(clients.map(c=>c['REGISTRATION MODE']).filter(Boolean))).sort();
     regRegModeFilter.innerHTML = '<option value="">All Registration Modes</option>' + regModes.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
     if(regModes.includes(prevRegMode)) regRegModeFilter.value = prevRegMode;
+    const prevTaxType = regTaxTypeFilter.value;
+    const taxTypes = Array.from(new Set(clients.map(c=>c['TAX TYPE']).filter(Boolean))).sort();
+    regTaxTypeFilter.innerHTML = '<option value="">All Tax Types</option>' + taxTypes.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    if(taxTypes.includes(prevTaxType)) regTaxTypeFilter.value = prevTaxType;
+    const prevClassif = regClassifFilter.value;
+    const classifs = Array.from(new Set(clients.map(c=>c['TAXPAYER CLASSIFICATION']).filter(Boolean))).sort();
+    regClassifFilter.innerHTML = '<option value="">All Taxpayer Classifications</option>' + classifs.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    if(classifs.includes(prevClassif)) regClassifFilter.value = prevClassif;
   }
 
   function renderRegistry(){
     const q = (searchInput.value||'').toLowerCase();
     const sf = regStatusFilter.value;
     const rmf = regRegModeFilter.value;
+    const ttf = regTaxTypeFilter.value;
+    const cff = regClassifFilter.value;
     const filtered = clients.filter(c=>{
       if(sf && c['CLIENT?']!==sf) return false;
       if(rmf && c['REGISTRATION MODE']!==rmf) return false;
+      if(ttf && c['TAX TYPE']!==ttf) return false;
+      if(cff && c['TAXPAYER CLASSIFICATION']!==cff) return false;
       if(!q) return true;
       const hay = [c.NAME, c['TRADE NAME'], c.TIN, c.RDO, c['REGISTERED ADDRESS'], c['CLIENT ID NO.'], c['WITHHOLDING TYPES']].join(' ').toLowerCase();
       return hay.includes(q);
