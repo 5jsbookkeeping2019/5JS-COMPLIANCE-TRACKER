@@ -318,6 +318,7 @@
       <button class="tab-btn" data-tab="sales">Sales Summary</button>
       <button class="tab-btn" data-tab="tax2307">2307 Register</button>
       <button class="tab-btn" data-tab="sawt">SAWT / 2307 Received</button>
+      <button class="tab-btn" data-tab="settings">Settings</button>
     </div>
 
     <!-- CALENDAR TAB -->
@@ -451,13 +452,12 @@
           <select class="filter" id="sales-year-filter"><option value="">All years</option></select>
           <select class="filter" id="sales-taxtype-filter"><option value="">All tax types</option></select>
           <select class="filter" id="sales-missing-filter"><option value="">Show all (walang missing-field filter)</option></select>
-          <button class="secondary" id="add-sales-btn">+ Add client</button>
         </div>
         <div class="toolbar-right">
           <span class="small-note" id="sales-count" style="margin:0;"></span>
         </div>
       </div>
-      <div class="small-note">Pinagsamang VAT at Non-VAT (NVAT) na clients, per quarter — mula sa Sales Summary file. Direktang i-edit ang kahit anong cell (kagaya ng Task Tracker) — awtomatikong nase-save sa live database. Gamitin ang "Show all" dropdown para makita kung sino ang wala pang laman sa isang partikular na field (hal. Q3 Sales) — hindi kasama dito ang mga totoong "0" (kumpirmadong zero filing), blangko lang. Ilagay/piliin ang Client ID (mula sa Client Registry) sa unang column para awtomatikong mapunan ang Client/TIN/Trade Name — hindi mo na kailangang i-type ulit ang mga 'yun.</div>
+      <div class="small-note">Pinagsamang VAT at Non-VAT (NVAT) na clients, per quarter — mula sa Sales Summary file. Direktang i-edit ang kahit anong cell (kagaya ng Task Tracker) — awtomatikong nase-save sa live database. Gamitin ang "Show all" dropdown para makita kung sino ang wala pang laman sa isang partikular na field (hal. Q3 Sales) — hindi kasama dito ang mga totoong "0" (kumpirmadong zero filing), blangko lang. Walang manual na "Add client" dito -- ang Client Registry ang pinagmumulan: bawat bagong client na idinagdag doon ay awtomatikong nakakakuha ng sariling row dito (Client ID/Name/TIN/Trade Name na agad naka-punan), kaya laging naka-link ang dalawa.</div>
       <datalist id="sales-client-id-options"></datalist>
       <div class="table-scroll" style="margin-top:10px;" id="sales-table"></div>
     </div>
@@ -512,6 +512,17 @@
       </div>
       <div class="small-note">Log ng BIR Form 2307 na NATANGGAP ng client (kabaligtaran ng 2307 Register — dito, ang client ang PAYEE na kinaltasan ng ibang party, hal. e-marketplace o customer). Ito ang pinagmumulan ng SAWT / creditable withholding tax na iki-claim sa 1701Q/1702Q. Direktang i-edit ang cells. Ipinapakita rin sa ibaba ang total tax withheld per filter — para agad makuha ang quarterly SAWT total. Ang withholding na nakikita sa Daily Sales Record ay hindi laging may kasamang aktwal na 2307 certificate agad, at hindi rin ito laging kaagad ginagamit (madalas Q3 o Annual ITR pa) — gamitin ang "May Actual 2307?" para markahan kung natanggap na talaga ang certificate, at ang "Claim Status" para malaman kung ginamit na ba ito o naka-batch pa lang, hiwalay sa kung ANONG quarter ito na-receive.</div>
       <div class="table-scroll" style="margin-top:10px;" id="sawt-table"></div>
+    </div>
+
+    <!-- SETTINGS TAB -->
+    <div class="tab-panel" id="panel-settings">
+      <h3 style="margin-top:0;">Sales Representative Options</h3>
+      <div class="small-note">Pinamamahalaang listahan ng mga pangalan na lumalabas sa "Sales Representative" dropdown sa Client Registry at sa "Sales Representative" column ng Sales Summary — para consistent ang spelling/pangalan kahit saan ito gamitin. Ang pagtanggal dito ay hindi nagbabago sa mga row na dati nang naka-assign sa pangalang tinanggal — value lang na hindi na pwedeng piliin ulit sa hinaharap.</div>
+      <div style="display:flex;gap:8px;margin-top:12px;max-width:420px;">
+        <input class="search-input" id="sales-rep-new-input" placeholder="Bagong pangalan ng Sales Representative...">
+        <button class="secondary" id="add-sales-rep-btn">+ Add</button>
+      </div>
+      <div class="table-scroll" style="margin-top:14px;max-width:420px;" id="sales-reps-table"></div>
     </div>
   </div>
   <div class="toast" id="toast"></div>
@@ -575,14 +586,29 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   let credsAccounts = {headers:['ACCOUNT','TIN','NAME','USERNAME','PASSWORD','EMAIL / mobile'], rows:[]};
   let credsOst = {headers:['GIS/AFS','SEC','USER','PASSWORD','EMAIL'], rows:[]};
   let salesSummary = [];
+  let salesReps = [];
 
-  // cor_sales_summary columns, in display order: [db_col, header_label, kind]
-  // kind 'num' -> right-aligned/peso-formatted, 'text' -> left-aligned as-is.
+  // Sales Representative options -- sourced from the managed list in the
+  // Settings tab (cor_sales_reps), not hard-coded, so staff can add/remove
+  // names without needing an app update. Mutated IN PLACE (never
+  // reassigned) so every place holding a reference to this array -- the
+  // Sales Summary "Sales Representative" column below, and the Client
+  // Registry select further down -- automatically sees the latest list.
+  let SALES_REP_OPTS = [['','— Piliin —']];
+  function refreshSalesRepOpts(){
+    SALES_REP_OPTS.length = 0;
+    SALES_REP_OPTS.push(['','— Piliin —']);
+    salesReps.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(r=>SALES_REP_OPTS.push([r.name, r.name]));
+  }
+
+  // cor_sales_summary columns, in display order: [db_col, header_label, kind, opts?]
+  // kind 'num' -> right-aligned/peso-formatted, 'text' -> left-aligned as-is,
+  // 'select' -> dropdown sourced from opts (array ref, e.g. SALES_REP_OPTS).
   const SALES_SUMMARY_COLS = [
     ['client_id_no','Client ID','text'],
     ['year','Year','num'], ['name','Client','text'], ['tin','TIN','text'], ['trade_name','Trade Name','text'],
     ['tax_type','Tax Type','text'], ['tax_option','Tax Option','text'], ['mq','M/Q','text'],
-    ['pf','PF','num'], ['agent','Agent','text'], ['birth_incorp_date','Birthday/Incorp.','text'],
+    ['pf','PF','num'], ['agent','Sales Representative','select',SALES_REP_OPTS], ['birth_incorp_date','Birthday/Incorp.','text'],
     ['civil_status','Civil Stat','text'], ['rental_tax_compensation','Rental Tax / Comp.','text'],
     ['q1_sales','Q1 Sales','num'], ['q1_expenses','Q1 Expenses','num'], ['q1_pt_tax_due','Q1 PT Due','num'],
     ['q1_pt_remarks','Q1 PT Remarks','text'], ['q1_pt_payment_remarks','Q1 PT Payment','text'],
@@ -630,6 +656,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     'BUSINESS SIZE':'business_size', 'CLIENT STATUS REMARKS':'client_status_remarks',
     'REGISTERING OFFICE':'registering_office', 'LINE OF BUSINESS CATEGORY':'line_of_business_category',
     'LINE OF BUSINESS CATEGORY 2':'line_of_business_category_2', 'LINE OF BUSINESS CATEGORY 3':'line_of_business_category_3',
+    'PROFESSIONAL FEE':'professional_fee', 'BILLING FREQUENCY':'billing_frequency',
+    'SALES REPRESENTATIVE':'sales_representative',
   };
   function mapClientFromDb(row){
     const c = {_id: row.id};
@@ -729,6 +757,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(tab === 'sales') renderSalesSummary();
     if(tab === 'tax2307') renderEntries2307();
     if(tab === 'sawt') renderSawt();
+    if(tab === 'settings') renderSalesReps();
   }
 
   document.getElementById('dismiss-banner').addEventListener('click', ()=>{
@@ -1191,7 +1220,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
   function exportCsv(){
     if(clients.length === 0){ toast('No clients to export'); return; }
-    const cols = ['CLIENT ID NO.','CLIENT?','RDO','TIN','NAME','TAXPAYER CLASSIFICATION','TIN REG. DATE','BUSINESS REG. DATE','BOOKKEEPING DATE','END OF SERVICE DATE','REGISTERED ADDRESS','ZIP CODE','TAX TYPE','FORMS','TRADE NAME','LINE OF BUSINESS / INDUSTRY','REGISTRATION MODE','ACCOUNTING METHOD','BOOKS OF ACCOUNTS TYPE','WITHHOLDING TYPES','EMAIL','CONTACT PERSON','CONTACT NO'];
+    const cols = ['CLIENT ID NO.','CLIENT?','RDO','TIN','NAME','TAXPAYER CLASSIFICATION','TIN REG. DATE','BUSINESS REG. DATE','BOOKKEEPING DATE','END OF SERVICE DATE','REGISTERED ADDRESS','ZIP CODE','TAX TYPE','FORMS','TRADE NAME','LINE OF BUSINESS / INDUSTRY','REGISTRATION MODE','ACCOUNTING METHOD','BOOKS OF ACCOUNTS TYPE','WITHHOLDING TYPES','PROFESSIONAL FEE','BILLING FREQUENCY','EMAIL','CONTACT PERSON','CONTACT NO'];
     const rows = clients.map(c => cols.map(k=>`"${String(k==='TIN' ? fmtTinPlain(c[k]) : (c[k]||'')).replace(/"/g,'""')}"`).join(','));
     const csv = [cols.join(','), ...rows].join('\n');
     const blob = new Blob([csv], {type:'text/csv'});
@@ -1474,6 +1503,20 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       ['','— Piliin —'], ['Manual','Manual'], ['Loose-Leaf','Loose-Leaf'], ['CAS','Computerized Accounting System (CAS)'],
     ]],
     ['WITHHOLDING TYPES','Withholding Types (comma-separated, e.g. Rental, Compensation, Professional Fee)','full'],
+    // 5Js's OWN service fee to the client -- separate from anything BIR --
+    // and how often it's billed, so staff know when to expect to invoice
+    // this client without having to check a separate list.
+    ['PROFESSIONAL FEE','Professional Fee (₱)',''],
+    ['BILLING FREQUENCY','Billing Frequency','','select',[
+      ['','— Piliin —'], ['Monthly','Monthly'], ['Quarterly','Quarterly'], ['Annually','Annually'],
+    ]],
+    // Who brought in / referred this client -- picked from the managed
+    // list in the Settings tab (Sales Representative Options ->
+    // Add/Delete), not free text, so names stay consistent everywhere
+    // this shows up (here and the Sales Summary "Sales Representative"
+    // column, which this auto-fills on a new client the same way
+    // Name/TIN/Trade Name/Tax Type already do).
+    ['SALES REPRESENTATIVE','Sales Representative','','select',SALES_REP_OPTS],
     ['EMAIL','Email',''], ['CONTACT PERSON','Contact Person',''], ['CONTACT NO','Contact No.',''],
     ['CLIENT?','Client Status','','select',[
       ['','— Piliin —'],
@@ -1895,6 +1938,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(isNew){
         clients.push(rec);
         clientById[rec._id] = rec;
+        await ensureSalesSummaryRowForClient(rec);
       } else {
         Object.assign(c, rec);
         if(diff.length) await logClientAudit('update', clientId, before, rec, diff);
@@ -2152,6 +2196,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       }
       clients.push(rec);
       clientById[rec._id] = rec;
+      await ensureSalesSummaryRowForClient(rec);
       toast('Naidagdag sa Client Registry.');
       area.innerHTML=''; document.getElementById('preview-area').innerHTML=''; fileInput.value='';
       initRegistryFilters();
@@ -2221,7 +2266,6 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const salesYearFilter = document.getElementById('sales-year-filter');
   const salesTaxTypeFilter = document.getElementById('sales-taxtype-filter');
   const salesMissingFilter = document.getElementById('sales-missing-filter');
-  const addSalesBtn = document.getElementById('add-sales-btn');
   salesSearch.addEventListener('input', renderSalesSummary);
   salesYearFilter.addEventListener('change', renderSalesSummary);
   salesTaxTypeFilter.addEventListener('change', renderSalesSummary);
@@ -2244,17 +2288,39 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     SALES_FROZEN_KEYS.forEach(k=>{ SALES_FROZEN_LEFT[k] = acc; acc += SALES_FROZEN_WIDTHS[k]; });
   })();
 
-  addSalesBtn.addEventListener('click', async ()=>{
-    addSalesBtn.disabled = true;
-    const defaultYear = salesYearFilter.value ? parseInt(salesYearFilter.value,10) : new Date().getFullYear();
-    const { data, error } = await sb.from('cor_sales_summary').insert({year: defaultYear}).select().single();
-    addSalesBtn.disabled = false;
-    if(error){ console.error(error); toast('Hindi na-add — subukan ulit.'); return; }
-    const rec = mapSalesSummaryFromDb([data])[0];
-    salesSummary.push(rec);
-    renderSalesSummary();
-    toast('Bagong row naidagdag — punan na ang mga field.');
-  });
+  // Sales Summary rows are no longer created manually here -- the Client
+  // Registry is the source of truth. Every time a NEW client is saved
+  // there (Add client manually, or Scan & Add/OCR), this creates their
+  // Sales Summary row for the current year automatically, pre-filled with
+  // Client ID/Name/TIN/Trade Name/Tax Type so the two never drift apart.
+  // Idempotent -- checks local state first, so it's harmless if called
+  // more than once for the same client+year.
+  // Only for client statuses that actually still have filing obligations
+  // -- YES (Active, includes "zero filing" clients -- that's just an
+  // Active client with a note in Client Status Remarks, not a separate
+  // status), FOR CLOSURE (still files zero/final returns until actually
+  // closed), and ANNUAL CLIENT (usually just 1701/1702 once a year, but
+  // still needs a row). NOT for NO / CLOSED (genuinely no longer clients)
+  // or blank/NEW (no filing obligation confirmed yet).
+  const SALES_SUMMARY_AUTO_STATUSES = new Set(['YES', 'FOR CLOSURE', 'ANNUAL CLIENT']);
+  async function ensureSalesSummaryRowForClient(rec){
+    if(!rec || !rec['CLIENT ID NO.']) return;
+    if(!SALES_SUMMARY_AUTO_STATUSES.has(String(rec['CLIENT?']||'').trim())) return;
+    const year = new Date().getFullYear();
+    const already = salesSummary.some(s => s.client_id_no === rec['CLIENT ID NO.'] && Number(s.year) === year);
+    if(already) return;
+    const insertRow = {
+      client_id_no: rec['CLIENT ID NO.'],
+      year, name: rec.NAME || null, tin: rec.TIN || null,
+      trade_name: rec['TRADE NAME'] || null, tax_type: rec['TAX TYPE'] || null,
+      agent: rec['SALES REPRESENTATIVE'] || null,
+    };
+    const { data, error } = await sb.from('cor_sales_summary').insert(insertRow).select().single();
+    if(error){ console.error(error); toast('Na-save ang client, pero may error sa pag-gawa ng Sales Summary row — subukan ulit mula sa Sales Summary tab.'); return; }
+    salesSummary.push(mapSalesSummaryFromDb([data])[0]);
+    initSalesSummaryFilters();
+    if(document.getElementById('sales-table')) renderSalesSummary();
+  }
 
   function initSalesSummaryFilters(){
     const prevTax = salesTaxTypeFilter.value;
@@ -2314,12 +2380,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const AUTO_FILLED_KEYS = ['name','tin','trade_name'];
     const rows = pool.map(r=>{
       const matched = r.client_id_no ? findClientByIdNo(r.client_id_no) : null;
-      const cells = SALES_SUMMARY_COLS.map(([key,,kind])=>{
+      const cells = SALES_SUMMARY_COLS.map(([key,,kind,opts])=>{
         const isAutoFilled = matched && AUTO_FILLED_KEYS.includes(key);
         const val = isAutoFilled ? (key==='name'? matched.NAME : key==='tin'? matched.TIN : matched['TRADE NAME']) : r[key];
         const frozen = SALES_FROZEN_KEYS.includes(key);
-        const width = frozen ? SALES_FROZEN_WIDTHS[key] : (kind==='num' ? 90 : (key==='tin' ? 110 : 130));
+        const width = frozen ? SALES_FROZEN_WIDTHS[key] : (kind==='num' ? 90 : (kind==='select' ? 150 : (key==='tin' ? 110 : 130)));
         const tdStyle = frozen ? `left:${SALES_FROZEN_LEFT[key]}px;` : '';
+        if(kind==='select'){
+          const optsHtml = opts.map(o=>`<option value="${esc(o[0])}"${(val||'')===o[0]?' selected':''}>${esc(o[1])}</option>`).join('');
+          return `<td class="${frozen?'frozen-col':''}" style="${tdStyle}"><select class="inline-text sales-cell" data-key="${esc(key)}" style="width:${width}px;">${optsHtml}</select></td>`;
+        }
         const listAttr = key==='client_id_no' ? ' list="sales-client-id-options"' : '';
         const roAttrs = isAutoFilled ? ' readonly title="Galing sa Client Registry (Client ID: '+esc(r.client_id_no)+') — i-edit sa Registry kung mali."' : '';
         const roStyle = isAutoFilled ? 'background:var(--paper-line);color:var(--ink-soft);' : '';
@@ -2884,6 +2954,49 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
   }
 
+  /* ===================== SETTINGS TAB (Sales Representative list) ===================== */
+  function mapSalesRepsFromDb(rows){
+    return (rows||[]).map(r=>({_id:r.id, name:r.name}));
+  }
+  document.getElementById('add-sales-rep-btn').addEventListener('click', async ()=>{
+    const input = document.getElementById('sales-rep-new-input');
+    const name = (input.value||'').trim();
+    if(!name){ toast('Ilagay ang pangalan.'); return; }
+    if(salesReps.some(r=>r.name.toLowerCase()===name.toLowerCase())){ toast('Nasa listahan na ang pangalang ito.'); return; }
+    const { data, error } = await sb.from('cor_sales_reps').insert({name}).select().single();
+    if(error){ console.error(error); toast('Hindi na-add — subukan ulit.'); return; }
+    salesReps.push({_id:data.id, name:data.name});
+    refreshSalesRepOpts();
+    input.value = '';
+    renderSalesReps();
+    toast('Naidagdag sa listahan.');
+  });
+  function renderSalesReps(){
+    const area = document.getElementById('sales-reps-table');
+    if(!salesReps.length){
+      area.innerHTML = `<div class="small-note">Wala pang laman — i-run muna ang cor_sales_reps_schema.sql sa Supabase, tapos magdagdag ng pangalan sa itaas.</div>`;
+      return;
+    }
+    const rows = salesReps.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(r=>
+      `<tr data-id="${esc(r._id)}"><td>${esc(r.name)}</td><td><button class="tiny delete-sales-rep-btn" data-id="${esc(r._id)}">Delete</button></td></tr>`
+    ).join('');
+    area.innerHTML = `<table><thead><tr><th>Pangalan</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+    area.querySelectorAll('.delete-sales-rep-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const id = btn.dataset.id;
+        const rec = salesReps.find(r=>r._id===id);
+        if(!confirm(`Tanggalin sa listahan ang "${rec? rec.name : ''}"? Hindi ito mag-aalis ng pangalan sa mga client/row na dati nang na-assign dito — value lang na hindi na pwedeng piliin ulit.`)) return;
+        btn.disabled = true;
+        const { error } = await sb.from('cor_sales_reps').delete().eq('id', id);
+        if(error){ console.error(error); toast('Hindi natanggal — subukan ulit.'); btn.disabled = false; return; }
+        salesReps = salesReps.filter(r=>r._id!==id);
+        refreshSalesRepOpts();
+        renderSalesReps();
+        toast('Natanggal sa listahan.');
+      });
+    });
+  }
+
   function openCredsModal(kind, id){
     const isNew = !id;
     const fields = kind==='accounts' ? CREDS_ACCOUNTS_FIELDS : CREDS_OST_FIELDS;
@@ -3032,17 +3145,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
 
   async function loadAllData(){
-    const [clientsData, tasksData, accData, ostData, salesData, entries2307Data, sawtData] = await Promise.all([
+    const [clientsData, tasksData, accData, ostData, salesData, entries2307Data, sawtData, salesRepsData] = await Promise.all([
       fetchAllRows('cor_clients'),
       fetchAllRows('cor_tasks'),
       fetchAllRows('cor_credentials_accounts'),
       fetchAllRows('cor_credentials_ost'),
-      // cor_sales_summary / cor_2307_entries / cor_2307_received are newer,
-      // optional tables -- don't let a missing table (schema not run yet)
-      // break the rest of the app from loading.
+      // cor_sales_summary / cor_2307_entries / cor_2307_received / cor_sales_reps
+      // are newer, optional tables -- don't let a missing table (schema not
+      // run yet) break the rest of the app from loading.
       fetchAllRows('cor_sales_summary').catch(err=>{ console.error(err); return []; }),
       fetchAllRows('cor_2307_entries').catch(err=>{ console.error(err); return []; }),
       fetchAllRows('cor_2307_received').catch(err=>{ console.error(err); return []; }),
+      fetchAllRows('cor_sales_reps').catch(err=>{ console.error(err); return []; }),
     ]);
     clients = clientsData.map(mapClientFromDb);
     clientById = {};
@@ -3053,6 +3167,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     salesSummary = mapSalesSummaryFromDb(salesData);
     entries2307 = mapEntry2307FromDb(entries2307Data);
     sawtEntries = mapSawtFromDb(sawtData);
+    salesReps = mapSalesRepsFromDb(salesRepsData);
+    refreshSalesRepOpts();
     initRegistryFilters();
     initTrackerFilters();
     initSalesSummaryFilters();
