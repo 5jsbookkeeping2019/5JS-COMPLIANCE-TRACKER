@@ -149,6 +149,13 @@
     border-radius:20px;padding:5px 11px;cursor:pointer;color:var(--ink-soft);user-select:none;
   }
   #cor-app .chip.on{background:var(--brand);border-color:var(--brand);color:#fff;}
+  #cor-app .forms-grid{display:flex;flex-direction:column;gap:6px;border:1px solid var(--paper-line);border-radius:var(--radius);padding:8px 10px;background:#fff;}
+  #cor-app .forms-grid-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:3px 0;border-bottom:1px dashed var(--paper-line);}
+  #cor-app .forms-grid-row:last-child{border-bottom:none;}
+  #cor-app .forms-grid-row-label{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.4px;text-transform:uppercase;color:var(--ink-soft);width:150px;flex-shrink:0;}
+  #cor-app .forms-grid-row-boxes{display:flex;flex-wrap:wrap;gap:10px;}
+  #cor-app .forms-chk{display:inline-flex;align-items:center;gap:4px;font-family:'IBM Plex Sans',sans-serif;font-size:12.5px;cursor:pointer;}
+  #cor-app .forms-chk input{width:auto;}
 
   #cor-app .registry-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap;}
   #cor-app .filter-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
@@ -349,6 +356,7 @@
             <option value="P">Pending</option>
             <option value="OVERDUE">Overdue</option>
             <option value="D">Done</option>
+            <option value="Z">Zero / No Transaction</option>
             <option value="N">Has note</option>
             <option value="A">N/A (not applicable)</option>
           </select>
@@ -358,6 +366,13 @@
             <option value="DUE_UNPAID">May Tax Due, hindi pa binigay sa liaison</option>
             <option value="LIAISON">Given to Liaison</option>
             <option value="PAID">Paid</option>
+          </select>
+          <select class="filter" id="tr-stage-filter">
+            <option value="">All stages</option>
+            <option value="Ingestion">1. Ingestion</option>
+            <option value="Return Prep & QA">2. Return Prep &amp; QA</option>
+            <option value="Sign-off & Payment">3. Sign-off &amp; Payment</option>
+            <option value="Filing & Archive">4. Filing &amp; Archive</option>
           </select>
         </div>
         <div class="toolbar-right">
@@ -599,6 +614,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     'REGISTRATION MODE':'registration_mode', 'ACCOUNTING METHOD':'accounting_method',
     'BOOKS OF ACCOUNTS TYPE':'books_of_accounts_type', 'WITHHOLDING TYPES':'withholding_types',
     'REG INCOME TAX':'reg_income_tax', 'REG VAT/PT':'reg_vat_pt', 'REG EWT':'reg_ewt', 'REG WITHHOLDING COMP':'reg_wc',
+    'BUSINESS SIZE':'business_size', 'CLIENT STATUS REMARKS':'client_status_remarks',
   };
   function mapClientFromDb(row){
     const c = {_id: row.id};
@@ -633,6 +649,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       proofUploadedAt: row.proof_uploaded_at || null,
       proofUploadedBy: row.proof_uploaded_by || '',
       source: row.source || 'computed',
+      stage: row.stage || '',
+      assignedTo: row.assigned_to || '',
     };
   }
   function mapCredsAccountsFromDb(rows){
@@ -830,8 +848,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const trStatusFilter = document.getElementById('tr-status-filter');
   const trNotesFilter = document.getElementById('tr-notes-filter');
   const trPaymentFilter = document.getElementById('tr-payment-filter');
+  const trStageFilter = document.getElementById('tr-stage-filter');
   [trSearch, trNotesFilter].forEach(el=>el.addEventListener('input', renderTracker));
-  [trFormFilter, trPeriodFilter, trStatusFilter, trPaymentFilter].forEach(el=>el.addEventListener('change', renderTracker));
+  [trFormFilter, trPeriodFilter, trStatusFilter, trPaymentFilter, trStageFilter].forEach(el=>el.addEventListener('change', renderTracker));
 
   // Rebuilding the <select> options (needed whenever the task list changes,
   // e.g. a live update from another staff member) used to always reset the
@@ -864,21 +883,24 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const nq = (trNotesFilter.value||'').toLowerCase();
     const ff = trFormFilter.value, pf = trPeriodFilter.value, sf = trStatusFilter.value;
     const payf = trPaymentFilter.value;
+    const stf = trStageFilter.value;
     let pool = tasks.filter(t=>{
       if(ff && t.form!==ff) return false;
       if(pf && t.period!==pf) return false;
       if(sf==='OVERDUE' && !isOverdue(t)) return false;
       else if(sf==='D' && t.status!=='DONE') return false;
       else if(sf==='P' && t.status!=='PENDING') return false;
+      else if(sf==='Z' && t.status!=='ZERO') return false;
       else if(sf==='N' && !t.notes) return false;
       else if(sf==='A' && t.status!=='NA') return false;
       if(payf==='DUE_UNPAID' && !(t.taxDue!==null && t.taxDue>0 && !t.paymentStatus)) return false;
       else if(payf==='LIAISON' && t.paymentStatus!=='GIVEN TO LIAISON') return false;
       else if(payf==='PAID' && t.paymentStatus!=='PAID') return false;
+      if(stf && t.stage!==stf) return false;
       if(nq && !(t.notes||'').toLowerCase().includes(nq)) return false;
       if(q){
         const c = taskClient(t);
-        const hay = (c.NAME+' '+c.TIN+' '+t.form+' '+t.period+' '+(t.notes||'')).toLowerCase();
+        const hay = (c.NAME+' '+c.TIN+' '+t.form+' '+t.period+' '+(t.notes||'')+' '+(t.assignedTo||'')).toLowerCase();
         if(!hay.includes(q)) return false;
       }
       return true;
@@ -900,6 +922,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           <select class="inline-status status-select">
             <option value="PENDING" ${t.status==='PENDING'?'selected':''}>Pending</option>
             <option value="DONE" ${t.status==='DONE'?'selected':''}>Done</option>
+            <option value="ZERO" ${t.status==='ZERO'?'selected':''}>Zero / No Transaction</option>
             <option value="NOTE" ${t.status==='NOTE'?'selected':''}>Note only</option>
             <option value="NA" ${t.status==='NA'?'selected':''}>N/A (not applicable)</option>
           </select>
@@ -907,6 +930,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         </td>
         <td><input class="inline-text donebyf" style="width:80px;" value="${esc(t.doneBy)}" placeholder="who"></td>
         <td><input class="inline-text donedatef" style="width:60px;" value="${esc(t.doneDate)}" placeholder="m/d"></td>
+        <td>
+          <select class="inline-status stage-select" style="width:100%;">
+            <option value="" ${!t.stage?'selected':''}>—</option>
+            <option value="Ingestion" ${t.stage==='Ingestion'?'selected':''}>1. Ingestion</option>
+            <option value="Return Prep & QA" ${t.stage==='Return Prep & QA'?'selected':''}>2. Return Prep &amp; QA</option>
+            <option value="Sign-off & Payment" ${t.stage==='Sign-off & Payment'?'selected':''}>3. Sign-off &amp; Payment</option>
+            <option value="Filing & Archive" ${t.stage==='Filing & Archive'?'selected':''}>4. Filing &amp; Archive</option>
+          </select>
+          <input class="inline-text assignedf" style="width:90px;margin-top:4px;" list="assigned-to-list" value="${esc(t.assignedTo)}" placeholder="assigned to">
+        </td>
         <td>
           <select class="inline-status payment-status-select">
             <option value="" ${!t.paymentStatus?'selected':''}>—</option>
@@ -928,9 +961,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         <td><input class="inline-text notesf" style="width:140px;" value="${esc(t.notes)}" placeholder="notes"></td>
       </tr>`;
     }).join('');
-    document.getElementById('tracker-table').innerHTML = `<table>
-      <thead><tr><th>Client</th><th>Form</th><th>Period</th><th>Due</th><th>Tax Due</th><th>Status</th><th>Done by</th><th>Date</th><th>Payment</th><th>Proof</th><th>Notes</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="11" style="text-align:center;color:var(--ink-soft);padding:24px;">Walang task na tumugma.</td></tr>'}</tbody>
+    const assignedNames = Array.from(new Set(tasks.map(t=>t.assignedTo).filter(Boolean))).sort();
+    document.getElementById('tracker-table').innerHTML = `<datalist id="assigned-to-list">${assignedNames.map(n=>`<option value="${esc(n)}">`).join('')}</datalist><table>
+      <thead><tr><th>Client</th><th>Form</th><th>Period</th><th>Due</th><th>Tax Due</th><th>Status</th><th>Done by</th><th>Date</th><th>Stage / Assigned</th><th>Payment</th><th>Proof</th><th>Notes</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="12" style="text-align:center;color:var(--ink-soft);padding:24px;">Walang task na tumugma.</td></tr>'}</tbody>
     </table>`;
     document.getElementById('tracker-table').querySelectorAll('tr[data-tid]').forEach(tr=>{
       const tid = tr.dataset.tid;
@@ -989,6 +1023,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       tr.querySelector('.liaisonf').addEventListener('change', async e=>{
         t.liaison = e.target.value;
         const { error } = await sb.from('cor_tasks').update({liaison: t.liaison || null}).eq('id', t.id);
+        if(error){ console.error(error); toast('Babala: hindi na-save sa database — subukan ulit.'); }
+      });
+      tr.querySelector('.stage-select').addEventListener('change', async e=>{
+        t.stage = e.target.value;
+        const { error } = await sb.from('cor_tasks').update({stage: t.stage || null}).eq('id', t.id);
+        if(error){ console.error(error); toast('Babala: hindi na-save sa database — subukan ulit.'); }
+      });
+      tr.querySelector('.assignedf').addEventListener('change', async e=>{
+        t.assignedTo = e.target.value;
+        const { error } = await sb.from('cor_tasks').update({assigned_to: t.assignedTo || null}).eq('id', t.id);
         if(error){ console.error(error); toast('Babala: hindi na-save sa database — subukan ulit.'); }
       });
       const proofInput = tr.querySelector('.proof-file-input');
@@ -1153,8 +1197,192 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const CLIENT_FIELDS = [
     ['CLIENT ID NO.','Client ID No.',''],
     ['NAME','Client Name','full'], ['TRADE NAME','Trade Name',''],
-    ['TIN','TIN',''], ['RDO','RDO Code/Name',''],
-    ['TAXPAYER CLASSIFICATION','Taxpayer Classification',''], ['TAX TYPE','Tax Type (VAT/NVAT/etc.)',''],
+    ['TIN','TIN',''],
+    // RDO Code -- dropdown of official BIR Revenue District Offices (sourced
+    // Sep 2026; 131 entries incl. the Large Taxpayers Division RDOs). Existing
+    // client rows already store the plain code (e.g. "41", "54B") with no
+    // leading zero, so option VALUES match that convention exactly -- no data
+    // migration needed for this field.
+    ['RDO','RDO Code','','select',[
+      ['','— Piliin —'],
+      ['1','1 — Laoag City, Ilocos Norte'],
+      ['2','2 — Vigan, Ilocos Sur'],
+      ['3','3 — San Fernando, La Union'],
+      ['4','4 — Calasiao, West Pangasinan'],
+      ['5','5 — Alaminos, Pangasinan'],
+      ['6','6 — Urdaneta, Pangasinan'],
+      ['7','7 — Bangued, Abra'],
+      ['8','8 — Baguio City'],
+      ['9','9 — La Trinidad, Benguet'],
+      ['10','10 — Bontoc, Mt. Province'],
+      ['11','11 — Tabuk City, Kalinga'],
+      ['12','12 — Lagawe, Ifugao'],
+      ['13','13 — Tuguegarao, Cagayan'],
+      ['14','14 — Bayombong, Nueva Vizcaya'],
+      ['15','15 — Naguilian, Isabela'],
+      ['16','16 — Cabarroguis, Quirino'],
+      ['17A','17A — Tarlac City, Tarlac'],
+      ['17B','17B — Paniqui, Tarlac'],
+      ['18','18 — Olongapo City'],
+      ['19','19 — Subic Bay Freeport Zone'],
+      ['20','20 — Balanga, Bataan'],
+      ['21A','21A — North Pampanga'],
+      ['21B','21B — South Pampanga'],
+      ['21C','21C — Clark Freeport Zone'],
+      ['22','22 — Baler, Aurora'],
+      ['23A','23A — North Nueva Ecija'],
+      ['23B','23B — South Nueva Ecija'],
+      ['24','24 — Valenzuela City'],
+      ['25A','25A — Plaridel, Bulacan'],
+      ['25B','25B — Sta. Maria, Bulacan'],
+      ['26','26 — Malabon-Navotas'],
+      ['27','27 — Caloocan City'],
+      ['28','28 — Novaliches'],
+      ['29','29 — Tondo - San Nicolas'],
+      ['30','30 — Binondo'],
+      ['31','31 — Sta. Cruz'],
+      ['32','32 — Quiapo-Sampaloc-San Miguel-Sta. Mesa'],
+      ['33','33 — Intramuros-Ermita-Malate'],
+      ['34','34 — Paco-Pandacan-Sta. Ana-San Andres'],
+      ['35','35 — Romblon'],
+      ['36','36 — Puerto Princesa'],
+      ['37','37 — San Jose, Occidental Mindoro'],
+      ['38','38 — North Quezon City'],
+      ['39','39 — South Quezon City'],
+      ['40','40 — Cubao'],
+      ['41','41 — Mandaluyong City'],
+      ['42','42 — San Juan'],
+      ['43','43 — Pasig'],
+      ['44','44 — Taguig-Pateros'],
+      ['45','45 — Marikina'],
+      ['46','46 — Cainta-Taytay'],
+      ['47','47 — East Makati'],
+      ['48','48 — West Makati'],
+      ['49','49 — North Makati'],
+      ['50','50 — South Makati'],
+      ['51','51 — Pasay City'],
+      ['52','52 — Paranaque'],
+      ['53A','53A — Las Pinas City'],
+      ['53B','53B — Muntinlupa City'],
+      ['54A','54A — Trece Martirez City, East Cavite'],
+      ['54B','54B — Kawit, West Cavite'],
+      ['55','55 — San Pablo City'],
+      ['56','56 — Calamba, Laguna'],
+      ['57','57 — Binan, Laguna'],
+      ['58','58 — Batangas City'],
+      ['59','59 — Lipa City'],
+      ['60','60 — Lucena City'],
+      ['61','61 — Gumaca, Quezon'],
+      ['62','62 — Boac, Marinduque'],
+      ['63','63 — Calapan, Oriental Mindoro'],
+      ['64','64 — Talisay, Camarines Norte'],
+      ['65','65 — Naga City'],
+      ['66','66 — Iriga City'],
+      ['67','67 — Legazpi City, Albay'],
+      ['68','68 — Sorsogon, Sorsogon'],
+      ['69','69 — Virac, Catanduanes'],
+      ['70','70 — Masbate, Masbate'],
+      ['71','71 — Kalibo, Aklan'],
+      ['72','72 — Roxas City'],
+      ['73','73 — San Jose, Antique'],
+      ['74','74 — Iloilo City'],
+      ['75','75 — Zarraga, Iloilo City'],
+      ['76','76 — Victorias City, Negros Occidental'],
+      ['77','77 — Bacolod City'],
+      ['78','78 — Binalbagan, Negros Occidental'],
+      ['79','79 — Dumaguete City'],
+      ['80','80 — Mandaue City'],
+      ['81','81 — Cebu City North'],
+      ['82','82 — Cebu City South'],
+      ['83','83 — Talisay City, Cebu'],
+      ['84','84 — Tagbilaran City'],
+      ['85','85 — Catarman, Northern Samar'],
+      ['86','86 — Borongan, Eastern Samar'],
+      ['87','87 — Calbayog City, Samar'],
+      ['88','88 — Tacloban City'],
+      ['89','89 — Ormoc City'],
+      ['90','90 — Maasin, Southern Leyte'],
+      ['91','91 — Dipolog City'],
+      ['92','92 — Pagadian City, Zamboanga del Sur'],
+      ['93A','93A — Zamboanga City'],
+      ['93B','93B — Ipil, Zamboanga Sibugay'],
+      ['94','94 — Isabela, Basilan'],
+      ['95','95 — Jolo, Sulu'],
+      ['96','96 — Bongao, Tawi-Tawi'],
+      ['97','97 — Gingoog City'],
+      ['98','98 — Cagayan de Oro City'],
+      ['99','99 — Malaybalay City, Bukidnon'],
+      ['100','100 — Ozamis City'],
+      ['101','101 — Iligan City'],
+      ['102','102 — Marawi City'],
+      ['103','103 — Butuan City'],
+      ['104','104 — Bayugan City, Agusan del Sur'],
+      ['105','105 — Surigao City'],
+      ['106','106 — Tandag, Surigao del Sur'],
+      ['107','107 — Cotabato City'],
+      ['108','108 — Kidapawan, North Cotabato'],
+      ['109','109 — Tacurong, Sultan Kudarat'],
+      ['110','110 — General Santos City'],
+      ['111','111 — Koronadal City, South Cotabato'],
+      ['112','112 — Tagum, Davao del Norte'],
+      ['113A','113A — West Davao City'],
+      ['113B','113B — East Davao City'],
+      ['114','114 — Mati, Davao Oriental'],
+      ['115','115 — Digos, Davao del Sur'],
+      ['116','116 — Large Taxpayers Division - National Office'],
+      ['121','121 — Large Taxpayers Division - National Office'],
+      ['123','123 — Large Taxpayers Division - National Office'],
+      ['124','124 — Large Taxpayers Division - National Office'],
+      ['125','125 — Large Taxpayers Division - National Office'],
+      ['126','126 — Large Taxpayers Division - National Office'],
+      ['127','127 — Large Taxpayers Division - National Office'],
+    ]],
+    // Taxpayer Classification -- dropdown per BIR Form 1901 (individuals) /
+    // 1903 (corporations & partnerships) taxpayer-type categories.
+    ['TAXPAYER CLASSIFICATION','Taxpayer Classification (BIR)','','select',[
+      ['','— Piliin —'],
+      ['Single Proprietor','Single Proprietor (Individual)'],
+      ['Professional','Professional / Self-Employed (Individual)'],
+      ['Professional & Single Proprietor','Professional & Single Proprietor (Individual, mixed self-employed)'],
+      ['Mixed Income Earner','Mixed Income Earner (Business/Profession + Compensation)'],
+      ['Estate','Estate (Individual)'],
+      ['Trust','Trust (Individual)'],
+      ['Non-Resident Alien Engaged in Trade/Business','Non-Resident Alien Engaged in Trade/Business'],
+      ['Corporation (Domestic)','Corporation (Domestic)'],
+      ['One Person Corporation (OPC)','One Person Corporation (OPC)'],
+      ['General Partnership','General Partnership'],
+      ['Limited Partnership','Limited Partnership'],
+      ['General Professional Partnership (GPP)','General Professional Partnership (GPP)'],
+      ['Cooperative','Cooperative'],
+      ['Non-Stock, Non-Profit Organization','Non-Stock, Non-Profit Organization'],
+      ['Joint Venture','Joint Venture'],
+      ['Government Owned and Controlled Corporation (GOCC)','GOCC'],
+      ['Resident Foreign Corporation','Resident Foreign Corporation'],
+    ]],
+    // Tax Type -- dropdown. VAT / Non-VAT / Branch per user's spec, plus two
+    // extra options kept because real existing data actually uses them
+    // (13 clients on the 8% flat-rate option, 1 on Non-Profit) -- added so no
+    // client's real classification gets silently dropped by the migration.
+    ['TAX TYPE','Tax Type','','select',[
+      ['','— Piliin —'],
+      ['VAT','VAT'],
+      ['Non-VAT','Non-VAT'],
+      ['Non-VAT (8% Flat Rate)','Non-VAT — 8% Flat Income Tax Rate'],
+      ['Branch','Branch'],
+      ['Non-Profit Organization','Non-Profit Organization'],
+    ]],
+    // Business Size per RA 11976 (EOPT) / RR 8-2024 -- separate dimension from
+    // "Taxpayer Classification" above (which is Individual vs Corporation).
+    // Thresholds are ANNUAL GROSS SALES: Micro <3M, Small 3M-<20M,
+    // Medium 20M-<1B, Large >=1B. This affects audit exposure/penalty ceilings
+    // and invoicing rules per the 200+ clients operations reference notes.
+    ['BUSINESS SIZE','Business Size (RA 11976/EOPT)','','select',[
+      ['','— Piliin —'],
+      ['Micro','Micro (< ₱3M gross sales)'],
+      ['Small','Small (₱3M – <₱20M)'],
+      ['Medium','Medium (₱20M – <₱1B)'],
+      ['Large','Large (≥₱1B)'],
+    ]],
     // Registered Tax Types per the client's BIR Form 2303 (COR) -- structured
     // checkboxes instead of remembering/typing form codes by hand. These
     // drive the "Auto-fill Forms" suggestion button below (see
@@ -1168,13 +1396,128 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     ['BOOKKEEPING DATE','Bookkeeping Start Date (YYYY-MM-DD)',''],
     ['END OF SERVICE DATE','End of Service Date (YYYY-MM-DD) — leave blank while active',''],
     ['REGISTERED ADDRESS','Registered Address','full'], ['ZIP CODE','Zip Code',''],
-    ['LINE OF BUSINESS / INDUSTRY','Line of Business','full'], ['FORMS','Forms (comma-separated, e.g. 1701, RF, 2551Q)','full'],
-    ['REGISTRATION MODE','Registration Mode (eFPS/eBIRForms)',''], ['ACCOUNTING METHOD','Accounting Method (Cash/Accrual)',''],
-    ['BOOKS OF ACCOUNTS TYPE','Books of Accounts Type (Manual/Loose-leaf/CAS)',''],
+    ['LINE OF BUSINESS / INDUSTRY','Line of Business','full'],
+    // Tax Forms -- rendered as a grid of row-grouped checkboxes (see
+    // formsGridHtml/FORMS_GRID_ROWS below) instead of a free-text list.
+    // Still stored in the same FORMS column as a comma-separated string, so
+    // nothing downstream (task generation, Auto-fill button, OCR import)
+    // needs to change -- only the input widget changed.
+    ['FORMS','BIR Forms / Tax Compliance','full','formsgrid'],
+    ['REGISTRATION MODE','Registration Mode','','select',[
+      ['','— Piliin —'], ['eFPS','eFPS'], ['eBIRForms','eBIRForms'],
+    ]],
+    ['ACCOUNTING METHOD','Accounting Method','','select',[
+      ['','— Piliin —'], ['Cash','Cash Basis'], ['Accrual','Accrual Basis'],
+    ]],
+    ['BOOKS OF ACCOUNTS TYPE','Books of Accounts Type','','select',[
+      ['','— Piliin —'], ['Manual','Manual'], ['Loose-Leaf','Loose-Leaf'], ['CAS','Computerized Accounting System (CAS)'],
+    ]],
     ['WITHHOLDING TYPES','Withholding Types (comma-separated, e.g. Rental, Compensation, Professional Fee)','full'],
     ['EMAIL','Email',''], ['CONTACT PERSON','Contact Person',''], ['CONTACT NO','Contact No.',''],
-    ['CLIENT?','Client Status (YES/NO/FOR CLOSURE/etc.)',''],
+    ['CLIENT?','Client Status','','select',[
+      ['','— Piliin —'],
+      ['YES','Active (YES)'],
+      ['NO','No Longer Client (NO)'],
+      ['FOR CLOSURE','For Closure'],
+      ['CLOSED','Closed'],
+      ['ANNUAL CLIENT','Annual Client Only'],
+      ['NEW','New Client'],
+    ]],
+    ['CLIENT STATUS REMARKS','Client Status Remarks / Notes','full'],
   ];
+
+  // Row-grouped Tax Forms checkbox grid (Client Registry). One-way cascade:
+  // checking a trigger form auto-checks its dependents (never auto-unchecks)
+  // -- per the user's spec: VAT Tax Type -> SLSP; 0619E -> 1604E + QAP;
+  // 1601C -> 1604C + Alphalist.
+  const FORMS_GRID_ROWS = [
+    {label:'Income Tax', forms:['1701Q','1701','1702Q','1702']},
+    {label:'VAT / Percentage Tax', forms:['2550Q','2551Q','SLSP']},
+    {label:'Expanded Withholding Tax', forms:['0619E','1601EQ','QAP','1604E']},
+    {label:'Withholding on Compensation', forms:['1601C','1604C','Alphalist','2316']},
+    {label:'Final Withholding Tax', forms:['0619F','1601FQ','1604F']},
+  ];
+  const FORMS_CASCADE = { '0619E':['1604E','QAP'], '1601C':['1604C','Alphalist'] };
+  // Renders <option>s for a CLIENT_FIELDS select field. If the client's
+  // current value doesn't match any predefined option (old free-text data,
+  // a typo, a value the dropdown doesn't cover yet), an extra option is
+  // prepended showing that raw value -- so it stays visibly selected
+  // instead of silently reverting to blank. Same "never destroy data
+  // silently" principle as the Registry-protection work (Problem #1).
+  function selectOptionsHtml(opts, currentVal){
+    const list = opts || [];
+    const cur = String(currentVal||'');
+    const known = list.some(([v])=>v===cur);
+    const extra = (cur && !known) ? `<option value="${esc(cur)}" selected>⚠ ${esc(cur)} (di-kilalang halaga)</option>` : '';
+    return extra + list.map(([v,l])=>`<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(l)}</option>`).join('');
+  }
+  const FORMS_GRID_KNOWN = new Set(FORMS_GRID_ROWS.flatMap(r=>r.forms).map(f=>f.toUpperCase()));
+  function parseFormsCsv(csv){ return String(csv||'').split(',').map(s=>s.trim()).filter(Boolean); }
+  function formsGridHtml(formsCsv){
+    const activeCodes = parseFormsCsv(formsCsv);
+    const active = new Set(activeCodes.map(f=>f.toUpperCase()));
+    const other = activeCodes.filter(f=>!FORMS_GRID_KNOWN.has(f.toUpperCase()));
+    const rowsHtml = FORMS_GRID_ROWS.map(r => `
+      <div class="forms-grid-row">
+        <div class="forms-grid-row-label">${esc(r.label)}</div>
+        <div class="forms-grid-row-boxes">${r.forms.map(f=>`<label class="forms-chk"><input type="checkbox" class="forms-grid-cb" data-form="${esc(f)}" ${active.has(f.toUpperCase())?'checked':''}>${esc(f)}</label>`).join('')}</div>
+      </div>
+    `).join('');
+    return `
+      <div class="field full">
+        <label>BIR Forms / Tax Compliance</label>
+        <div class="forms-grid">${rowsHtml}</div>
+        <input data-key="FORMS_OTHER" value="${esc(other.join(', '))}" placeholder="Iba pang forms (comma-separated, hal. RF, 1905)" style="margin-top:6px;">
+      </div>
+    `;
+  }
+  // Wires the cascade rules onto a rendered forms grid, and makes the Tax
+  // Type select auto-check SLSP when set to VAT. `root` is the modal/area
+  // element containing both the forms grid and the TAX TYPE select.
+  function wireFormsGridCascade(root){
+    root.querySelectorAll('.forms-grid-cb').forEach(cb=>{
+      cb.addEventListener('change', ()=>{
+        const deps = cb.checked ? FORMS_CASCADE[cb.dataset.form] : null;
+        if(deps) deps.forEach(dep=>{
+          const depCb = root.querySelector(`.forms-grid-cb[data-form="${dep}"]`);
+          if(depCb && !depCb.checked){ depCb.checked = true; toast(`Na-add din: ${dep} (kasama ng ${cb.dataset.form}).`); }
+        });
+      });
+    });
+    const taxTypeSelect = root.querySelector('[data-key="TAX TYPE"]');
+    if(taxTypeSelect) taxTypeSelect.addEventListener('change', ()=>{
+      if(taxTypeSelect.value === 'VAT'){
+        const slspCb = root.querySelector('.forms-grid-cb[data-form="SLSP"]');
+        if(slspCb && !slspCb.checked){ slspCb.checked = true; toast('Na-add ang SLSP dahil VAT ang Tax Type.'); }
+      }
+    });
+  }
+  // Checks the forms-grid boxes matching a suggested comma-list (e.g. from
+  // the Auto-fill Forms button), dispatching change so cascade rules still
+  // fire; anything not in the grid goes into the Other field instead.
+  function applySuggestedFormsToGrid(root, suggestedCsv){
+    const codes = parseFormsCsv(suggestedCsv);
+    codes.forEach(code=>{
+      const cb = root.querySelector(`.forms-grid-cb[data-form="${code.toUpperCase()}"]`);
+      if(cb && !cb.checked){ cb.checked = true; cb.dispatchEvent(new Event('change')); }
+    });
+    const otherInput = root.querySelector('[data-key="FORMS_OTHER"]');
+    if(otherInput){
+      const leftover = codes.filter(c=>!FORMS_GRID_KNOWN.has(c.toUpperCase()));
+      if(leftover.length){
+        const merged = Array.from(new Set([...parseFormsCsv(otherInput.value), ...leftover]));
+        otherInput.value = merged.join(', ');
+      }
+    }
+  }
+  // Reads a rendered forms grid + Other field back into a single
+  // comma-separated FORMS string, for saving.
+  function readFormsGrid(root){
+    const gridForms = Array.from(root.querySelectorAll('.forms-grid-cb:checked')).map(cb=>cb.dataset.form);
+    const otherInput = root.querySelector('[data-key="FORMS_OTHER"]');
+    const otherForms = otherInput ? parseFormsCsv(otherInput.value) : [];
+    return Array.from(new Set([...gridForms, ...otherForms])).join(', ');
+  }
 
   // Suggests a starting FORMS list from the Registered Tax Types checkboxes
   // (per the client's COR) -- a best-effort default, not a rulebook. Staff
@@ -1261,9 +1604,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const isNew = !clientId;
     const c = isNew ? Object.assign({_id: uid(), 'CLIENT?':'YES', 'CLIENT ID NO.': nextClientIdNo()}, prefill||{}) : clientById[clientId];
     const root = document.getElementById('modal-root');
-    const fieldsHtml = CLIENT_FIELDS.map(([key,label,cls,type])=> type==='checkbox' ? `
+    const fieldsHtml = CLIENT_FIELDS.map(([key,label,cls,type,opts])=> type==='checkbox' ? `
       <div class="field ${cls||''}"><label>${esc(label)}</label><input type="checkbox" data-key="${esc(key)}" data-type="checkbox" ${String(c[key]||'').toUpperCase()==='YES'?'checked':''} style="width:auto;margin-top:6px;"></div>
-    ` : `
+    ` : type==='select' ? `
+      <div class="field ${cls||''}"><label>${esc(label)}</label><select data-key="${esc(key)}">${selectOptionsHtml(opts, c[key])}</select></div>
+    ` : type==='formsgrid' ? formsGridHtml(c[key]) : `
       <div class="field ${cls||''}"><label>${esc(label)}</label><input data-key="${esc(key)}" value="${esc(c[key])}"></div>
     `).join('');
     root.innerHTML = `<div class="modal-backdrop" id="modal-backdrop">
@@ -1290,19 +1635,19 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     document.getElementById('modal-backdrop').addEventListener('click', e=>{ if(e.target.id==='modal-backdrop') closeModal(); });
     const histBtn = document.getElementById('history-client-btn');
     if(histBtn) histBtn.addEventListener('click', ()=> openClientHistoryModal(clientId, c.NAME));
+    wireFormsGridCascade(root);
     document.getElementById('autofill-forms-btn').addEventListener('click', ()=>{
-      // Read the checkboxes as currently ticked in the (unsaved) modal, not
-      // from the stored record -- so this reflects edits made just now,
-      // before Save. Only fills the Forms box; nothing here is auto-saved.
+      // Read the checkboxes/selects as currently set in the (unsaved) modal,
+      // not from the stored record -- so this reflects edits made just now,
+      // before Save. Only checks Forms-grid boxes; nothing here is auto-saved.
       const snapshot = {};
       root.querySelectorAll('[data-key]').forEach(inp=>{
         snapshot[inp.dataset.key] = inp.dataset.type==='checkbox' ? (inp.checked?'YES':'') : inp.value;
       });
       const suggested = deriveFormsFromRegisteredTypes(snapshot);
       if(!suggested){ toast('Walang na-check na Registered Tax Type — walang ma-suggest na forms.'); return; }
-      const formsInput = root.querySelector('[data-key="FORMS"]');
-      if(formsInput) formsInput.value = suggested;
-      toast('Na-fill ang Forms — i-review bago i-Save (baka may dapat pang idagdag, hal. RF, 1604C, 2316).');
+      applySuggestedFormsToGrid(root, suggested);
+      toast('Na-check ang mga suggested forms sa grid — i-review bago i-Save (baka may dapat pang idagdag, hal. RF, 2316).');
     });
     const noticeBtn = document.getElementById('tax-notice-btn');
     if(noticeBtn) noticeBtn.addEventListener('click', ()=> openTaxSummaryNotice(clientId));
@@ -1336,6 +1681,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const before = isNew ? null : Object.assign({}, c);
       const rec = isNew ? {_id: c._id} : Object.assign({}, c);
       inputs.forEach(inp => { rec[inp.dataset.key] = inp.dataset.type==='checkbox' ? (inp.checked?'YES':'') : inp.value.trim(); });
+      rec.FORMS = readFormsGrid(root);
+      delete rec.FORMS_OTHER;
       if(!rec.NAME){ toast('Kailangan ng Client Name'); return; }
       const diff = computeClientDiff(before, rec);
       if(!isNew && diff.length){
@@ -1564,7 +1911,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(re.test(t)) forms.push(code);
     });
     if(forms.length) out.FORMS = forms.join(', ');
-    if(/non[\-\s]?vat/i.test(t)) out['TAX TYPE'] = 'NVAT';
+    if(/non[\-\s]?vat/i.test(t)) out['TAX TYPE'] = 'Non-VAT';
     else if(/\bVAT\b/i.test(t)) out['TAX TYPE'] = 'VAT';
     // Best-effort pre-tick of the Registered Tax Types checkboxes from the
     // same form codes detected above -- staff still reviews/corrects every
@@ -1579,9 +1926,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function renderReviewForm(d, rawText){
     const area = document.getElementById('review-area');
     if(!d['CLIENT ID NO.']) d = Object.assign({'CLIENT ID NO.': nextClientIdNo()}, d);
-    const fieldsHtml = CLIENT_FIELDS.map(([key,label,cls,type])=> type==='checkbox' ? `
+    const fieldsHtml = CLIENT_FIELDS.map(([key,label,cls,type,opts])=> type==='checkbox' ? `
       <div class="field ${cls||''}"><label>${esc(label)}</label><input type="checkbox" data-key="${esc(key)}" data-type="checkbox" ${String(d[key]||'').toUpperCase()==='YES'?'checked':''} style="width:auto;margin-top:6px;"></div>
-    ` : `
+    ` : type==='select' ? `
+      <div class="field ${cls||''}"><label>${esc(label)}</label><select data-key="${esc(key)}">${selectOptionsHtml(opts, d[key])}</select></div>
+    ` : type==='formsgrid' ? formsGridHtml(d[key]) : `
       <div class="field ${cls||''}"><label>${esc(label)}</label><input data-key="${esc(key)}" value="${esc(d[key])}"></div>
     `).join('');
     area.innerHTML = `
@@ -1597,11 +1946,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       <pre id="raw-text-box" style="display:none;white-space:pre-wrap;font-size:11px;background:#fff;border:1px solid var(--paper-line);padding:10px;margin-top:12px;max-height:200px;overflow:auto;">${esc(rawText)}</pre>
       <div class="small-note">Suriin ang bawat field laban sa certificate bago i-save — posibleng may hindi tama ang OCR sa malabo o baluktot na scan.</div>
     `;
+    wireFormsGridCascade(area);
     document.getElementById('save-client-btn').addEventListener('click', async ()=>{
       const saveBtn = document.getElementById('save-client-btn');
       const inputs = area.querySelectorAll('[data-key]');
       const rec = {_id: uid(), 'CLIENT?':'YES'};
       inputs.forEach(inp => { rec[inp.dataset.key] = inp.dataset.type==='checkbox' ? (inp.checked?'YES':'') : inp.value.trim(); });
+      rec.FORMS = readFormsGrid(area);
+      delete rec.FORMS_OTHER;
       if(!rec.NAME){ toast('Kailangan ng Client Name'); return; }
       saveBtn.disabled = true;
       const dbRow = clientAppKeysToDbRow(rec, CLIENT_FIELDS.map(f=>f[0]));
