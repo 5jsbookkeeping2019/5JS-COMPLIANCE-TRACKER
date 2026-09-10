@@ -613,7 +613,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     'END OF SERVICE DATE': 'end_contract',
     'REGISTRATION MODE':'registration_mode', 'ACCOUNTING METHOD':'accounting_method',
     'BOOKS OF ACCOUNTS TYPE':'books_of_accounts_type', 'WITHHOLDING TYPES':'withholding_types',
-    'REG INCOME TAX':'reg_income_tax', 'REG VAT/PT':'reg_vat_pt', 'REG EWT':'reg_ewt', 'REG WITHHOLDING COMP':'reg_wc',
+    'REG EWT':'reg_ewt', 'REG WITHHOLDING COMP':'reg_wc',
     'BUSINESS SIZE':'business_size', 'CLIENT STATUS REMARKS':'client_status_remarks',
     'REGISTERING OFFICE':'registering_office', 'LINE OF BUSINESS CATEGORY':'line_of_business_category',
   };
@@ -1397,8 +1397,6 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // drive the "Auto-fill Forms" suggestion button below (see
     // deriveFormsFromRegisteredTypes) -- addresses Problem #4 (non-uniform,
     // error-prone manual FORMS entry) from the workflow notes.
-    ['REG INCOME TAX','Registered: Income Tax','','checkbox'],
-    ['REG VAT/PT','Registered: VAT / Percentage Tax','','checkbox'],
     ['REG EWT','Registered: Expanded Withholding Tax','','checkbox'],
     ['REG WITHHOLDING COMP','Registered: Withholding on Compensation','','checkbox'],
     ['TIN REG. DATE','TIN Reg. Date (YYYY-MM-DD)',''], ['BUSINESS REG. DATE','Business Reg. Date (YYYY-MM-DD)',''],
@@ -1586,11 +1584,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return Array.from(new Set([...gridForms, ...otherForms])).join(', ');
   }
 
-  // Suggests a starting FORMS list from the Registered Tax Types checkboxes
-  // (per the client's COR) -- a best-effort default, not a rulebook. Staff
-  // reviews/edits the result before saving (via the Auto-fill button), since
-  // real clients can have exceptions (RF, annual forms like 1604C/2316,
-  // suspended obligations, etc.) that a simple checkbox set can't capture.
+  // Suggests a starting FORMS list -- a best-effort default, not a rulebook.
+  // Staff reviews/edits the result before saving (via the Auto-fill button),
+  // since real clients can have exceptions (RF, annual forms like
+  // 1604C/2316, suspended obligations, etc.) that a simple checkbox set
+  // can't capture. Income Tax and VAT/Percentage Tax forms are now always
+  // suggested from Taxpayer Classification / Tax Type directly (every
+  // registered business needs one or the other -- no separate "Registered:
+  // Income Tax" / "Registered: VAT/PT" checkbox needed anymore, since the
+  // live cascade in wireFormsGridCascade already auto-checks these the
+  // moment Tax Type / Classification is set). Only EWT and Withholding on
+  // Compensation still need their own checkbox, since those aren't
+  // derivable from Classification/Tax Type alone.
   function deriveFormsFromRegisteredTypes(c){
     const classif = String(c['TAXPAYER CLASSIFICATION']||'');
     const taxType = String(c['TAX TYPE']||'');
@@ -1598,8 +1603,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const isVat = /\bVAT\b/i.test(taxType) && !/non[\-\s]?vat/i.test(taxType);
     const yes = v => String(v||'').trim().toUpperCase()==='YES';
     const forms = [];
-    if(yes(c['REG INCOME TAX'])) forms.push(isCorp?'1702Q':'1701Q', isCorp?'1702':'1701');
-    if(yes(c['REG VAT/PT'])) forms.push(isVat?'2550Q':'2551Q');
+    if(classif) forms.push(isCorp?'1702Q':'1701Q', isCorp?'1702':'1701');
+    if(taxType && taxType !== 'Branch') forms.push(isVat?'2550Q':'2551Q');
     if(yes(c['REG EWT'])) forms.push('0619E','1601EQ');
     if(yes(c['REG WITHHOLDING COMP'])) forms.push('1601C');
     return forms.join(', ');
@@ -1982,9 +1987,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     else if(/\bVAT\b/i.test(t)) out['TAX TYPE'] = 'VAT';
     // Best-effort pre-tick of the Registered Tax Types checkboxes from the
     // same form codes detected above -- staff still reviews/corrects every
-    // field before saving, same as everything else on this screen.
-    if(/\b1701|1702\b/.test(t)) out['REG INCOME TAX'] = 'YES';
-    if(/2550|2551|\bVAT\b/i.test(t)) out['REG VAT/PT'] = 'YES';
+    // field before saving, same as everything else on this screen. (Income
+    // Tax / VAT-PT no longer have their own checkbox -- those are now
+    // derived live from Taxpayer Classification / Tax Type instead.)
     if(/0619\s*E|1601\s*EQ/i.test(t)) out['REG EWT'] = 'YES';
     if(/1601\s*C/i.test(t)) out['REG WITHHOLDING COMP'] = 'YES';
     return out;
