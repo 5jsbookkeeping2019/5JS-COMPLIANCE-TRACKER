@@ -1556,6 +1556,22 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         autoCheckForm(root, 'Lessee Information Sheet', 'Real Estate Lessor/Rental ang Line of Business.');
       }
     });
+    // REG EWT / REG WITHHOLDING COMP checkboxes now live-auto-check their
+    // forms too (same as Tax Type/Classification/Line of Business above) --
+    // no need to press "Auto-fill Forms" separately just for these.
+    const regEwtCb = root.querySelector('[data-key="REG EWT"]');
+    if(regEwtCb) regEwtCb.addEventListener('change', ()=>{
+      if(regEwtCb.checked){
+        autoCheckForm(root, '0619E', 'naka-check ang Registered: Expanded Withholding Tax.');
+        autoCheckForm(root, '1601EQ', 'naka-check ang Registered: Expanded Withholding Tax.');
+      }
+    });
+    const regWcCb = root.querySelector('[data-key="REG WITHHOLDING COMP"]');
+    if(regWcCb) regWcCb.addEventListener('change', ()=>{
+      if(regWcCb.checked){
+        autoCheckForm(root, '1601C', 'naka-check ang Registered: Withholding on Compensation.');
+      }
+    });
   }
   // Checks the forms-grid boxes matching a suggested comma-list (e.g. from
   // the Auto-fill Forms button), dispatching change so cascade rules still
