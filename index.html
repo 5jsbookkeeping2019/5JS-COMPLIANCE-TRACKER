@@ -616,6 +616,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     'REG EWT':'reg_ewt', 'REG WITHHOLDING COMP':'reg_wc',
     'BUSINESS SIZE':'business_size', 'CLIENT STATUS REMARKS':'client_status_remarks',
     'REGISTERING OFFICE':'registering_office', 'LINE OF BUSINESS CATEGORY':'line_of_business_category',
+    'LINE OF BUSINESS CATEGORY 2':'line_of_business_category_2', 'LINE OF BUSINESS CATEGORY 3':'line_of_business_category_3',
   };
   function mapClientFromDb(row){
     const c = {_id: row.id};
@@ -1195,6 +1196,19 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return clients.find(c => String(c['CLIENT ID NO.']||'').trim().toUpperCase() === needle) || null;
   }
 
+  // Shared option list for every Line of Business Category slot (see
+  // CLIENT_FIELDS below) -- kept as one constant so all slots + the cascade
+  // logic in wireFormsGridCascade always stay in sync.
+  const LOB_CATEGORY_OPTS = [
+    ['','— Piliin —'],
+    ['Trading / Retail / Merchandising','Trading / Retail / Merchandising'],
+    ['Manufacturing','Manufacturing'],
+    ['Real Estate Lessor / Rental','Real Estate Lessor / Rental'],
+    ['Professional / Service','Professional / Service'],
+    ['Other','Other'],
+  ];
+  const LOB_CATEGORY_KEYS = ['LINE OF BUSINESS CATEGORY','LINE OF BUSINESS CATEGORY 2','LINE OF BUSINESS CATEGORY 3'];
+
   const CLIENT_FIELDS = [
     ['CLIENT ID NO.','Client ID No.',''],
     ['NAME','Client Name','full'], ['TRADE NAME','Trade Name',''],
@@ -1407,15 +1421,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // Line of Business Category -- separate from the free-text description
     // above. Drives the Inventory List / Lessee Information Sheet auto-check
     // rules below (mirrors the same field in the Tax Engine Google Sheet
-    // template, so both stay consistent).
-    ['LINE OF BUSINESS CATEGORY','Line of Business Category','','select',[
-      ['','— Piliin —'],
-      ['Trading / Retail / Merchandising','Trading / Retail / Merchandising'],
-      ['Manufacturing','Manufacturing'],
-      ['Real Estate Lessor / Rental','Real Estate Lessor / Rental'],
-      ['Professional / Service','Professional / Service'],
-      ['Other','Other'],
-    ]],
+    // template, so both stay consistent). Three slots since a client can
+    // legitimately run more than one line of business at once (e.g. a
+    // retailer that also leases out part of their space) -- each slot uses
+    // the same option list and each one independently triggers its own
+    // auto-check rule (see LOB_CATEGORY_KEYS / wireFormsGridCascade below).
+    ['LINE OF BUSINESS CATEGORY','Line of Business Category','','select',LOB_CATEGORY_OPTS],
+    ['LINE OF BUSINESS CATEGORY 2','Line of Business Category (2nd, kung meron)','','select',LOB_CATEGORY_OPTS],
+    ['LINE OF BUSINESS CATEGORY 3','Line of Business Category (3rd, kung meron)','','select',LOB_CATEGORY_OPTS],
     // Tax Forms -- rendered as a grid of row-grouped checkboxes (see
     // formsGridHtml/FORMS_GRID_ROWS below) instead of a free-text list.
     // Still stored in the same FORMS column as a comma-separated string, so
@@ -1547,14 +1560,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         autoCheckForm(root, '1701', 'Individual/Single Prop/Professional ang Taxpayer Classification.');
       }
     });
-    const lobSelect = root.querySelector('[data-key="LINE OF BUSINESS CATEGORY"]');
-    if(lobSelect) lobSelect.addEventListener('change', ()=>{
-      const v = lobSelect.value;
-      if(LOB_INVENTORY_LIST_CATS.has(v)){
-        autoCheckForm(root, 'Inventory List', 'may binebentang goods ang Line of Business.');
-      } else if(v === 'Real Estate Lessor / Rental'){
-        autoCheckForm(root, 'Lessee Information Sheet', 'Real Estate Lessor/Rental ang Line of Business.');
-      }
+    // A client can have more than one line of business (LOB_CATEGORY_KEYS),
+    // so each slot independently triggers the same rule -- e.g. a retailer
+    // that also leases part of their space gets BOTH Inventory List (from
+    // slot 1) AND Lessee Information Sheet (from slot 2).
+    LOB_CATEGORY_KEYS.forEach(key=>{
+      const lobSelect = root.querySelector(`[data-key="${key}"]`);
+      if(!lobSelect) return;
+      lobSelect.addEventListener('change', ()=>{
+        const v = lobSelect.value;
+        if(LOB_INVENTORY_LIST_CATS.has(v)){
+          autoCheckForm(root, 'Inventory List', 'may binebentang goods ang Line of Business.');
+        } else if(v === 'Real Estate Lessor / Rental'){
+          autoCheckForm(root, 'Lessee Information Sheet', 'Real Estate Lessor/Rental ang Line of Business.');
+        }
+      });
     });
     // REG EWT / REG WITHHOLDING COMP checkboxes now live-auto-check their
     // forms too (same as Tax Type/Classification/Line of Business above) --
