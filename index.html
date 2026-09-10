@@ -318,6 +318,7 @@
       <button class="tab-btn" data-tab="sales">Sales Summary</button>
       <button class="tab-btn" data-tab="tax2307">2307 Register</button>
       <button class="tab-btn" data-tab="sawt">SAWT / 2307 Received</button>
+      <button class="tab-btn" data-tab="report">Report</button>
       <button class="tab-btn" data-tab="settings">Settings</button>
     </div>
 
@@ -512,6 +513,22 @@
       </div>
       <div class="small-note">Log ng BIR Form 2307 na NATANGGAP ng client (kabaligtaran ng 2307 Register — dito, ang client ang PAYEE na kinaltasan ng ibang party, hal. e-marketplace o customer). Ito ang pinagmumulan ng SAWT / creditable withholding tax na iki-claim sa 1701Q/1702Q. Direktang i-edit ang cells. Ipinapakita rin sa ibaba ang total tax withheld per filter — para agad makuha ang quarterly SAWT total. Ang withholding na nakikita sa Daily Sales Record ay hindi laging may kasamang aktwal na 2307 certificate agad, at hindi rin ito laging kaagad ginagamit (madalas Q3 o Annual ITR pa) — gamitin ang "May Actual 2307?" para markahan kung natanggap na talaga ang certificate, at ang "Claim Status" para malaman kung ginamit na ba ito o naka-batch pa lang, hiwalay sa kung ANONG quarter ito na-receive.</div>
       <div class="table-scroll" style="margin-top:10px;" id="sawt-table"></div>
+    </div>
+
+    <!-- REPORT TAB -->
+    <div class="tab-panel" id="panel-report">
+      <div class="registry-head">
+        <div class="filter-row">
+          <input class="search-input" id="report-search" placeholder="Search business name, TIN, RDO...">
+          <select class="filter" id="report-status-filter"><option value="">All CLIENT? statuses</option></select>
+          <select class="filter" id="report-taxtype-filter"><option value="">All Tax Types</option></select>
+        </div>
+        <div class="toolbar-right">
+          <span class="small-note" id="report-count" style="margin:0;"></span>
+        </div>
+      </div>
+      <div class="small-note">Read-only na view ng BIR registration details ng bawat client, handa nang i-copy-paste papunta sa eBIRForms. I-click ang kahit anong cell para awtomatikong makopya ang laman nito (walang kailangang i-select pa nang manu-mano) — may "Copy Row" din bawat client kung buong hanay ang kailangan.</div>
+      <div class="table-scroll" style="margin-top:10px;" id="report-table"></div>
     </div>
 
     <!-- SETTINGS TAB -->
@@ -757,6 +774,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(tab === 'sales') renderSalesSummary();
     if(tab === 'tax2307') renderEntries2307();
     if(tab === 'sawt') renderSawt();
+    if(tab === 'report') renderReport();
     if(tab === 'settings') renderSalesReps();
   }
 
@@ -1894,7 +1912,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       }
       clients = clients.filter(x=>x._id!==clientId);
       delete clientById[clientId];
-      closeModal(); renderRegistry(); initRegistryFilters();
+      closeModal(); renderRegistry(); initRegistryFilters(); initReportFilters();
       toast('Naalis mula sa registry.');
     });
     document.getElementById('save-modal-btn').addEventListener('click', async ()=>{
@@ -1943,7 +1961,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         Object.assign(c, rec);
         if(diff.length) await logClientAudit('update', clientId, before, rec, diff);
       }
-      closeModal(); renderRegistry(); initRegistryFilters();
+      closeModal(); renderRegistry(); initRegistryFilters(); initReportFilters();
       toast(isNew? 'Naidagdag sa registry.' : 'Na-update.');
       const statusUpper = String(rec['CLIENT?']||'').trim().toUpperCase();
       if(statusUpper === 'NO' || statusUpper === 'CLOSED'){
@@ -2199,7 +2217,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       await ensureSalesSummaryRowForClient(rec);
       toast('Naidagdag sa Client Registry.');
       area.innerHTML=''; document.getElementById('preview-area').innerHTML=''; fileInput.value='';
-      initRegistryFilters();
+      initRegistryFilters(); initReportFilters();
     });
     document.getElementById('cancel-review-btn').addEventListener('click', ()=>{
       area.innerHTML=''; document.getElementById('preview-area').innerHTML=''; fileInput.value='';
@@ -2954,6 +2972,96 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
   }
 
+  /* ===================== REPORT TAB (read-only, copy-to-eBIRForms) ===================== */
+  const REPORT_COLS = [
+    ['CLIENT ID NO.','Client ID No.'], ['TIN','TIN'], ['RDO','RDO Code'],
+    ['NAME','Registered Name'], ['TRADE NAME','Trade Name'],
+    ['REGISTERED ADDRESS','Registered Address'], ['ZIP CODE','Zip Code'],
+    ['LINE OF BUSINESS / INDUSTRY','Line of Business'], ['TAXPAYER CLASSIFICATION','Taxpayer Classification'],
+    ['TAX TYPE','Tax Type'], ['REGISTERING OFFICE','Registering Office'],
+    ['EMAIL','Email'], ['CONTACT NO','Contact No.'],
+  ];
+  const reportSearch = document.getElementById('report-search');
+  const reportStatusFilter = document.getElementById('report-status-filter');
+  const reportTaxTypeFilter = document.getElementById('report-taxtype-filter');
+  reportSearch.addEventListener('input', renderReport);
+  reportStatusFilter.addEventListener('change', renderReport);
+  reportTaxTypeFilter.addEventListener('change', renderReport);
+
+  function initReportFilters(){
+    const prevStatus = reportStatusFilter.value;
+    const statuses = Array.from(new Set(clients.map(c=>c['CLIENT?']).filter(Boolean))).sort();
+    reportStatusFilter.innerHTML = '<option value="">All CLIENT? statuses</option>' + statuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    if(statuses.includes(prevStatus)) reportStatusFilter.value = prevStatus;
+    const prevTaxType = reportTaxTypeFilter.value;
+    const taxTypes = Array.from(new Set(clients.map(c=>c['TAX TYPE']).filter(Boolean))).sort();
+    reportTaxTypeFilter.innerHTML = '<option value="">All Tax Types</option>' + taxTypes.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    if(taxTypes.includes(prevTaxType)) reportTaxTypeFilter.value = prevTaxType;
+  }
+
+  // Copies text to the clipboard, with a fallback for contexts where the
+  // async Clipboard API isn't available (e.g. a plain file:// page opened
+  // without HTTPS) -- a hidden textarea + execCommand still works there.
+  async function copyToClipboard(text){
+    try{
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    }catch(err){ /* fall through to the fallback below */ }
+    try{
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      return true;
+    }catch(err){ console.error(err); return false; }
+  }
+
+  function renderReport(){
+    const q = (reportSearch.value||'').toLowerCase();
+    const sf = reportStatusFilter.value;
+    const tf = reportTaxTypeFilter.value;
+    const filtered = clients.filter(c=>{
+      if(sf && c['CLIENT?']!==sf) return false;
+      if(tf && c['TAX TYPE']!==tf) return false;
+      if(!q) return true;
+      const hay = [c.NAME, c['TRADE NAME'], c.TIN, c.RDO, c['CLIENT ID NO.']].join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+    document.getElementById('report-count').textContent = `${filtered.length.toLocaleString()} client(s) match`;
+    const tableArea = document.getElementById('report-table');
+    if(!filtered.length){
+      tableArea.innerHTML = `<div class="empty-state">${clients.length? 'No clients match the current search/filter.' : 'No clients yet.'}</div>`;
+      return;
+    }
+    const headRow = REPORT_COLS.map(([,label])=>`<th>${esc(label)}</th>`).join('') + '<th></th>';
+    const rows = filtered.map(c=>{
+      const values = REPORT_COLS.map(([key])=> key==='TIN' ? fmtTinPlain(c.TIN) : String(c[key]||''));
+      const cells = REPORT_COLS.map(([key],i)=>
+        `<td class="report-cell" data-value="${esc(values[i])}" title="I-click para kopyahin.">${esc(values[i])||'—'}</td>`
+      ).join('');
+      return `<tr>${cells}<td><button class="tiny copy-report-row-btn" data-row="${esc(values.join('\t'))}">Copy Row</button></td></tr>`;
+    }).join('');
+    tableArea.innerHTML = `<table><thead><tr>${headRow}</tr></thead><tbody>${rows}</tbody></table>`;
+    tableArea.querySelectorAll('.report-cell').forEach(td=>{
+      td.addEventListener('click', async ()=>{
+        const val = td.dataset.value || '';
+        if(!val){ return; }
+        const ok = await copyToClipboard(val);
+        toast(ok ? `Nakopya: ${val}` : 'Hindi nakopya — subukan i-select at i-Ctrl+C nang manu-mano.');
+      });
+    });
+    tableArea.querySelectorAll('.copy-report-row-btn').forEach(btn=>{
+      btn.addEventListener('click', async (e)=>{
+        e.stopPropagation();
+        const ok = await copyToClipboard(btn.dataset.row || '');
+        toast(ok ? 'Nakopya ang buong hanay.' : 'Hindi nakopya — subukan ulit.');
+      });
+    });
+  }
+
   /* ===================== SETTINGS TAB (Sales Representative list) ===================== */
   function mapSalesRepsFromDb(rows){
     return (rows||[]).map(r=>({_id:r.id, name:r.name}));
@@ -3174,6 +3282,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     initSalesSummaryFilters();
     initEntries2307Filters();
     initSawtFilters();
+    initReportFilters();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
@@ -3205,7 +3314,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(idx>=0) clients[idx] = mapped; else clients.push(mapped);
       clientById[mapped._id] = mapped;
     }
-    initRegistryFilters();
+    initRegistryFilters(); initReportFilters();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
