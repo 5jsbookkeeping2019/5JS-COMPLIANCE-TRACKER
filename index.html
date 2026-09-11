@@ -37,6 +37,12 @@
     --sidebar-ink-soft:#9FB3AE;
     --sidebar-active-bg:#C08829;
     --sidebar-active-ink:#241A06;
+    /* Dashboard-style card radius -- rounder than the tight ledger radius
+       used on small controls (buttons/inputs/tags), so panels/KPI tiles/
+       modals read as soft "widget cards" the way a dashboard does. */
+    --radius-lg:14px;
+    --card-shadow:0 1px 3px rgba(20,15,10,0.06);
+    --card-shadow-hover:0 6px 18px rgba(20,15,10,0.10);
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;background:var(--paper);}
@@ -75,7 +81,7 @@
   #cor-app .header-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-top:6px;}
 
   #cor-app .save-banner{
-    background:var(--gold-soft);border:1px solid var(--gold);border-radius:var(--radius);
+    background:var(--gold-soft);border:1px solid var(--gold);border-radius:10px;
     padding:6px 14px;font-size:12.5px;color:var(--ink);margin-bottom:10px;display:flex;
     justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
   }
@@ -83,22 +89,40 @@
 
   #cor-app .tabs{
     display:flex;gap:2px;margin-bottom:0;flex-wrap:wrap;
-    background:var(--sidebar-bg);border-radius:var(--radius);padding:6px;
+    background:var(--sidebar-bg);border-radius:var(--radius-lg);padding:6px;
+  }
+  #cor-app .tabs .nav-eyebrow{
+    font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:1.8px;text-transform:uppercase;
+    color:var(--sidebar-ink-soft);opacity:0.75;padding:8px 12px 4px;width:100%;display:none;
   }
   #cor-app .tab-btn{
     font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:0.5px;
     text-transform:uppercase;background:transparent;border:none;
     padding:9px 16px;cursor:pointer;color:var(--sidebar-ink-soft);
-    border-radius:var(--radius);
+    border-radius:8px;
+    display:flex;align-items:center;gap:9px;
   }
+  #cor-app .tab-btn .ico{flex-shrink:0;display:inline-flex;opacity:0.85;}
+  #cor-app .tab-btn .ico svg{width:15px;height:15px;display:block;}
   #cor-app .tab-btn:hover{background:var(--sidebar-bg-hover);color:var(--sidebar-ink);}
   #cor-app .tab-btn.active{background:var(--sidebar-active-bg);color:var(--sidebar-active-ink);font-weight:600;}
+  #cor-app .tab-btn.active .ico{opacity:1;}
   #cor-app .tab-panel{
     display:none;background:var(--card);border:1px solid var(--paper-line);
-    box-shadow:0 1px 3px rgba(20,15,10,0.06);
-    padding:24px;border-radius:var(--radius);margin-top:10px;
+    box-shadow:var(--card-shadow);
+    padding:24px;border-radius:var(--radius-lg);margin-top:10px;
   }
   #cor-app .tab-panel.active{display:block;}
+
+  #cor-app .page-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
+  #cor-app .page-header .icon-badge{
+    width:40px;height:40px;border-radius:11px;flex-shrink:0;
+    background:var(--stamp-soft);color:var(--brand);
+    display:flex;align-items:center;justify-content:center;
+  }
+  #cor-app .page-header .icon-badge svg{width:20px;height:20px;}
+  #cor-app .page-header h2{font-family:'IBM Plex Serif',serif;font-weight:700;font-size:18px;margin:0;color:var(--ink);}
+  #cor-app .page-header .sub{font-size:12px;color:var(--ink-soft);margin-top:2px;}
 
   /* On narrower screens (phones/small tablets) the nav stays the original
      horizontal wrapping bar above the content -- unchanged from before.
@@ -109,11 +133,12 @@
     #cor-app .layout-row{display:flex;gap:16px;align-items:flex-start;}
     #cor-app .tabs{
       flex-direction:column;flex-wrap:nowrap;gap:2px;
-      width:200px;flex:0 0 200px;
+      width:210px;flex:0 0 210px;
       padding:10px;position:sticky;top:12px;
     }
+    #cor-app .tabs .nav-eyebrow{display:block;}
     #cor-app .tab-btn{
-      border-left:3px solid transparent;border-radius:3px;
+      border-left:3px solid transparent;border-radius:8px;
       padding:10px 12px;text-align:left;width:100%;
     }
     #cor-app .tab-btn.active{border-left-color:var(--gold);}
@@ -213,7 +238,7 @@
   }
   #cor-app td{padding:9px 8px;border-bottom:1px solid var(--paper-line);vertical-align:top;}
   #cor-app tr:hover td{background:var(--row-hover);}
-  #cor-app .table-scroll{max-height:560px;overflow:auto;border:1px solid var(--paper-line);border-radius:var(--radius);}
+  #cor-app .table-scroll{max-height:560px;overflow:auto;border:1px solid var(--paper-line);border-radius:10px;}
   #cor-app .table-scroll table{font-size:12px;}
   #cor-app .table-scroll thead th{position:sticky;top:0;background:var(--card);z-index:2;}
   #cor-app .table-scroll .frozen-col{position:sticky;background:var(--card);z-index:1;box-shadow:1px 0 0 var(--paper-line);}
@@ -233,18 +258,30 @@
 
   #cor-app .stat-strip{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;}
   #cor-app .stat-tile{
-    flex:1;min-width:140px;background:var(--card);border:1px solid var(--paper-line);border-radius:var(--radius);
-    box-shadow:0 1px 3px rgba(20,15,10,0.05);
-    padding:12px 14px;
+    flex:1;min-width:168px;background:var(--card);border:1px solid var(--paper-line);border-radius:var(--radius-lg);
+    box-shadow:var(--card-shadow);
+    padding:13px 15px;
+    display:flex;align-items:center;gap:12px;
+    transition:box-shadow .15s, transform .15s;
   }
-  #cor-app .stat-tile .num{font-family:'IBM Plex Serif',serif;font-size:26px;font-weight:700;color:var(--ink);}
+  #cor-app .stat-tile .icon{
+    width:38px;height:38px;flex-shrink:0;border-radius:10px;
+    display:flex;align-items:center;justify-content:center;
+    background:var(--paper-line);color:var(--ink-soft);
+  }
+  #cor-app .stat-tile .icon svg{width:18px;height:18px;}
+  #cor-app .stat-tile .body{min-width:0;}
+  #cor-app .stat-tile .num{font-family:'IBM Plex Serif',serif;font-size:24px;font-weight:700;color:var(--ink);line-height:1.15;}
   #cor-app .stat-tile.crit .num{color:var(--critical);}
+  #cor-app .stat-tile.crit .icon{background:var(--stamp-soft);color:var(--critical);}
   #cor-app .stat-tile.warn .num{color:var(--warning);}
+  #cor-app .stat-tile.warn .icon{background:var(--gold-soft);color:var(--warning);}
   #cor-app .stat-tile.ok .num{color:var(--good);}
-  #cor-app .stat-tile .lbl{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.5px;text-transform:uppercase;color:var(--ink-soft);margin-top:2px;}
-  #cor-app .stat-tile.clickable{cursor:pointer;transition:border-color .12s;}
-  #cor-app .stat-tile.clickable:hover{border-color:var(--brand);}
-  #cor-app .stat-tile .lbl .goto{font-size:9.5px;text-transform:none;letter-spacing:0;color:var(--ink-soft);opacity:0.75;display:block;margin-top:1px;}
+  #cor-app .stat-tile.ok .icon{background:var(--forest-soft);color:var(--good);}
+  #cor-app .stat-tile .lbl{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.5px;text-transform:uppercase;color:var(--ink-soft);margin-top:2px;white-space:nowrap;}
+  #cor-app .stat-tile.clickable{cursor:pointer;}
+  #cor-app .stat-tile.clickable:hover{box-shadow:var(--card-shadow-hover);transform:translateY(-1px);}
+  #cor-app .stat-tile .lbl .goto{font-size:9.5px;text-transform:none;letter-spacing:0;color:var(--ink-soft);opacity:0.75;display:block;margin-top:1px;white-space:normal;}
 
   #cor-app .cal-groups{display:flex;flex-direction:column;gap:22px;}
   #cor-app .cal-group h3{
@@ -256,7 +293,8 @@
   #cor-app .cal-group.later h3{color:var(--ink-soft);}
   #cor-app .cal-row{
     display:flex;justify-content:space-between;align-items:center;padding:9px 12px;gap:10px;
-    border:1px solid var(--paper-line);border-radius:var(--radius);margin-bottom:7px;background:var(--card);flex-wrap:wrap;
+    border:1px solid var(--paper-line);border-radius:10px;margin-bottom:7px;background:var(--card);flex-wrap:wrap;
+    box-shadow:var(--card-shadow);
   }
   #cor-app .cal-row .left{display:flex;flex-direction:column;gap:2px;min-width:200px;flex:1;}
   #cor-app .cal-row .client-name{font-weight:600;font-size:13px;}
@@ -292,7 +330,7 @@
   #cor-app details.ref-cal{margin-top:24px;border-top:1px dashed var(--paper-line);padding-top:16px;}
   #cor-app details.ref-cal summary{cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11.5px;text-transform:uppercase;letter-spacing:0.5px;color:var(--ink-soft);}
   #cor-app .modal-backdrop{position:fixed;inset:0;background:rgba(8,3,4,0.72);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:60;overflow:auto;}
-  #cor-app .modal{background:var(--card);border:1px solid var(--gold);box-shadow:0 12px 40px rgba(0,0,0,0.5);border-radius:var(--radius);padding:22px;max-width:760px;width:100%;}
+  #cor-app .modal{background:var(--card);border:1px solid var(--gold);box-shadow:0 12px 40px rgba(20,15,10,0.22);border-radius:var(--radius-lg);padding:22px;max-width:760px;width:100%;}
   #cor-app .modal h2{font-family:'IBM Plex Serif',serif;font-size:18px;color:var(--brand);margin:0 0 14px;}
   #cor-app .eyebrow-sm{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--ink-soft);}
   #cor-app .pw-mask{font-family:'IBM Plex Mono',monospace;letter-spacing:1px;}
@@ -307,7 +345,7 @@
     background-size:100% 32px;
   }
   #cor-app .login-card{
-    background:var(--card);border:1px solid var(--gold);box-shadow:0 12px 40px rgba(20,15,10,0.14);border-radius:var(--radius);
+    background:var(--card);border:1px solid var(--gold);box-shadow:0 12px 40px rgba(20,15,10,0.14);border-radius:var(--radius-lg);
     padding:34px 30px;max-width:380px;width:100%;text-align:center;
   }
   #cor-app .login-logo{height:56px;width:auto;display:block;margin:0 auto 14px;}
@@ -358,19 +396,22 @@
     </div>
 
     <div class="layout-row">
-    <div class="tabs">
-      <button class="tab-btn active" data-tab="calendar">Filing Calendar</button>
-      <button class="tab-btn" data-tab="tracker">Task Tracker</button>
-      <button class="tab-btn" data-tab="registry">Client Registry</button>
-      <button class="tab-btn" data-tab="scan">Scan &amp; Add (OCR)</button>
-      <button class="tab-btn" data-tab="creds">Credentials</button>
-      <button class="tab-btn" data-tab="sales">Sales Summary</button>
-      <button class="tab-btn" data-tab="tax2307">2307 Register</button>
-      <button class="tab-btn" data-tab="sawt">SAWT / 2307 Received</button>
-      <button class="tab-btn" data-tab="report">Report</button>
-      <button class="tab-btn" data-tab="settings">Settings</button>
+    <div class="tabs" id="main-tabs">
+      <span class="nav-eyebrow">Menu</span>
+      <button class="tab-btn active" data-tab="calendar"><span class="ico" data-ico="calendar"></span>Filing Calendar</button>
+      <button class="tab-btn" data-tab="tracker"><span class="ico" data-ico="tracker"></span>Task Tracker</button>
+      <button class="tab-btn" data-tab="registry"><span class="ico" data-ico="registry"></span>Client Registry</button>
+      <button class="tab-btn" data-tab="scan"><span class="ico" data-ico="scan"></span>Scan &amp; Add (OCR)</button>
+      <button class="tab-btn" data-tab="creds"><span class="ico" data-ico="creds"></span>Credentials</button>
+      <button class="tab-btn" data-tab="sales"><span class="ico" data-ico="sales"></span>Sales Summary</button>
+      <button class="tab-btn" data-tab="tax2307"><span class="ico" data-ico="tax2307"></span>2307 Register</button>
+      <button class="tab-btn" data-tab="sawt"><span class="ico" data-ico="sawt"></span>SAWT / 2307 Received</button>
+      <button class="tab-btn" data-tab="report"><span class="ico" data-ico="report"></span>Report</button>
+      <button class="tab-btn" data-tab="settings"><span class="ico" data-ico="settings"></span>Settings</button>
     </div>
     <div class="panels-col">
+
+    <div class="page-header" id="page-header"></div>
 
     <!-- CALENDAR TAB -->
     <div class="tab-panel active" id="panel-calendar">
@@ -830,6 +871,55 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return esc(s);
   }
 
+  // ---------- Dashboard icons ----------
+  // Small inline stroke icons (currentColor) reused for the sidebar nav,
+  // the per-tab page header, and the KPI stat tiles -- gives the app a
+  // dashboard-widget feel rather than a plain list of text buttons.
+  const ICONS = {
+    calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2"/><line x1="3" y1="9.5" x2="21" y2="9.5"/><line x1="8" y1="2.5" x2="8" y2="6.5"/><line x1="16" y1="2.5" x2="16" y2="6.5"/></svg>',
+    tracker: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11"/><path d="M9 12h11"/><path d="M9 18h11"/><path d="M4.5 6l1 1 2-2"/><path d="M4.5 12l1 1 2-2"/><path d="M4.5 18l1 1 2-2"/></svg>',
+    registry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 20v-1.8a3.2 3.2 0 0 0-3.2-3.2H6.2A3.2 3.2 0 0 0 3 18.2V20"/><circle cx="9.5" cy="7.5" r="3.5"/><path d="M21 20v-1.5a3 3 0 0 0-2.2-2.9"/><path d="M15.2 4.2a3.5 3.5 0 0 1 0 6.6"/></svg>',
+    scan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M20 8V6a2 2 0 0 0-2-2h-2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><circle cx="12" cy="12" r="3.2"/></svg>',
+    creds: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M11 12l8-8"/><path d="M16 7l2.5 2.5"/><path d="M13.5 9.5l2 2"/></svg>',
+    sales: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="20"/><rect x="6" y="12" width="3" height="8"/><rect x="11" y="8" width="3" height="12"/><rect x="16" y="4" width="3" height="16"/></svg>',
+    tax2307: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M9 9h6"/><path d="M9 13h6"/><path d="M9 17h3"/></svg>',
+    sawt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l9 6 9-6"/><rect x="3" y="5" width="18" height="14" rx="2"/></svg>',
+    report: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>',
+    settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V19.5a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H4.5a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H10a1.7 1.7 0 0 0 1-1.6V4.5a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.6 1h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.6 1z"/></svg>',
+    overdue: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/></svg>',
+    soon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l9.5 17H2.5z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><line x1="12" y1="16.5" x2="12" y2="16.6"/></svg>',
+    done: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5 5.5-6"/></svg>',
+  };
+  // Page-header (icon + title + short description) shown above the active
+  // tab's content -- gives every tab a dashboard-style "section header"
+  // instead of the section name only existing in the sidebar.
+  const TAB_META = {
+    calendar:{icon:'calendar', title:'Filing Calendar', sub:'Upcoming BIR deadlines across every client, at a glance.'},
+    tracker:{icon:'tracker', title:'Task Tracker', sub:'Every filing task, searchable and sortable.'},
+    registry:{icon:'registry', title:'Client Registry', sub:'Master list of client accounts and their COR details.'},
+    scan:{icon:'scan', title:'Scan & Add (OCR)', sub:'Upload a COR photo or PDF to auto-fill a new client record.'},
+    creds:{icon:'creds', title:'Credentials', sub:'Stored account logins for client portals, encrypted at rest.'},
+    sales:{icon:'sales', title:'Sales Summary', sub:'Quarterly sales figures per client for tax and VAT filings.'},
+    tax2307:{icon:'tax2307', title:'2307 Register', sub:'Creditable withholding tax certificates issued to clients.'},
+    sawt:{icon:'sawt', title:'SAWT / 2307 Received', sub:'Certificates received from clients’ customers, for SAWT filing.'},
+    report:{icon:'report', title:'Report', sub:'Export and summary tools.'},
+    settings:{icon:'settings', title:'Settings', sub:'Sales reps, bulk tools, and account access.'},
+  };
+  function updatePageHeader(tab){
+    const meta = TAB_META[tab];
+    const el = document.getElementById('page-header');
+    if(!meta || !el) return;
+    el.innerHTML = `
+      <div class="icon-badge">${ICONS[meta.icon] || ''}</div>
+      <div><h2>${meta.title}</h2><div class="sub">${meta.sub}</div></div>
+    `;
+  }
+  // Fill in each sidebar nav item's icon once at load time.
+  document.querySelectorAll('.tab-btn .ico').forEach(span=>{
+    const key = span.dataset.ico;
+    if(ICONS[key]) span.innerHTML = ICONS[key];
+  });
+
   // ---------- Tabs ----------
   document.querySelectorAll('.tab-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -841,6 +931,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
   });
   function renderActiveTab(tab){
+    updatePageHeader(tab);
     if(tab === 'calendar'){ renderCalendar(); renderRefCalendar(); }
     if(tab === 'tracker') renderTracker();
     if(tab === 'registry') renderRegistry();
@@ -910,12 +1001,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const pendingSawtCount = sawtEntries.filter(r=> r.has_certificate==='Pending').length;
 
     strip.innerHTML = `
-      <div class="stat-tile crit"><div class="num">${overdue}</div><div class="lbl">Overdue</div></div>
-      <div class="stat-tile warn"><div class="num">${dueSoon}</div><div class="lbl">Due in 7 days</div></div>
-      <div class="stat-tile"><div class="num">${dueMonth}</div><div class="lbl">Due in 30 days</div></div>
-      <div class="stat-tile ok"><div class="num">${doneCount.toLocaleString()}</div><div class="lbl">Marked done (2026)</div></div>
-      <div class="stat-tile ${missingSalesCount>0?'warn':'ok'} clickable" id="stat-missing-sales" title="Sales Summary rows missing ${qCol.slice(0,2).toUpperCase()} Sales for ${thisYear} -- click to view"><div class="num">${missingSalesCount}</div><div class="lbl">Missing ${qCol.slice(0,2).toUpperCase()} Sales<span class="goto">→ Sales Summary</span></div></div>
-      <div class="stat-tile ${pendingSawtCount>0?'warn':'ok'} clickable" id="stat-pending-sawt" title="SAWT / 2307 Received entries still marked Pending -- click to view"><div class="num">${pendingSawtCount}</div><div class="lbl">SAWT Pending<span class="goto">→ SAWT / 2307 Received</span></div></div>
+      <div class="stat-tile crit"><div class="icon">${ICONS.overdue}</div><div class="body"><div class="num">${overdue}</div><div class="lbl">Overdue</div></div></div>
+      <div class="stat-tile warn"><div class="icon">${ICONS.soon}</div><div class="body"><div class="num">${dueSoon}</div><div class="lbl">Due in 7 days</div></div></div>
+      <div class="stat-tile"><div class="icon">${ICONS.calendar}</div><div class="body"><div class="num">${dueMonth}</div><div class="lbl">Due in 30 days</div></div></div>
+      <div class="stat-tile ok"><div class="icon">${ICONS.done}</div><div class="body"><div class="num">${doneCount.toLocaleString()}</div><div class="lbl">Marked done (2026)</div></div></div>
+      <div class="stat-tile ${missingSalesCount>0?'warn':'ok'} clickable" id="stat-missing-sales" title="Sales Summary rows missing ${qCol.slice(0,2).toUpperCase()} Sales for ${thisYear} -- click to view"><div class="icon">${ICONS.sales}</div><div class="body"><div class="num">${missingSalesCount}</div><div class="lbl">Missing ${qCol.slice(0,2).toUpperCase()} Sales<span class="goto">→ Sales Summary</span></div></div></div>
+      <div class="stat-tile ${pendingSawtCount>0?'warn':'ok'} clickable" id="stat-pending-sawt" title="SAWT / 2307 Received entries still marked Pending -- click to view"><div class="icon">${ICONS.sawt}</div><div class="body"><div class="num">${pendingSawtCount}</div><div class="lbl">SAWT Pending<span class="goto">→ SAWT / 2307 Received</span></div></div></div>
     `;
     const missingTile = document.getElementById('stat-missing-sales');
     if(missingTile) missingTile.addEventListener('click', ()=> goToTab('sales', ()=>{
