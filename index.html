@@ -42,22 +42,22 @@
     color-scheme: dark;
     -webkit-font-smoothing:antialiased;
   }
-  #cor-app .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 60px;}
+  #cor-app .wrap{max-width:1180px;margin:0 auto;padding:16px 20px 60px;}
 
   #cor-app .masthead{
     display:flex;justify-content:space-between;align-items:flex-end;
     border-bottom:3px double var(--brand-deep);
-    padding-bottom:14px;margin-bottom:18px;flex-wrap:wrap;gap:10px;
+    padding-bottom:8px;margin-bottom:10px;flex-wrap:wrap;gap:10px;
   }
   #cor-app .brand-row{display:flex;align-items:center;gap:14px;}
-  #cor-app .brand-row img.logo{height:52px;width:auto;display:block;}
+  #cor-app .brand-row img.logo{height:40px;width:auto;display:block;}
   #cor-app .masthead h1{
-    font-family:'IBM Plex Serif',serif;font-weight:700;font-size:24px;
+    font-family:'IBM Plex Serif',serif;font-weight:700;font-size:20px;
     margin:0;letter-spacing:0.2px;color:var(--brand);
   }
   #cor-app .masthead .eyebrow{
-    font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:2px;
-    text-transform:uppercase;color:var(--ink-soft);margin-bottom:4px;
+    font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:2px;
+    text-transform:uppercase;color:var(--ink-soft);margin-bottom:2px;
   }
   #cor-app .masthead .meta{
     font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);
@@ -67,7 +67,7 @@
 
   #cor-app .save-banner{
     background:var(--gold-soft);border:1px solid var(--gold);border-radius:var(--radius);
-    padding:9px 14px;font-size:12.5px;color:var(--ink);margin-bottom:18px;display:flex;
+    padding:6px 14px;font-size:12.5px;color:var(--ink);margin-bottom:10px;display:flex;
     justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
   }
   #cor-app .save-banner b{color:var(--gold);}
@@ -142,6 +142,7 @@
   #cor-app .field{display:flex;flex-direction:column;gap:5px;}
   #cor-app .field.full{grid-column:1/-1;}
   #cor-app .field label{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.6px;text-transform:uppercase;color:var(--ink-soft);}
+  #cor-app .field-warn{font-size:10.5px;color:var(--warning);margin-top:1px;min-height:1.2em;}
   #cor-app .field input, #cor-app .field select, #cor-app .field textarea{
     font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;padding:8px 10px;
     border:1px solid var(--input-border);border-radius:var(--radius);background:var(--input-bg);color:var(--ink);
@@ -202,6 +203,9 @@
   #cor-app .stat-tile.warn .num{color:var(--warning);}
   #cor-app .stat-tile.ok .num{color:var(--good);}
   #cor-app .stat-tile .lbl{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:0.5px;text-transform:uppercase;color:var(--ink-soft);margin-top:2px;}
+  #cor-app .stat-tile.clickable{cursor:pointer;transition:border-color .12s;}
+  #cor-app .stat-tile.clickable:hover{border-color:var(--brand);}
+  #cor-app .stat-tile .lbl .goto{font-size:9.5px;text-transform:none;letter-spacing:0;color:var(--ink-soft);opacity:0.75;display:block;margin-top:1px;}
 
   #cor-app .cal-groups{display:flex;flex-direction:column;gap:22px;}
   #cor-app .cal-group h3{
@@ -547,6 +551,20 @@
         <button class="secondary" id="add-sales-rep-btn">+ Add</button>
       </div>
       <div class="table-scroll" style="margin-top:14px;max-width:420px;" id="sales-reps-table"></div>
+
+      <h3 style="margin-top:30px;">Bulk Reassign Sales Representative</h3>
+      <div class="small-note">Fixes every Client Registry entry and Sales Summary row that currently has a specific Sales Representative value — including old free-typed names or nicknames — by reassigning them all to a name from the managed list above, in one click. Useful for name cleanups, or moving a departing staff member's clients to someone else.</div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center;">
+        <select class="filter" id="reassign-from-select" style="min-width:220px;"><option value="">— From (existing value) —</option></select>
+        <span style="color:var(--ink-soft);">→</span>
+        <select class="filter" id="reassign-to-select" style="min-width:220px;"><option value="">— To (managed name) —</option></select>
+        <button class="secondary" id="reassign-apply-btn" disabled>Apply</button>
+      </div>
+      <div class="small-note" id="reassign-preview" style="margin-top:8px;"></div>
+
+      <h3 style="margin-top:30px;">Recent Credential Views</h3>
+      <div class="small-note">Who revealed a stored password in the Credentials tab, and when — written automatically the moment "Show" is clicked; nothing here can be edited or deleted from within the app.</div>
+      <div class="table-scroll" style="margin-top:12px;max-width:640px;" id="creds-access-log-table"></div>
     </div>
   </div>
   <div class="toast" id="toast"></div>
@@ -650,7 +668,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   ];
   function mapSalesSummaryFromDb(rows){
     return (rows||[]).map(r=>{
-      const rec = {_id: r.id};
+      const rec = {_id: r.id, updated_at: r.updated_at || null, updated_by: r.updated_by || ''};
       SALES_SUMMARY_COLS.forEach(([key])=>{ rec[key] = r[key]; });
       return rec;
     });
@@ -720,13 +738,19 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       assignedTo: row.assigned_to || '',
     };
   }
+  // As of Batch 3 (password encryption), the raw `password` column always
+  // comes back blank from a normal read -- the real value only exists,
+  // encrypted, in `password_encrypted`, and is only ever decrypted on
+  // demand via the cor_reveal_credential() RPC (see the "Show" button
+  // wiring in renderCreds below), which logs the access. `_hasPassword`
+  // just tells the UI whether there's anything to reveal at all.
   function mapCredsAccountsFromDb(rows){
     return { headers:['ACCOUNT','TIN','NAME','USERNAME','PASSWORD','EMAIL / mobile'],
-      rows: (rows||[]).map(r=>({_id:r.id, ACCOUNT:r.account||'', TIN:r.tin||'', NAME:r.name||'', USERNAME:r.username||'', PASSWORD:r.password||'', 'EMAIL / mobile':r.email_or_mobile||''})) };
+      rows: (rows||[]).map(r=>({_id:r.id, ACCOUNT:r.account||'', TIN:r.tin||'', NAME:r.name||'', USERNAME:r.username||'', PASSWORD:'', _hasPassword: !!r.password_encrypted, 'EMAIL / mobile':r.email_or_mobile||''})) };
   }
   function mapCredsOstFromDb(rows){
     return { headers:['GIS/AFS','SEC','USER','PASSWORD','EMAIL'],
-      rows: (rows||[]).map(r=>({_id:r.id, 'GIS/AFS':r.gis_afs||'', SEC:r.sec||'', USER:r.username||'', PASSWORD:r.password||'', EMAIL:r.email||''})) };
+      rows: (rows||[]).map(r=>({_id:r.id, 'GIS/AFS':r.gis_afs||'', SEC:r.sec||'', USER:r.username||'', PASSWORD:'', _hasPassword: !!r.password_encrypted, EMAIL:r.email||''})) };
   }
   const CREDS_ACCOUNTS_COL_MAP = {ACCOUNT:'account', TIN:'tin', NAME:'name', USERNAME:'username', PASSWORD:'password', 'EMAIL / mobile':'email_or_mobile'};
   const CREDS_OST_COL_MAP = {'GIS/AFS':'gis_afs', SEC:'sec', USER:'username', PASSWORD:'password', EMAIL:'email'};
@@ -782,11 +806,33 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(tab === 'tax2307') renderEntries2307();
     if(tab === 'sawt') renderSawt();
     if(tab === 'report') renderReport();
-    if(tab === 'settings') renderSalesReps();
+    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); renderCredsAccessLog(); }
   }
 
+  // Jumps to another tab programmatically (reuses the same click handler
+  // that a real tab-button click would run, so active states / renders
+  // stay consistent) -- used by the Calendar tab's "needs attention" tiles
+  // to deep-link into Sales Summary / SAWT with a filter pre-applied.
+  function goToTab(tab, afterSwitch){
+    const btn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+    if(!btn) return;
+    btn.click();
+    if(afterSwitch) afterSwitch();
+  }
+
+  // Dismissing the live-data reminder banner now sticks across reloads
+  // (per browser) instead of coming back every time the page loads --
+  // wrapped in try/catch since localStorage can throw in some private-
+  // browsing contexts, in which case the banner just harmlessly shows
+  // every time like before.
+  const BANNER_DISMISS_KEY = 'cor_save_banner_dismissed_v1';
+  const saveBannerEl = document.getElementById('save-banner');
+  try{
+    if(localStorage.getItem(BANNER_DISMISS_KEY) === '1') saveBannerEl.style.display = 'none';
+  }catch(err){ /* ignore -- banner just shows every time */ }
   document.getElementById('dismiss-banner').addEventListener('click', ()=>{
-    document.getElementById('save-banner').style.display = 'none';
+    saveBannerEl.style.display = 'none';
+    try{ localStorage.setItem(BANNER_DISMISS_KEY, '1'); }catch(err){ /* ignore -- not critical */ }
   });
 
   /* ===================== CALENDAR TAB ===================== */
@@ -795,18 +841,50 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   calSearch.addEventListener('input', renderCalendar);
   calStatusFilter.addEventListener('change', renderCalendar);
 
+  // Same "current quarter" logic used by the scheduled email digest --
+  // kept here too so the in-app tile and the email always agree.
+  function currentQuarterCol(){
+    const m = new Date().getMonth() + 1;
+    if(m<=3) return 'q1_sales';
+    if(m<=6) return 'q2_sales';
+    if(m<=9) return 'q3_sales';
+    return 'q4_sales';
+  }
+
   function renderCalStats(){
     const strip = document.getElementById('cal-stats');
     const overdue = tasks.filter(isOverdue).length;
     const dueSoon = tasks.filter(t=>t.status==='PENDING' && !isOverdue(t) && daysUntil(t.due)<=7).length;
     const dueMonth = tasks.filter(t=>t.status==='PENDING' && daysUntil(t.due)>=0 && daysUntil(t.due)<=30).length;
     const doneCount = tasks.filter(t=>t.status==='DONE').length;
+
+    // Cross-tab "needs attention" signals -- these mirror the twice-weekly
+    // email digest's "Data gaps" section, surfaced live here too so staff
+    // don't have to wait for the next scheduled email to see them.
+    const thisYear = new Date().getFullYear();
+    const qCol = currentQuarterCol();
+    const missingSalesCount = salesSummary.filter(r=> r.year===thisYear && (r[qCol]===null || r[qCol]===undefined || r[qCol]==='')).length;
+    const pendingSawtCount = sawtEntries.filter(r=> r.has_certificate==='Pending').length;
+
     strip.innerHTML = `
       <div class="stat-tile crit"><div class="num">${overdue}</div><div class="lbl">Overdue</div></div>
       <div class="stat-tile warn"><div class="num">${dueSoon}</div><div class="lbl">Due in 7 days</div></div>
       <div class="stat-tile"><div class="num">${dueMonth}</div><div class="lbl">Due in 30 days</div></div>
       <div class="stat-tile ok"><div class="num">${doneCount.toLocaleString()}</div><div class="lbl">Marked done (2026)</div></div>
+      <div class="stat-tile ${missingSalesCount>0?'warn':'ok'} clickable" id="stat-missing-sales" title="Sales Summary rows missing ${qCol.slice(0,2).toUpperCase()} Sales for ${thisYear} -- click to view"><div class="num">${missingSalesCount}</div><div class="lbl">Missing ${qCol.slice(0,2).toUpperCase()} Sales<span class="goto">→ Sales Summary</span></div></div>
+      <div class="stat-tile ${pendingSawtCount>0?'warn':'ok'} clickable" id="stat-pending-sawt" title="SAWT / 2307 Received entries still marked Pending -- click to view"><div class="num">${pendingSawtCount}</div><div class="lbl">SAWT Pending<span class="goto">→ SAWT / 2307 Received</span></div></div>
     `;
+    const missingTile = document.getElementById('stat-missing-sales');
+    if(missingTile) missingTile.addEventListener('click', ()=> goToTab('sales', ()=>{
+      salesYearFilter.value = String(thisYear);
+      salesMissingFilter.value = qCol;
+      renderSalesSummary();
+    }));
+    const sawtTile = document.getElementById('stat-pending-sawt');
+    if(sawtTile) sawtTile.addEventListener('click', ()=> goToTab('sawt', ()=>{
+      sawtCertFilter.value = 'Pending';
+      renderSawt();
+    }));
   }
 
   function calRowHtml(t, cls){
@@ -1028,17 +1106,19 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
             </label>
           `}</td>
         <td><input class="inline-text notesf" style="width:140px;" value="${esc(t.notes)}" placeholder="notes"></td>
+        <td><button class="tiny history-task-btn" title="Who changed this task, and when">History</button></td>
       </tr>`;
     }).join('');
     const assignedNames = Array.from(new Set(tasks.map(t=>t.assignedTo).filter(Boolean))).sort();
     document.getElementById('tracker-table').innerHTML = `<datalist id="assigned-to-list">${assignedNames.map(n=>`<option value="${esc(n)}">`).join('')}</datalist><table>
-      <thead><tr><th>Client</th><th>Form</th><th>Period</th><th>Due</th><th>Tax Due</th><th>Status</th><th>Done by</th><th>Date</th><th>Stage / Assigned</th><th>Payment</th><th>Proof</th><th>Notes</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="12" style="text-align:center;color:var(--ink-soft);padding:24px;">No matching tasks.</td></tr>'}</tbody>
+      <thead><tr><th>Client</th><th>Form</th><th>Period</th><th>Due</th><th>Tax Due</th><th>Status</th><th>Done by</th><th>Date</th><th>Stage / Assigned</th><th>Payment</th><th>Proof</th><th>Notes</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="13" style="text-align:center;color:var(--ink-soft);padding:24px;">No matching tasks.</td></tr>'}</tbody>
     </table>`;
     document.getElementById('tracker-table').querySelectorAll('tr[data-tid]').forEach(tr=>{
       const tid = tr.dataset.tid;
       const t = tasks.find(x=>x.id===tid);
       tr.querySelector('.status-select').addEventListener('change', async e=>{
+        const oldVal = t.status;
         t.status = e.target.value;
         const patch = {status: t.status};
         if(t.status==='DONE' && !t.doneDate){
@@ -1049,31 +1129,41 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         renderCalStats();
         const { error } = await sb.from('cor_tasks').update(patch).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
+        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'status', 'Status', oldVal, t.status);
       });
       tr.querySelector('.taxduef').addEventListener('change', async e=>{
+        const oldVal = t.taxDue;
         const raw = e.target.value.trim();
         const num = raw==='' ? null : parseFloat(raw.replace(/,/g,''));
         t.taxDue = (num===null || isNaN(num)) ? null : num;
         e.target.value = t.taxDue!==null ? t.taxDue : '';
         const { error } = await sb.from('cor_tasks').update({tax_due: t.taxDue}).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
+        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'tax_due', 'Tax Due', oldVal, t.taxDue);
       });
       tr.querySelector('.donebyf').addEventListener('change', async e=>{
+        const oldVal = t.doneBy;
         t.doneBy = e.target.value;
         const { error } = await sb.from('cor_tasks').update({done_by: t.doneBy}).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
+        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'done_by', 'Done by', oldVal, t.doneBy);
       });
       tr.querySelector('.donedatef').addEventListener('change', async e=>{
+        const oldVal = t.doneDate;
         t.doneDate = e.target.value;
         const { error } = await sb.from('cor_tasks').update({done_date: t.doneDate}).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
+        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'done_date', 'Done date', oldVal, t.doneDate);
       });
       tr.querySelector('.notesf').addEventListener('change', async e=>{
+        const oldVal = t.notes;
         t.notes = e.target.value;
         const { error } = await sb.from('cor_tasks').update({notes: t.notes}).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
+        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'notes', 'Notes', oldVal, t.notes);
       });
       tr.querySelector('.payment-status-select').addEventListener('change', async e=>{
+        const oldVal = t.paymentStatus;
         t.paymentStatus = e.target.value;
         const patch = {payment_status: t.paymentStatus || null};
         if(t.paymentStatus==='PAID' && !t.paymentDate){
@@ -1083,26 +1173,40 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         }
         const { error } = await sb.from('cor_tasks').update(patch).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
+        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'payment_status', 'Payment status', oldVal, t.paymentStatus);
       });
       tr.querySelector('.paymentdatef').addEventListener('change', async e=>{
+        const oldVal = t.paymentDate;
         t.paymentDate = e.target.value;
         const { error } = await sb.from('cor_tasks').update({payment_date: t.paymentDate || null}).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
+        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'payment_date', 'Payment date', oldVal, t.paymentDate);
       });
       tr.querySelector('.liaisonf').addEventListener('change', async e=>{
+        const oldVal = t.liaison;
         t.liaison = e.target.value;
         const { error } = await sb.from('cor_tasks').update({liaison: t.liaison || null}).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
+        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'liaison', 'Liaison', oldVal, t.liaison);
       });
       tr.querySelector('.stage-select').addEventListener('change', async e=>{
+        const oldVal = t.stage;
         t.stage = e.target.value;
         const { error } = await sb.from('cor_tasks').update({stage: t.stage || null}).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
+        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'stage', 'Stage', oldVal, t.stage);
       });
       tr.querySelector('.assignedf').addEventListener('change', async e=>{
+        const oldVal = t.assignedTo;
         t.assignedTo = e.target.value;
         const { error } = await sb.from('cor_tasks').update({assigned_to: t.assignedTo || null}).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
+        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'assigned_to', 'Assigned to', oldVal, t.assignedTo);
+      });
+      const historyBtn = tr.querySelector('.history-task-btn');
+      if(historyBtn) historyBtn.addEventListener('click', ()=>{
+        const cl = taskClient(t);
+        openRowHistoryModal('cor_tasks_audit', 'record_id', t.id, `${cl.NAME} — ${t.form} ${t.period}`);
       });
       const proofInput = tr.querySelector('.proof-file-input');
       if(proofInput) proofInput.addEventListener('change', async e=>{
@@ -1586,6 +1690,47 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // prepended showing that raw value -- so it stays visibly selected
   // instead of silently reverting to blank. Same "never destroy data
   // silently" principle as the Registry-protection work (Problem #1).
+  // ---------- Soft (non-blocking) field validation ----------
+  // Flags a likely typo -- a TIN with letters in it, a date that doesn't
+  // look like YYYY-MM-DD -- with a small warning under the field, WITHOUT
+  // stopping Save. The goal is catching a mistake at entry time instead of
+  // only downstream (a bad TIN breaking a Report-tab copy-paste, e.g.),
+  // while never trapping a real edge case the checker doesn't anticipate.
+  function looksLikeTin(v){
+    const s = String(v||'').trim();
+    if(!s) return true;
+    return /^[\d\-\s]+$/.test(s) && s.replace(/\D/g,'').length >= 9;
+  }
+  function looksLikeDateYmd(v){
+    const s = String(v||'').trim();
+    if(!s) return true;
+    return /^\d{4}-\d{2}-\d{2}$/.test(s);
+  }
+  // key -> {check(value)->boolean ok, msg}. Deliberately does NOT include
+  // Bookkeeping Date -- that field intentionally accepts free text like
+  // "Q2 2023" (see fmtDateLoose above), so a strict-date warning there
+  // would just be noise on legitimate existing data.
+  const SOFT_VALIDATE_FIELDS = {
+    'TIN': { check: looksLikeTin, msg: "Doesn't look like a TIN (expected digits, e.g. 123-456-789-000)." },
+    'TIN REG. DATE': { check: looksLikeDateYmd, msg: "Doesn't look like a date in YYYY-MM-DD format." },
+    'BUSINESS REG. DATE': { check: looksLikeDateYmd, msg: "Doesn't look like a date in YYYY-MM-DD format." },
+    'END OF SERVICE DATE': { check: looksLikeDateYmd, msg: "Doesn't look like a date in YYYY-MM-DD format." },
+  };
+  // Wires a small warning line under each of the fields above, inside a
+  // freshly-rendered modal `root` -- purely visual, never blocks Save.
+  function wireSoftValidation(root){
+    Object.keys(SOFT_VALIDATE_FIELDS).forEach(key=>{
+      const inp = root.querySelector(`[data-key="${key}"]`);
+      if(!inp) return;
+      const warnEl = document.createElement('div');
+      warnEl.className = 'field-warn';
+      inp.insertAdjacentElement('afterend', warnEl);
+      const rule = SOFT_VALIDATE_FIELDS[key];
+      function refresh(){ warnEl.textContent = rule.check(inp.value) ? '' : ('⚠ ' + rule.msg); }
+      inp.addEventListener('input', refresh);
+      refresh();
+    });
+  }
   function selectOptionsHtml(opts, currentVal){
     const list = opts || [];
     const cur = String(currentVal||'');
@@ -1803,14 +1948,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       .filter(d => d.old !== d.new);
   }
   async function logClientAudit(action, clientId, oldData, newData, changes){
-    try{
-      const { error } = await sb.from('cor_clients_audit').insert({
-        client_id: clientId, action, old_data: oldData||null, new_data: newData||null,
-        changes: (changes && changes.length) ? changes : null,
-        changed_by: currentUserEmail,
-      });
-      if(error) console.error('cor_clients_audit insert failed (non-blocking):', error);
-    }catch(err){ console.error('cor_clients_audit insert threw (non-blocking):', err); }
+    return logRowAudit('cor_clients_audit', 'client_id', clientId, action, oldData, newData, changes);
   }
   function fmtAuditWhen(iso){
     if(!iso) return '';
@@ -1818,11 +1956,38 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(isNaN(d.getTime())) return iso;
     return (d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
   }
-  async function openClientHistoryModal(clientId, clientName){
+  // ---------- Generic per-row change history (audit trail) ----------
+  // Originally built just for Client Registry (cor_clients_audit); extended
+  // in Batch 2 to Task Tracker, Sales Summary, and SAWT / 2307 Received via
+  // the same shape (record_id/action/changed_at/changed_by/old_data/
+  // new_data/changes), just a different audit table + id column name per
+  // source table. Never blocks the actual save on failure -- a lost history
+  // entry is far better than a lost edit.
+  async function logRowAudit(auditTable, idColumn, recordId, action, oldData, newData, changes){
+    try{
+      const { error } = await sb.from(auditTable).insert({
+        [idColumn]: recordId, action, old_data: oldData||null, new_data: newData||null,
+        changes: (changes && changes.length) ? changes : null,
+        changed_by: currentUserEmail,
+      });
+      if(error) console.error(auditTable+' insert failed (non-blocking):', error);
+    }catch(err){ console.error(auditTable+' insert threw (non-blocking):', err); }
+  }
+  // Shorthand for the common case: one field changed via an inline table
+  // edit (Task Tracker / Sales Summary / SAWT cells). Skips writing an
+  // entry entirely if the value didn't actually change (e.g. a select
+  // re-confirmed with the same option).
+  async function logFieldAudit(auditTable, idColumn, recordId, fieldKey, fieldLabel, oldVal, newVal){
+    const oldStr = oldVal===null||oldVal===undefined ? '' : String(oldVal);
+    const newStr = newVal===null||newVal===undefined ? '' : String(newVal);
+    if(oldStr === newStr) return;
+    return logRowAudit(auditTable, idColumn, recordId, 'update', {[fieldKey]:oldVal}, {[fieldKey]:newVal}, [{field:fieldKey, label:fieldLabel, old:oldStr, new:newStr}]);
+  }
+  async function openRowHistoryModal(auditTable, idColumn, recordId, title){
     const root = document.getElementById('modal-root');
     root.innerHTML = `<div class="modal-backdrop" id="history-backdrop">
       <div class="modal">
-        <h2>Change History — ${esc(clientName||'')}</h2>
+        <h2>Change History — ${esc(title||'')}</h2>
         <div id="history-body" class="small-note">Loading...</div>
         <div style="margin-top:16px;display:flex;justify-content:flex-end;">
           <button class="secondary" id="close-history-btn">Close</button>
@@ -1831,16 +1996,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     </div>`;
     document.getElementById('close-history-btn').addEventListener('click', closeModal);
     document.getElementById('history-backdrop').addEventListener('click', e=>{ if(e.target.id==='history-backdrop') closeModal(); });
-    const { data, error } = await sb.from('cor_clients_audit').select('*').eq('client_id', clientId).order('changed_at', {ascending:false}).limit(30);
+    const { data, error } = await sb.from(auditTable).select('*').eq(idColumn, recordId).order('changed_at', {ascending:false}).limit(30);
     const body = document.getElementById('history-body');
     if(!body) return; // modal was closed before this resolved
     if(error){ body.innerHTML = 'Could not load history — please try again.'; console.error(error); return; }
-    if(!data || !data.length){ body.innerHTML = 'No changes recorded yet for this client.'; return; }
+    if(!data || !data.length){ body.innerHTML = 'No changes recorded yet.'; return; }
     body.innerHTML = data.map(row=>{
       const when = fmtAuditWhen(row.changed_at);
       const who = row.changed_by || 'unknown';
       if(row.action === 'delete'){
-        return `<div style="padding:8px 0;border-bottom:1px solid var(--paper-line);"><strong style="color:var(--ink-soft);">${esc(when)}</strong> — removed from registry by ${esc(who)}</div>`;
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--paper-line);"><strong style="color:var(--ink-soft);">${esc(when)}</strong> — removed by ${esc(who)}</div>`;
       }
       const changes = row.changes || [];
       if(!changes.length){
@@ -1849,6 +2014,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const lines = changes.map(c=>`<div style="margin-top:3px;">${esc(c.label)}: <span style="color:var(--ink-soft);">"${esc(c.old)||'(blank)'}"</span> → <strong>"${esc(c.new)||'(blank)'}"</strong></div>`).join('');
       return `<div style="padding:8px 0;border-bottom:1px solid var(--paper-line);"><strong style="color:var(--ink-soft);">${esc(when)}</strong> — edited by ${esc(who)}${lines}</div>`;
     }).join('');
+  }
+  async function openClientHistoryModal(clientId, clientName){
+    return openRowHistoryModal('cor_clients_audit', 'client_id', clientId, clientName);
   }
 
   function openClientModal(clientId, prefill){
@@ -1871,7 +2039,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         </div>
         <div style="margin-top:20px;display:flex;gap:10px;justify-content:space-between;">
           <div style="display:flex;gap:10px;">
-            ${!isNew? '<button class="danger-link" id="delete-client-btn">Remove from registry</button>':''}
+            ${!isNew && isAdmin() ? '<button class="danger-link" id="delete-client-btn">Remove from registry</button>':''}
             ${!isNew? '<button class="secondary" id="history-client-btn" type="button">History</button>':''}
             ${!isNew? '<button class="secondary" id="tax-notice-btn" type="button">Tax Summary Notice</button>':''}
           </div>
@@ -1887,6 +2055,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const histBtn = document.getElementById('history-client-btn');
     if(histBtn) histBtn.addEventListener('click', ()=> openClientHistoryModal(clientId, c.NAME));
     wireFormsGridCascade(root);
+    wireSoftValidation(root);
     document.getElementById('autofill-forms-btn').addEventListener('click', ()=>{
       // Read the checkboxes/selects as currently set in the (unsaved) modal,
       // not from the stored record -- so this reflects edits made just now,
@@ -2259,26 +2428,77 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const filteredOst = { headers: credsOst.headers, rows: filterCredsRows(credsOst, ostQ) };
     document.getElementById('accounts-table').innerHTML = credsTableHtml(filteredAcc, 'accounts', !!accQ);
     document.getElementById('ost-table').innerHTML = credsTableHtml(filteredOst, 'ost', !!ostQ);
+    // "Show" fetches the real password on demand via the cor_reveal_credential
+    // database function (Batch 3 encryption) -- decrypting it AND writing an
+    // access-log entry happen together, server-side, in that one call. The
+    // decrypted value is cached on the button after the first successful
+    // reveal so toggling Show/Hide again doesn't re-log every click; a fresh
+    // render (new search, tab switch, realtime update) re-masks everything
+    // and requires a fresh Show click, which logs again -- that's intentional.
     document.querySelectorAll('.pw-toggle').forEach(b=>{
-      b.addEventListener('click', ()=>{
+      b.addEventListener('click', async ()=>{
         const cell = b.previousElementSibling;
-        const real = b.dataset.real;
-        if(cell.textContent.includes('•')){ cell.textContent = real; b.textContent='Hide'; }
-        else { cell.textContent = '••••••••'; b.textContent='Show'; }
+        if(cell.textContent.includes('•')){
+          if(b.dataset.revealed !== undefined){
+            cell.textContent = b.dataset.revealed;
+            b.textContent = 'Hide';
+            return;
+          }
+          b.disabled = true;
+          const { data, error } = await sb.rpc('cor_reveal_credential', {p_table: b.dataset.table, p_id: b.dataset.id});
+          b.disabled = false;
+          if(error){
+            console.error(error);
+            toast('Could not reveal this password — please try again (run cor_credentials_encryption_batch3.sql in Supabase if this keeps happening).');
+            return;
+          }
+          b.dataset.revealed = data || '';
+          cell.textContent = data || '(blank)';
+          b.textContent = 'Hide';
+        } else {
+          cell.textContent = '••••••••';
+          b.textContent = 'Show';
+        }
       });
     });
     document.querySelectorAll('.edit-creds-btn').forEach(b=>{
       b.addEventListener('click', ()=>openCredsModal(b.dataset.kind, b.dataset.id));
     });
   }
+  // In-app view of cor_credentials_access_log (Batch 3) -- the log itself
+  // is written only by the cor_reveal_credential() database function, never
+  // directly by the app, so this is read-only by construction: there's no
+  // delete/edit wiring here at all. Table may not exist yet if
+  // cor_credentials_encryption_batch3.sql hasn't been run -- fails quietly
+  // with a helpful message rather than breaking the Settings tab.
+  async function renderCredsAccessLog(){
+    const area = document.getElementById('creds-access-log-table');
+    if(!area) return;
+    const { data, error } = await sb.from('cor_credentials_access_log').select('*').order('accessed_at', {ascending:false}).limit(20);
+    if(!area.isConnected) return; // Settings tab navigated away before this resolved
+    if(error){
+      area.innerHTML = `<div class="small-note">No access log yet — run cor_credentials_encryption_batch3.sql in Supabase first.</div>`;
+      return;
+    }
+    if(!data || !data.length){
+      area.innerHTML = `<div class="small-note">No passwords have been revealed yet.</div>`;
+      return;
+    }
+    const rows = data.map(row=>`<tr><td>${esc(row.record_label||'')}</td><td>${esc(row.accessed_by||'unknown')}</td><td class="mono">${esc(fmtAuditWhen(row.accessed_at))}</td></tr>`).join('');
+    area.innerHTML = `<table><thead><tr><th>Account</th><th>Revealed by</th><th>When</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  const CREDS_TABLE_NAME = {accounts:'cor_credentials_accounts', ost:'cor_credentials_ost'};
   function credsTableHtml(sheet, kind, hasQuery){
     if(!sheet.rows || !sheet.rows.length) return `<div class="small-note">${hasQuery? 'No matches for this search.' : 'Nothing here yet.'}</div>`;
     const cols = sheet.headers.filter(h=>h);
+    const dbTable = CREDS_TABLE_NAME[kind];
     const rows = sheet.rows.map(r=>{
       return '<tr>' + cols.map(c=>{
         if(/PASSWORD/i.test(c)){
-          const val = r[c]==null?'':String(r[c]);
-          return `<td><span class="pw-mask">••••••••</span><button class="tiny pw-toggle" data-real="${esc(val)}" style="margin-left:6px;">Show</button></td>`;
+          if(!r._hasPassword) return `<td style="color:var(--ink-soft);">(none set)</td>`;
+          // Encrypted at rest -- the real value is only fetched (and
+          // logged) the moment "Show" is actually clicked, never before.
+          return `<td><span class="pw-mask" data-id="${esc(r._id)}" data-table="${esc(dbTable)}">••••••••</span><button class="tiny pw-toggle" data-id="${esc(r._id)}" data-table="${esc(dbTable)}" style="margin-left:6px;">Show</button></td>`;
         }
         return `<td>${esc(r[c])}</td>`;
       }).join('') + `<td><button class="tiny edit-creds-btn" data-kind="${kind}" data-id="${esc(r._id)}">Edit</button></td></tr>`;
@@ -2457,7 +2677,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const frozen = SALES_FROZEN_KEYS.includes(key);
       const style = frozen ? `left:${SALES_FROZEN_LEFT[key]}px;width:${SALES_FROZEN_WIDTHS[key]}px;` : '';
       return `<th class="${frozen?'frozen-col':''}" style="${style}">${esc(label)}</th>`;
-    }).join('') + '<th></th>';
+    }).join('') + '<th></th><th></th>';
     // When a row's Client ID resolves to a real Registry entry, the Name/TIN/
     // Trade Name cells are shown read-only and sourced live from the
     // Registry -- this is the whole point of the Client ID: type/pick it
@@ -2509,7 +2729,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         const roStyle = isLocked ? 'background:var(--paper-line);color:var(--ink-soft);' : '';
         return `<td class="${frozen?'frozen-col':''}" style="${tdStyle}"><input class="inline-text sales-cell${kind==='num'?' mono':''}" data-key="${esc(key)}"${listAttr}${roAttrs} style="width:${width}px;${roStyle}" value="${val!==null && val!==undefined ? esc(val) : ''}"></td>`;
       }).join('');
-      return `<tr data-id="${esc(r._id)}">${cells}<td><button class="tiny delete-sales-btn" data-id="${esc(r._id)}">Delete</button></td></tr>`;
+      const editedTitle = r.updated_by ? `Last edited by ${r.updated_by} on ${fmtAuditWhen(r.updated_at)}` : '';
+      return `<tr data-id="${esc(r._id)}" title="${esc(editedTitle)}">${cells}<td><button class="tiny history-sales-btn" data-id="${esc(r._id)}">History</button></td><td><button class="tiny delete-sales-btn" data-id="${esc(r._id)}">Delete</button></td></tr>`;
     }).join('');
     document.getElementById('sales-table').innerHTML = `<table><thead><tr>${headRow}</tr></thead><tbody>${rows}</tbody></table>`;
     document.querySelectorAll('#sales-table tbody tr').forEach(tr=>{
@@ -2520,10 +2741,17 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         input.addEventListener('change', async e=>{
           const key = e.target.dataset.key;
           const colDef = SALES_SUMMARY_COLS.find(c=>c[0]===key);
+          const oldVal = rec[key];
           let val = e.target.value.trim();
           if(colDef[2]==='num'){
+            const rawTyped = val;
             val = val==='' ? null : parseFloat(val.replace(/,/g,''));
-            if(val!==null && isNaN(val)) val = null;
+            if(val!==null && isNaN(val)){
+              val = null;
+              // Soft validation: still saves (never blocks the edit), but no
+              // longer silently clears a typo to blank without saying so.
+              toast(`"${rawTyped}" doesn't look like a number for ${colDef[1]} — saved as blank, please double-check.`);
+            }
           } else {
             val = val==='' ? null : val;
           }
@@ -2542,10 +2770,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
               patch.name = rec.name; patch.tin = rec.tin; patch.trade_name = rec.trade_name;
             }
           }
+          const stamp = { updated_at: new Date().toISOString(), updated_by: currentUserEmail };
+          Object.assign(patch, stamp);
+          rec.updated_at = stamp.updated_at; rec.updated_by = stamp.updated_by;
           const { error } = await sb.from('cor_sales_summary').update(patch).eq('id', id);
           if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
-          if(key==='client_id_no') renderSalesSummary();
+          else logFieldAudit('cor_sales_summary_audit', 'record_id', id, key, colDef[1], oldVal, val);
+          if(key==='client_id_no') renderSalesSummary(); else tr.title = `Last edited by ${stamp.updated_by} on ${fmtAuditWhen(stamp.updated_at)}`;
         });
+      });
+    });
+    document.querySelectorAll('.history-sales-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = btn.dataset.id;
+        const rec = salesSummary.find(x=>x._id===id);
+        openRowHistoryModal('cor_sales_summary_audit', 'record_id', id, `${rec? rec.name||'' : ''} — ${rec? rec.year||'' : ''}`);
       });
     });
     document.querySelectorAll('.delete-sales-btn').forEach(btn=>{
@@ -2556,6 +2795,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         btn.disabled = true;
         const { error } = await sb.from('cor_sales_summary').delete().eq('id', id);
         if(error){ console.error(error); toast('Delete failed — please try again.'); btn.disabled = false; return; }
+        logRowAudit('cor_sales_summary_audit', 'record_id', id, 'delete', rec, null, null);
         salesSummary = salesSummary.filter(x=>x._id!==id);
         renderSalesSummary();
         toast('Deleted.');
@@ -2576,7 +2816,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   ];
   function mapEntry2307FromDb(rows){
     return (rows||[]).map(r=>{
-      const rec = {_id: r.id};
+      const rec = {_id: r.id, updated_at: r.updated_at || null, updated_by: r.updated_by || ''};
       ENTRY_2307_COLS.forEach(([key])=>{ rec[key] = r[key]; });
       return rec;
     });
@@ -2670,7 +2910,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         const roStyle = isAutoFilled ? 'background:var(--paper-line);color:var(--ink-soft);' : '';
         return `<td><input class="inline-text entry2307-cell${kind==='num'?' mono':''}" data-key="${esc(key)}" style="width:${width}px;${roStyle}"${listAttr}${roAttrs} value="${val!==null && val!==undefined ? esc(val) : ''}"></td>`;
       }).join('');
-      return `<tr data-id="${esc(r._id)}">${cells}<td><button class="tiny print-2307-btn" data-id="${esc(r._id)}">Print 2307</button></td><td><button class="tiny delete-2307-btn" data-id="${esc(r._id)}">Delete</button></td></tr>`;
+      const editedTitle = r.updated_by ? `Last edited by ${r.updated_by} on ${fmtAuditWhen(r.updated_at)}` : '';
+      return `<tr data-id="${esc(r._id)}" title="${esc(editedTitle)}">${cells}<td><button class="tiny print-2307-btn" data-id="${esc(r._id)}">Print 2307</button></td><td><button class="tiny delete-2307-btn" data-id="${esc(r._id)}">Delete</button></td></tr>`;
     }).join('');
     document.getElementById('tax2307-table').innerHTML = `<table><thead><tr>${headRow}</tr></thead><tbody>${rows}</tbody></table>`;
     document.querySelectorAll('#tax2307-table tbody tr').forEach(tr=>{
@@ -2683,8 +2924,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           const colDef = ENTRY_2307_COLS.find(c=>c[0]===key);
           let val = e.target.value.trim();
           if(colDef[2]==='num'){
+            const rawTyped = val;
             val = val==='' ? null : parseFloat(val.replace(/,/g,''));
-            if(val!==null && isNaN(val)) val = null;
+            if(val!==null && isNaN(val)){
+              val = null;
+              // Soft validation: still saves (never blocks the edit), but no
+              // longer silently clears a typo to blank without saying so.
+              toast(`"${rawTyped}" doesn't look like a number for ${colDef[1]} — saved as blank, please double-check.`);
+            }
           } else {
             val = val==='' ? null : val;
           }
@@ -2714,9 +2961,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
               patch.payor_name = rec.payor_name; patch.payor_tin = rec.payor_tin;
             }
           }
+          const stamp = { updated_at: new Date().toISOString(), updated_by: currentUserEmail };
+          Object.assign(patch, stamp);
+          rec.updated_at = stamp.updated_at; rec.updated_by = stamp.updated_by;
           const { error } = await sb.from('cor_2307_entries').update(patch).eq('id', id);
           if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
-          if(key==='client_id_no') renderEntries2307();
+          if(key==='client_id_no') renderEntries2307(); else tr.title = `Last edited by ${stamp.updated_by} on ${fmtAuditWhen(stamp.updated_at)}`;
         });
       });
     });
@@ -2911,7 +3161,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   ];
   function mapSawtFromDb(rows){
     return (rows||[]).map(r=>{
-      const rec = {_id: r.id};
+      const rec = {_id: r.id, updated_at: r.updated_at || null, updated_by: r.updated_by || ''};
       SAWT_COLS.forEach(([key])=>{ rec[key] = r[key]; });
       return rec;
     });
@@ -3006,7 +3256,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       document.getElementById('sawt-table').innerHTML = `<div class="small-note">${sawtEntries.length? 'No matches for this search/filter.' : 'No data yet — run cor_2307_received_schema.sql in Supabase first, then click "+ Add entry".'}</div>`;
       return;
     }
-    const headRow = SAWT_COLS.map(([,label])=>`<th>${esc(label)}</th>`).join('') + '<th></th>';
+    const headRow = SAWT_COLS.map(([,label])=>`<th>${esc(label)}</th>`).join('') + '<th></th><th></th>';
     const rows = pool.map(r=>{
       const cells = SAWT_COLS.map(([key,,kind,opts])=>{
         const val = r[key];
@@ -3023,7 +3273,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         }
         return `<td><input class="inline-text sawt-cell${kind==='num'?' mono':''}" data-key="${esc(key)}" style="width:${width}px;" value="${val!==null && val!==undefined ? esc(val) : ''}"></td>`;
       }).join('');
-      return `<tr data-id="${esc(r._id)}">${cells}<td><button class="tiny delete-sawt-btn" data-id="${esc(r._id)}">Delete</button></td></tr>`;
+      const editedTitle = r.updated_by ? `Last edited by ${r.updated_by} on ${fmtAuditWhen(r.updated_at)}` : '';
+      return `<tr data-id="${esc(r._id)}" title="${esc(editedTitle)}">${cells}<td><button class="tiny history-sawt-btn" data-id="${esc(r._id)}">History</button></td><td><button class="tiny delete-sawt-btn" data-id="${esc(r._id)}">Delete</button></td></tr>`;
     }).join('');
     document.getElementById('sawt-table').innerHTML = `<table><thead><tr>${headRow}</tr></thead><tbody>${rows}</tbody></table>`;
     document.querySelectorAll('#sawt-table tbody tr').forEach(tr=>{
@@ -3034,10 +3285,17 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         input.addEventListener('change', async e=>{
           const key = e.target.dataset.key;
           const colDef = SAWT_COLS.find(c=>c[0]===key);
+          const oldVal = rec[key];
           let val = e.target.value.trim();
           if(colDef[2]==='num'){
+            const rawTyped = val;
             val = val==='' ? null : parseFloat(val.replace(/,/g,''));
-            if(val!==null && isNaN(val)) val = null;
+            if(val!==null && isNaN(val)){
+              val = null;
+              // Soft validation: still saves (never blocks the edit), but no
+              // longer silently clears a typo to blank without saying so.
+              toast(`"${rawTyped}" doesn't look like a number for ${colDef[1]} — saved as blank, please double-check.`);
+            }
           } else {
             val = val==='' ? null : val;
           }
@@ -3054,9 +3312,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
             }
           }
           if(key==='gross_amount' || key==='tax_rate' || key==='tax_withheld') refreshSawtTotal();
+          const stamp = { updated_at: new Date().toISOString(), updated_by: currentUserEmail };
+          Object.assign(patch, stamp);
+          rec.updated_at = stamp.updated_at; rec.updated_by = stamp.updated_by;
+          tr.title = `Last edited by ${stamp.updated_by} on ${fmtAuditWhen(stamp.updated_at)}`;
           const { error } = await sb.from('cor_2307_received').update(patch).eq('id', id);
           if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
+          else logFieldAudit('cor_2307_received_audit', 'record_id', id, key, colDef[1], oldVal, val);
         });
+      });
+    });
+    document.querySelectorAll('.history-sawt-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = btn.dataset.id;
+        const rec = sawtEntries.find(x=>x._id===id);
+        openRowHistoryModal('cor_2307_received_audit', 'record_id', id, `${rec? rec.client_name||'' : ''} — ${rec? rec.payor_name||'' : ''}`);
       });
     });
     document.querySelectorAll('.delete-sawt-btn').forEach(btn=>{
@@ -3067,6 +3337,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         btn.disabled = true;
         const { error } = await sb.from('cor_2307_received').delete().eq('id', id);
         if(error){ console.error(error); toast('Delete failed — please try again.'); btn.disabled = false; return; }
+        logRowAudit('cor_2307_received_audit', 'record_id', id, 'delete', rec, null, null);
         sawtEntries = sawtEntries.filter(x=>x._id!==id);
         renderSawt();
         toast('Deleted.');
@@ -3196,6 +3467,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     refreshSalesRepOpts();
     input.value = '';
     renderSalesReps();
+    initReassignTool();
     toast('Added to the list.');
   });
   function renderSalesReps(){
@@ -3205,7 +3477,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       return;
     }
     const rows = salesReps.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(r=>
-      `<tr data-id="${esc(r._id)}"><td>${esc(r.name)}</td><td><button class="tiny delete-sales-rep-btn" data-id="${esc(r._id)}">Delete</button></td></tr>`
+      `<tr data-id="${esc(r._id)}"><td>${esc(r.name)}</td><td>${isAdmin() ? `<button class="tiny delete-sales-rep-btn" data-id="${esc(r._id)}">Delete</button>` : ''}</td></tr>`
     ).join('');
     area.innerHTML = `<table><thead><tr><th>Name</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
     area.querySelectorAll('.delete-sales-rep-btn').forEach(btn=>{
@@ -3219,10 +3491,102 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         salesReps = salesReps.filter(r=>r._id!==id);
         refreshSalesRepOpts();
         renderSalesReps();
+        initReassignTool();
         toast('Removed from the list.');
       });
     });
   }
+
+  /* ---------- Bulk Reassign Sales Representative (Settings tab) ----------
+     Turns the exact kind of one-off "fix these nicknames across every row"
+     request into a two-minute self-service action instead of a SQL script.
+     "From" lists every DISTINCT value actually in use right now across both
+     Client Registry and Sales Summary -- including old free-typed names/
+     nicknames not in the managed list -- so it can fix exactly the kind of
+     mess a managed-list-only dropdown can't reach. "To" is restricted to
+     the managed list (Settings, above) so the result is always a clean,
+     consistent name. */
+  const reassignFromSelect = document.getElementById('reassign-from-select');
+  const reassignToSelect = document.getElementById('reassign-to-select');
+  const reassignApplyBtn = document.getElementById('reassign-apply-btn');
+  const reassignPreviewEl = document.getElementById('reassign-preview');
+
+  function reassignAffectedCounts(fromVal){
+    if(!fromVal) return {clientCount:0, salesCount:0};
+    const clientCount = clients.filter(c=>c['SALES REPRESENTATIVE']===fromVal).length;
+    const salesCount = salesSummary.filter(r=>r.agent===fromVal).length;
+    return {clientCount, salesCount};
+  }
+  function updateReassignPreview(){
+    const fromVal = reassignFromSelect.value;
+    const toVal = reassignToSelect.value;
+    if(!fromVal){ reassignPreviewEl.textContent = ''; reassignApplyBtn.disabled = true; return; }
+    const {clientCount, salesCount} = reassignAffectedCounts(fromVal);
+    reassignPreviewEl.textContent = `This will update ${clientCount} Client Registry entry(ies) and ${salesCount} Sales Summary row(s) from "${fromVal}" to "${toVal || '(pick a target above)'}".`;
+    reassignApplyBtn.disabled = !(fromVal && toVal && fromVal!==toVal && (clientCount+salesCount)>0);
+  }
+  reassignFromSelect.addEventListener('change', updateReassignPreview);
+  reassignToSelect.addEventListener('change', updateReassignPreview);
+
+  // Rebuilds both dropdowns' contents (preserving the current picks where
+  // still valid) -- called whenever the underlying data could have changed:
+  // on load, whenever the Settings tab is shown, and whenever the managed
+  // Sales Representative list or the client/sales data changes (including
+  // via realtime updates from another staff member).
+  function initReassignTool(){
+    if(!reassignFromSelect) return;
+    const prevFrom = reassignFromSelect.value;
+    const fromValues = Array.from(new Set([
+      ...clients.map(c=>c['SALES REPRESENTATIVE']).filter(Boolean),
+      ...salesSummary.map(r=>r.agent).filter(Boolean),
+    ])).sort((a,b)=>a.localeCompare(b));
+    reassignFromSelect.innerHTML = '<option value="">— From (existing value) —</option>' + fromValues.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    if(fromValues.includes(prevFrom)) reassignFromSelect.value = prevFrom;
+
+    const prevTo = reassignToSelect.value;
+    const toNames = salesReps.slice().sort((a,b)=>a.name.localeCompare(b.name)).map(r=>r.name);
+    reassignToSelect.innerHTML = '<option value="">— To (managed name) —</option>' + toNames.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    if(toNames.includes(prevTo)) reassignToSelect.value = prevTo;
+    updateReassignPreview();
+  }
+
+  reassignApplyBtn.addEventListener('click', async ()=>{
+    const fromVal = reassignFromSelect.value, toVal = reassignToSelect.value;
+    if(!fromVal || !toVal || fromVal===toVal) return;
+    const {clientCount, salesCount} = reassignAffectedCounts(fromVal);
+    if(!confirm(`Reassign "${fromVal}" → "${toVal}" across ${clientCount} Client Registry entry(ies) and ${salesCount} Sales Summary row(s)?\n\nThis cannot be undone automatically — you'd need to reverse it the same way.`)) return;
+    reassignApplyBtn.disabled = true;
+    const affectedClients = clients.filter(c=>c['SALES REPRESENTATIVE']===fromVal);
+    const affectedSales = salesSummary.filter(r=>r.agent===fromVal);
+    try{
+      const stamp = { updated_at: new Date().toISOString(), updated_by: currentUserEmail };
+      const clientUpdates = affectedClients.map(c=> sb.from('cor_clients').update({sales_representative: toVal, updated_at: stamp.updated_at, updated_by: stamp.updated_by}).eq('id', c._id));
+      const salesUpdates = affectedSales.map(r=> sb.from('cor_sales_summary').update({agent: toVal, updated_at: stamp.updated_at, updated_by: stamp.updated_by}).eq('id', r._id));
+      const results = await Promise.all([...clientUpdates, ...salesUpdates]);
+      const failed = results.filter(r=>r && r.error);
+      affectedClients.forEach(c=>{
+        logFieldAudit('cor_clients_audit', 'client_id', c._id, 'SALES REPRESENTATIVE', 'Sales Representative', fromVal, toVal);
+        c['SALES REPRESENTATIVE'] = toVal;
+      });
+      affectedSales.forEach(r=>{
+        logFieldAudit('cor_sales_summary_audit', 'record_id', r._id, 'agent', 'Sales Representative', fromVal, toVal);
+        r.agent = toVal; r.updated_at = stamp.updated_at; r.updated_by = stamp.updated_by;
+      });
+      initRegistryFilters(); initReportFilters(); initSalesSummaryFilters();
+      const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
+      if(activeTab==='registry') renderRegistry();
+      if(activeTab==='sales') renderSalesSummary();
+      if(failed.length){
+        console.error(failed.map(f=>f.error));
+        toast(`${failed.length} row(s) failed to update — please try again (some rows may already be updated; check the "From" list above).`);
+      } else {
+        toast(`Done — ${clientCount} Client Registry entry(ies) and ${salesCount} Sales Summary row(s) reassigned.`);
+      }
+    } finally {
+      reassignApplyBtn.disabled = false;
+      initReassignTool();
+    }
+  });
 
   function openCredsModal(kind, id){
     const isNew = !id;
@@ -3234,9 +3598,17 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const existing = isNew ? null : table.rows.find(r=>r._id===id);
     const rec = isNew ? {} : Object.assign({}, existing);
     const root = document.getElementById('modal-root');
-    const fieldsHtml = fields.map(([key,flabel,cls])=>`
-      <div class="field ${cls||''}"><label>${esc(flabel)}</label><input data-key="${esc(key)}" value="${esc(rec[key])}"></div>
-    `).join('');
+    // Password: type="password" so it's masked while typing, and always
+    // starts blank here (the real value is encrypted at rest as of Batch 3
+    // and is never sent back into an edit form) -- leaving it blank and
+    // saving keeps whatever password is already on file unchanged; typing
+    // a new value replaces it.
+    const fieldsHtml = fields.map(([key,flabel,cls])=>{
+      const isPw = /PASSWORD/i.test(key);
+      const typeAttr = isPw ? ' type="password"' : '';
+      const placeholder = isPw ? (isNew ? 'Password' : 'Leave blank to keep the current password') : '';
+      return `<div class="field ${cls||''}"><label>${esc(flabel)}</label><input data-key="${esc(key)}"${typeAttr} placeholder="${esc(placeholder)}" value="${esc(rec[key])}"></div>`;
+    }).join('');
     root.innerHTML = `<div class="modal-backdrop" id="modal-backdrop">
       <div class="modal">
         <h2>${isNew? 'Add '+label : 'Edit '+label}</h2>
@@ -3347,9 +3719,20 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     await sb.auth.signOut();
   });
 
+  // 'admin' (full access) or 'staff' (Batch 3.2 restricted tier: no
+  // Credentials tab, can't delete clients or Sales Representative names).
+  // Defaults to 'admin' when the role column doesn't exist yet (pre-
+  // migration) or came back blank -- safe because, pre-migration, everyone
+  // already has full access anyway; this just preserves that until
+  // cor_access_tiers_batch3.sql has been run and roles assigned. The real
+  // enforcement is server-side (RLS) regardless of this value -- this only
+  // controls what the UI shows/hides.
+  let currentUserRole = 'admin';
+  function isAdmin(){ return currentUserRole === 'admin'; }
   async function checkAuthorized(email){
-    const { data, error } = await sb.from('cor_authorized_staff').select('email').eq('email', email).maybeSingle();
+    const { data, error } = await sb.from('cor_authorized_staff').select('email, role').eq('email', email).maybeSingle();
     if(error) throw error;
+    if(data) currentUserRole = data.role || 'admin';
     return !!data;
   }
 
@@ -3402,6 +3785,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     initEntries2307Filters();
     initSawtFilters();
     initReportFilters();
+    initReassignTool();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
@@ -3410,7 +3794,48 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     realtimeChannels = [
       sb.channel('cor_tasks_live').on('postgres_changes', {event:'*', schema:'public', table:'cor_tasks'}, handleTaskRealtime).subscribe(),
       sb.channel('cor_clients_live').on('postgres_changes', {event:'*', schema:'public', table:'cor_clients'}, handleClientRealtime).subscribe(),
+      sb.channel('cor_sales_summary_live').on('postgres_changes', {event:'*', schema:'public', table:'cor_sales_summary'}, handleSalesSummaryRealtime).subscribe(),
+      sb.channel('cor_2307_entries_live').on('postgres_changes', {event:'*', schema:'public', table:'cor_2307_entries'}, handleEntry2307Realtime).subscribe(),
+      sb.channel('cor_2307_received_live').on('postgres_changes', {event:'*', schema:'public', table:'cor_2307_received'}, handleSawtRealtime).subscribe(),
     ];
+  }
+  // Same live-sync pattern as tasks/clients above, extended to the three
+  // tables that previously only reflected what was loaded at login: Sales
+  // Summary, 2307 Register, and SAWT / 2307 Received. Without this, two
+  // staff with the same tab open at the same time could each be editing a
+  // stale copy of a row without knowing the other already changed it.
+  function handleSalesSummaryRealtime(payload){
+    if(payload.eventType === 'DELETE'){
+      salesSummary = salesSummary.filter(r=>r._id !== payload.old.id);
+    } else {
+      const mapped = mapSalesSummaryFromDb([payload.new])[0];
+      const idx = salesSummary.findIndex(r=>r._id===mapped._id);
+      if(idx>=0) salesSummary[idx] = mapped; else salesSummary.push(mapped);
+    }
+    initSalesSummaryFilters(); initReassignTool();
+    renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
+  }
+  function handleEntry2307Realtime(payload){
+    if(payload.eventType === 'DELETE'){
+      entries2307 = entries2307.filter(r=>r._id !== payload.old.id);
+    } else {
+      const mapped = mapEntry2307FromDb([payload.new])[0];
+      const idx = entries2307.findIndex(r=>r._id===mapped._id);
+      if(idx>=0) entries2307[idx] = mapped; else entries2307.push(mapped);
+    }
+    initEntries2307Filters();
+    renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
+  }
+  function handleSawtRealtime(payload){
+    if(payload.eventType === 'DELETE'){
+      sawtEntries = sawtEntries.filter(r=>r._id !== payload.old.id);
+    } else {
+      const mapped = mapSawtFromDb([payload.new])[0];
+      const idx = sawtEntries.findIndex(r=>r._id===mapped._id);
+      if(idx>=0) sawtEntries[idx] = mapped; else sawtEntries.push(mapped);
+    }
+    initSawtFilters();
+    renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
   function handleTaskRealtime(payload){
     if(payload.eventType === 'DELETE'){
@@ -3453,10 +3878,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       showLoginGate('There was a problem loading data from the database — please refresh and try again.');
       return;
     }
-    userEmailLabel.textContent = currentUserEmail;
+    userEmailLabel.textContent = currentUserEmail + (isAdmin() ? '' : ' (Staff)');
     syncStatusEl.textContent = '🟢 Connected to the live database — every edit is seen by all staff right away.';
+    applyRoleVisibility();
     showApp();
     setupRealtime();
+  }
+
+  // Hides what the 'staff' tier shouldn't see -- the Credentials tab
+  // entirely, plus any delete-client / delete-sales-rep buttons rendered
+  // later. This is a UI convenience only; the actual enforcement is the
+  // server-side RLS policies from cor_access_tiers_batch3.sql, so even a
+  // staff account poking at the API directly is still blocked there.
+  function applyRoleVisibility(){
+    const credsTabBtn = document.querySelector('.tab-btn[data-tab="creds"]');
+    if(credsTabBtn) credsTabBtn.style.display = isAdmin() ? '' : 'none';
   }
 
   async function initAuth(){
