@@ -8,10 +8,10 @@
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
   :root{
-    --paper:#2A0F12;
-    --paper-line:#4E2427;
+    --paper:#0A0A0A;
+    --paper-line:#242424;
     --ink:#F4EADA;
-    --ink-soft:#C8AF93;
+    --ink-soft:#B8AFA4;
     --brand:#E2483A;
     --brand-deep:#A33025;
     --stamp:#E2483A;
@@ -20,10 +20,10 @@
     --gold-soft:rgba(217,167,46,0.22);
     --forest:#8FBF5C;
     --forest-soft:rgba(143,191,92,0.20);
-    --card:#38171A;
-    --input-bg:#3D1A1D;
-    --input-border:#6B3A3A;
-    --row-hover:#42201F;
+    --card:#161616;
+    --input-bg:#1C1C1C;
+    --input-border:#3A3A3A;
+    --row-hover:#202020;
     --radius:3px;
     --good:#6FCB6F;
     --warning:#E0A82E;
@@ -82,6 +82,31 @@
   #cor-app .tab-btn.active{background:var(--card);color:var(--brand);font-weight:600;border-bottom:1px solid var(--card);}
   #cor-app .tab-panel{display:none;background:var(--card);border:1px solid var(--gold);padding:24px;border-radius:0 var(--radius) var(--radius) var(--radius);}
   #cor-app .tab-panel.active{display:block;}
+
+  /* On narrower screens (phones/small tablets) the nav stays the original
+     horizontal wrapping tab bar above the content -- unchanged from before.
+     On wider screens it switches to a vertical sidebar on the left instead,
+     same buttons/active-state logic, just repositioned. */
+  @media (min-width: 861px){
+    #cor-app .layout-row{display:flex;gap:16px;align-items:flex-start;}
+    #cor-app .tabs{
+      flex-direction:column;flex-wrap:nowrap;gap:2px;
+      width:200px;flex:0 0 200px;
+      background:var(--card);border:1px solid var(--gold);border-radius:var(--radius);
+      padding:8px;position:sticky;top:12px;
+    }
+    #cor-app .tab-btn{
+      border:none;border-left:3px solid transparent;border-radius:3px;
+      padding:10px 12px;text-align:left;top:0;width:100%;
+    }
+    #cor-app .tab-btn:hover{background:var(--row-hover);color:var(--ink);}
+    #cor-app .tab-btn.active{
+      background:var(--gold-soft);color:var(--brand);font-weight:600;
+      border-left-color:var(--gold);border-bottom:none;
+    }
+    #cor-app .panels-col{flex:1;min-width:0;}
+    #cor-app .panels-col .tab-panel{border-radius:var(--radius);}
+  }
 
   #cor-app .scan-zone{
     border:2px dashed var(--gold);border-radius:var(--radius);
@@ -318,6 +343,7 @@
       <button class="tiny" id="dismiss-banner">Got it</button>
     </div>
 
+    <div class="layout-row">
     <div class="tabs">
       <button class="tab-btn active" data-tab="calendar">Filing Calendar</button>
       <button class="tab-btn" data-tab="tracker">Task Tracker</button>
@@ -330,6 +356,7 @@
       <button class="tab-btn" data-tab="report">Report</button>
       <button class="tab-btn" data-tab="settings">Settings</button>
     </div>
+    <div class="panels-col">
 
     <!-- CALENDAR TAB -->
     <div class="tab-panel active" id="panel-calendar">
@@ -565,6 +592,8 @@
       <h3 style="margin-top:30px;">Recent Credential Views</h3>
       <div class="small-note">Who revealed a stored password in the Credentials tab, and when — written automatically the moment "Show" is clicked; nothing here can be edited or deleted from within the app.</div>
       <div class="table-scroll" style="margin-top:12px;max-width:640px;" id="creds-access-log-table"></div>
+    </div>
+    </div>
     </div>
   </div>
   <div class="toast" id="toast"></div>
