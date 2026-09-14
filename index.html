@@ -3199,6 +3199,19 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // Part II Payor info with the same, a "For the Period From/To" line, and
   // a Part III table with the same 1st/2nd/3rd Month income payment
   // columns (plus Total and Tax Withheld) that the real form uses.
+  // Full BIR-provided descriptions for common ATC codes, so the printed line
+  // reads the same as the official form even if staff only typed a short
+  // income_type label (e.g. "RENTAL") when entering the row. Falls back to
+  // whatever was typed for any code not in this list.
+  const ATC_FULL_DESCRIPTIONS = {
+    WC100: 'Rentals: On gross rental or lease for the continued use or possession of personal property in excess of Ten thousand pesos (₱10,000)',
+    WC160: 'Professional fees, talent fees, etc. for services rendered by individuals',
+    WC010: 'Professional fees, talent fees, etc. for services of individuals (lawyers, CPAs, engineers, etc.)',
+    WC050: 'Income payments to certain contractors',
+    WC030: 'Income distribution to beneficiaries of estates and trusts',
+    WI010: 'Income payments on purchases of goods',
+    WI020: 'Income payments on purchases of services',
+  };
   function openPrintable2307(rec){
     // All entries sharing the same payor + payee + year + quarter go on
     // one certificate together (one certificate can list several ATC lines).
@@ -3216,85 +3229,208 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const payorTin = (payorMatched && payorMatched.TIN) || rec.payor_tin || '';
     const payorAddress = (payorMatched && payorMatched['REGISTERED ADDRESS']) || rec.payor_address || '';
     const payorZip = (payorMatched && payorMatched['ZIP CODE']) || rec.payor_zip_code || '';
-    const rowsHtml = group.map(r => {
+    // Plain "12,345.00" formatting (no currency symbol) -- matches how
+    // amounts are typed on the actual BIR-issued form.
+    const fmtN = (n) => (n===null || n===undefined || n==='') ? '' : Number(n).toLocaleString('en-PH',{minimumFractionDigits:2, maximumFractionDigits:2});
+    // TIN split into the 4 boxed 3-digit groups the form prints (e.g. 007 | 571 | 298 | 003).
+    const tinBoxes = (tin) => {
+      const parts = tin ? fmtTinPlain(tin).split('-') : ['','','',''];
+      while(parts.length < 4) parts.push('');
+      return parts.slice(0,4).map(p=>`<td class="tinbox">${esc(p)}</td>`).join('');
+    };
+    const period = quarterDateRange(rec.period_year, rec.period_quarter);
+    const dateBoxes = (d) => {
+      const [mm,dd,yyyy] = (d||'').split('/');
+      return `<td class="datebox">${esc(mm||'')}</td><td class="datebox">${esc(dd||'')}</td><td class="datebox yr">${esc(yyyy||'')}</td>`;
+    };
+    const dataRows = group.map(r => {
       const total = computeMonthlyTotal(r) ?? r.gross_amount;
+      const desc = ATC_FULL_DESCRIPTIONS[String(r.atc_code||'').toUpperCase()] || r.income_type || '';
       return `
       <tr>
-        <td>${esc(r.atc_code||'')}</td>
-        <td>${esc(r.income_type||'')}</td>
-        <td class="num">${r.month1_amount!=null ? fmtPeso(r.month1_amount) : ''}</td>
-        <td class="num">${r.month2_amount!=null ? fmtPeso(r.month2_amount) : ''}</td>
-        <td class="num">${r.month3_amount!=null ? fmtPeso(r.month3_amount) : ''}</td>
-        <td class="num">${total!=null ? fmtPeso(total) : ''}</td>
-        <td class="num">${r.tax_withheld!=null ? fmtPeso(r.tax_withheld) : ''}</td>
+        <td class="desc">${esc(desc)}</td>
+        <td class="atc">${esc(r.atc_code||'')}</td>
+        <td class="num">${r.month1_amount!=null ? fmtN(r.month1_amount) : ''}</td>
+        <td class="num">${r.month2_amount!=null ? fmtN(r.month2_amount) : ''}</td>
+        <td class="num">${r.month3_amount!=null ? fmtN(r.month3_amount) : ''}</td>
+        <td class="num">${total!=null ? fmtN(total) : ''}</td>
+        <td class="num">${r.tax_withheld!=null ? fmtN(r.tax_withheld) : ''}</td>
       </tr>`;
     }).join('');
+    const blankRow = `<tr><td class="desc">&nbsp;</td><td class="atc"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td></tr>`;
+    const fillerRows1 = Math.max(0, 8 - group.length);
     const totalM1 = group.reduce((s,r)=> s + (Number(r.month1_amount)||0), 0);
     const totalM2 = group.reduce((s,r)=> s + (Number(r.month2_amount)||0), 0);
     const totalM3 = group.reduce((s,r)=> s + (Number(r.month3_amount)||0), 0);
     const totalGross = group.reduce((s,r)=> s + (computeMonthlyTotal(r) ?? Number(r.gross_amount) ?? 0), 0);
     const totalTax = group.reduce((s,r)=> s + (Number(r.tax_withheld)||0), 0);
-    const period = quarterDateRange(rec.period_year, rec.period_quarter);
-    const quarterLabel = {Q1:'1st', Q2:'2nd', Q3:'3rd', Q4:'4th'}[rec.period_quarter] || (rec.period_quarter||'');
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>BIR Form 2307 — ${esc(rec.payee_name||'')}</title>
     <style>
-      body{font-family:'Times New Roman',serif;font-size:12px;color:#111;margin:32px;}
-      .form-no{font-size:10px;}
-      h1{font-size:15px;text-align:center;margin:4px 0;}
-      h2{font-size:12px;text-align:center;font-weight:normal;margin:2px 0 18px;}
-      .period-line{text-align:center;font-size:11px;margin-bottom:14px;}
-      .section-title{font-weight:bold;background:#eee;padding:4px 6px;margin-top:14px;border:1px solid #333;}
-      table.info{width:100%;border-collapse:collapse;margin-bottom:6px;}
-      table.info td{border:1px solid #333;padding:5px 7px;vertical-align:top;}
-      table.info td.label{width:130px;font-weight:bold;background:#fafafa;}
-      table.info td.zip-label{width:70px;font-weight:bold;background:#fafafa;}
-      table.info td.zip-val{width:70px;}
-      table.lines{width:100%;border-collapse:collapse;margin-top:10px;}
-      table.lines th, table.lines td{border:1px solid #333;padding:5px 6px;}
-      table.lines th{background:#eee;font-size:10.5px;}
-      table.lines td.num, table.lines th.num{text-align:right;}
-      .totals td{font-weight:bold;}
-      .sign-block{margin-top:50px;display:flex;justify-content:space-between;}
-      .sign-line{width:260px;border-top:1px solid #333;text-align:center;padding-top:4px;font-size:11px;}
-      .caveat{margin-top:24px;font-size:10px;color:#900;border:1px dashed #900;padding:8px;}
+      @page{ size: letter; margin: 10mm 9mm; }
+      *{ box-sizing:border-box; }
+      body{font-family:Arial,Helvetica,sans-serif;font-size:7.4pt;color:#000;margin:0;}
+      table{border-collapse:collapse;width:100%;}
+      td,th{border:1px solid #000;padding:2px 4px;vertical-align:top;}
+      .no-border td, .no-border th{border:none;}
+      .top-meta td{border:none;vertical-align:middle;}
+      .top-meta .boxed{border:1px solid #000;font-size:6.5pt;padding:3px 5px;width:80px;}
+      .top-meta .agency{text-align:center;font-size:7.8pt;line-height:1.25;}
+      .top-meta .agency b{display:block;font-size:8.4pt;}
+      .form-title-row td{border:none;vertical-align:top;padding:3px 4px;}
+      .form-title-row .formno{border:1px solid #000;text-align:center;padding:4px;width:110px;}
+      .form-title-row .formno .num{font-size:19pt;font-weight:bold;line-height:1;}
+      .form-title-row .formno .lbl{font-size:6.5pt;}
+      .form-title-row .title{text-align:center;}
+      .form-title-row .title h1{font-family:Georgia,'Times New Roman',serif;font-size:14pt;margin:6px 0 2px;}
+      .form-title-row .title h2{font-family:Georgia,'Times New Roman',serif;font-size:14pt;font-weight:normal;margin:0;}
+      .form-title-row .code{width:110px;text-align:right;font-size:6.5pt;}
+      .instr{border:1px solid #000;border-top:none;padding:3px 5px;font-size:6.8pt;font-style:italic;}
+      .field1 td{border:1px solid #000;padding:3px 5px;}
+      .field1 .num-lbl{width:16px;font-weight:bold;vertical-align:middle;border-right:none;}
+      .datebox{width:26px;text-align:center;font-weight:bold;}
+      .datebox.yr{width:38px;}
+      .mmddyyyy{font-size:6.2pt;font-weight:normal;}
+      .part-title{background:#000;color:#fff;text-align:center;font-weight:bold;padding:3px;font-size:8pt;border:1px solid #000;}
+      table.info{margin-bottom:0;}
+      table.info td{padding:3px 5px;}
+      .info .rownum{width:16px;font-weight:bold;border-right:none;}
+      .info .cap{font-size:6.2pt;color:#333;display:block;}
+      .info .val{font-size:8pt;padding-top:1px;min-height:11px;display:block;}
+      .tinbox{width:44px;text-align:center;font-weight:bold;font-size:8pt;}
+      .zipcap{width:60px;font-weight:bold;font-size:6.6pt;text-align:center;vertical-align:middle;}
+      .zipval{width:60px;text-align:center;font-weight:bold;font-size:8pt;vertical-align:middle;}
+      table.lines th{background:#e2e2e2;font-size:6.4pt;font-weight:bold;text-align:center;}
+      table.lines td{font-size:7pt;}
+      table.lines td.desc{width:27%;}
+      table.lines td.atc, table.lines th.atc{width:44px;text-align:center;}
+      table.lines td.num, table.lines th.num{text-align:right;width:12%;}
+      .lines .subhead td{font-weight:bold;background:#f2f2f2;font-size:6.8pt;}
+      .lines .totalrow td{font-weight:bold;}
+      .decl{font-size:6.6pt;margin:5px 2px;line-height:1.3;}
+      .sign-table td{border:none;padding:0 4px;vertical-align:bottom;}
+      .sign-table .line{border-top:1px solid #000;text-align:center;font-size:6.2pt;padding-top:2px;}
+      .sign-space{height:26px;}
+      .tax-agent-row td{border:1px solid #000;font-size:6.4pt;padding:8px 5px 2px;}
+      .conforme{background:#000;color:#fff;text-align:center;font-weight:bold;padding:3px;font-size:8pt;border:1px solid #000;margin-top:6px;}
+      .footnote{font-size:6.2pt;font-style:italic;margin-top:4px;}
+      .caveat{margin-top:14px;font-size:9px;color:#900;border:1px dashed #900;padding:8px;}
       @media print{ .caveat{ display:none; } .no-print{display:none;} }
     </style></head><body>
-      <div class="form-no">BIR Form No. 2307</div>
-      <h1>CERTIFICATE OF CREDITABLE TAX WITHHELD AT SOURCE</h1>
-      <h2>For the ${esc(quarterLabel)} Quarter of ${esc(rec.period_year||'')}</h2>
-      <div class="period-line">For the Period From <b>${esc(period.from)}</b> To <b>${esc(period.to)}</b></div>
-      <div class="section-title">Part I — Payee Information</div>
+      <table class="top-meta"><tr>
+        <td style="width:100px;"><div class="boxed">For BIR<br>Use Only<br><br>BCS/<br>Item:</div></td>
+        <td class="agency">Republic of the Philippines<br><b>Department of Finance</b><br>Bureau of Internal Revenue</td>
+        <td style="width:100px;"></td>
+      </tr></table>
+      <table class="form-title-row"><tr>
+        <td class="formno"><div class="lbl">BIR Form No.</div><div class="num">2307</div><div class="lbl">January 2018 (ENCS)</div></td>
+        <td class="title"><h1>Certificate of Creditable Tax</h1><h2>Withheld At Source</h2></td>
+        <td class="code">2307 01/18ENCS</td>
+      </tr></table>
+      <div class="instr">Fill in all applicable spaces. Mark all appropriate boxes with an &quot;X&quot;.</div>
+      <table class="field1"><tr>
+        <td class="num-lbl">1</td>
+        <td style="width:110px;">For the Period</td>
+        <td style="width:30px;text-align:center;">From</td>
+        ${dateBoxes(period.from)}
+        <td class="mmddyyyy" style="border-left:none;width:70px;">(MM/DD/YYYY)</td>
+        <td style="width:24px;text-align:center;">To</td>
+        ${dateBoxes(period.to)}
+        <td class="mmddyyyy" style="border-left:none;">(MM/DD/YYYY)</td>
+      </tr></table>
+
+      <div class="part-title">Part I &ndash; Payee Information</div>
       <table class="info">
-        <tr><td class="label">TIN</td><td>${esc(rec.payee_tin||'')}</td><td class="label">Registered Name</td><td>${esc(rec.payee_name||'')}</td></tr>
-        <tr><td class="label">Registered Address</td><td colspan="2">${esc(rec.payee_address||'')}</td><td class="zip-label">Zip Code</td></tr>
-        <tr><td class="label" style="background:#fff;border-top:none;"></td><td colspan="2" style="border-top:none;"></td><td class="zip-val">${esc(rec.payee_zip_code||'')}</td></tr>
+        <tr>
+          <td class="rownum">2</td>
+          <td style="width:190px;"><span class="cap">Taxpayer Identification Number (TIN)</span></td>
+          ${tinBoxes(rec.payee_tin)}
+        </tr>
+        <tr>
+          <td class="rownum">3</td>
+          <td colspan="5"><span class="cap">Payee's Name (Last Name, First Name, Middle Name for Individual OR Registered Name for Non-Individual)</span><span class="val">${esc(rec.payee_name||'')}</span></td>
+        </tr>
+        <tr>
+          <td class="rownum">4</td>
+          <td colspan="4"><span class="cap">Registered Address</span><span class="val">${esc(rec.payee_address||'')}</span></td>
+          <td class="zipcap">4A&nbsp;Zip Code</td>
+          <td class="zipval">${esc(rec.payee_zip_code||'')}</td>
+        </tr>
+        <tr>
+          <td class="rownum">5</td>
+          <td colspan="5"><span class="cap">Foreign Address, if</span><span class="val">&nbsp;</span></td>
+        </tr>
       </table>
-      <div class="section-title">Part II — Payor Information</div>
+
+      <div class="part-title">Part II &ndash; Payor Information</div>
       <table class="info">
-        <tr><td class="label">TIN</td><td>${esc(payorTin)}</td><td class="label">Registered Name</td><td>${esc(payorName)}</td></tr>
-        <tr><td class="label">Registered Address</td><td colspan="2">${esc(payorAddress)}</td><td class="zip-label">Zip Code</td></tr>
-        <tr><td class="label" style="background:#fff;border-top:none;"></td><td colspan="2" style="border-top:none;"></td><td class="zip-val">${esc(payorZip)}</td></tr>
+        <tr>
+          <td class="rownum">6</td>
+          <td style="width:190px;"><span class="cap">Taxpayer Identification Number (TIN)</span></td>
+          ${tinBoxes(payorTin)}
+        </tr>
+        <tr>
+          <td class="rownum">7</td>
+          <td colspan="5"><span class="cap">Payor's Name (Last Name, First Name, Middle Name for Individual OR Registered Name for Non-Individual)</span><span class="val">${esc(payorName)}</span></td>
+        </tr>
+        <tr>
+          <td class="rownum">8</td>
+          <td colspan="4"><span class="cap">Registered Address</span><span class="val">${esc(payorAddress)}</span></td>
+          <td class="zipcap">8A&nbsp;Zip Code</td>
+          <td class="zipval">${esc(payorZip)}</td>
+        </tr>
       </table>
-      <div class="section-title">Part III — Details of Monthly Income Payments and Tax Withheld for the Quarter</div>
+
+      <div class="part-title">Part III &ndash; Details of Monthly Income Payments and Tax Withheld for the Quarter</div>
       <table class="lines">
         <thead>
-          <tr><th rowspan="2">ATC</th><th rowspan="2">Nature of Income Payment</th><th colspan="4">Amount of Income Payments</th><th rowspan="2">Tax Withheld<br>For the Quarter</th></tr>
-          <tr><th class="num">1st Month</th><th class="num">2nd Month</th><th class="num">3rd Month</th><th class="num">Total</th></tr>
+          <tr>
+            <th rowspan="2" class="desc">Income Payments Subject to<br>Expanded Withholding Tax</th>
+            <th rowspan="2" class="atc">ATC</th>
+            <th colspan="4">Amount of Income Payments</th>
+            <th rowspan="2">Tax Withheld<br>For the Quarter</th>
+          </tr>
+          <tr>
+            <th class="num">1st Month of<br>the Quarter</th>
+            <th class="num">2nd Month of<br>the Quarter</th>
+            <th class="num">3rd Month of<br>the Quarter</th>
+            <th class="num">Total</th>
+          </tr>
         </thead>
-        <tbody>${rowsHtml}</tbody>
-        <tfoot><tr class="totals">
-          <td colspan="2">TOTAL</td>
-          <td class="num">${fmtPeso(totalM1)}</td><td class="num">${fmtPeso(totalM2)}</td><td class="num">${fmtPeso(totalM3)}</td>
-          <td class="num">${fmtPeso(totalGross)}</td><td class="num">${fmtPeso(totalTax)}</td>
-        </tr></tfoot>
+        <tbody>
+          ${dataRows}
+          ${blankRow.repeat(fillerRows1)}
+          <tr class="totalrow"><td colspan="2">Total</td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num">${fmtN(totalGross)}</td><td class="num">${fmtN(totalTax)}</td></tr>
+          <tr class="subhead"><td colspan="7">Money Payments Subject to Withholding of Business Tax (Government &amp; Private)</td></tr>
+          ${blankRow.repeat(6)}
+          <tr class="totalrow"><td colspan="2">Total</td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num">&ndash;</td><td class="num">&ndash;</td></tr>
+        </tbody>
       </table>
-      <p style="margin-top:16px;font-size:11px;">We declare, under the penalties of perjury, that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof.</p>
-      <div class="sign-block">
-        <div class="sign-line">Signature over Printed Name of Payor / Authorized Representative</div>
-        <div class="sign-line">Title / Position</div>
-      </div>
-      <div class="caveat no-print">Note: this is not an exact replica of the official BIR-issued form layout (signature/declaration boxes, barcode, and field-fill instructions are simplified) — all required data fields (TIN, name, address, zip, ATC, monthly income payments, tax withheld) are included, but please review before printing/giving it to the payee. Also verify the ATC code and tax rate against the current BIR issuance before using.</div>
-      <button class="no-print" onclick="window.print()" style="margin-top:16px;padding:8px 16px;">Print / Save as PDF</button>
+
+      <p class="decl">We declare, under the penalties of perjury, that this certificate has been made in good faith, verified by me, and to the best of my knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the *Data Privacy Act of 2012 (R.A No. 10173) for legitimate and lawful purposes.</p>
+
+      <table class="sign-table"><tr>
+        <td style="width:50%;"><div class="sign-space">&nbsp;</div><div class="line">Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent<br>(Indicate Title/Designation and TIN)</div></td>
+      </tr></table>
+      <table class="tax-agent-row"><tr>
+        <td style="width:44%;">Tax Agent Accreditation No./Attorney's Roll No. (if applicable)</td>
+        <td style="width:28%;">Date of Issuance</td>
+        <td style="width:28%;">Date of Expiry</td>
+      </tr></table>
+
+      <div class="conforme">CONFORME:</div>
+      <table class="sign-table"><tr>
+        <td style="width:50%;"><div class="sign-space">&nbsp;</div><div class="line">Signature over Printed Name of Payee/Payee's Authorized Representative/Tax Agent<br>(Indicate Title/Designation and TIN)</div></td>
+      </tr></table>
+      <table class="tax-agent-row"><tr>
+        <td style="width:44%;">Tax Agent Accreditation No./Attorney's Roll No. (if applicable)</td>
+        <td style="width:28%;">Date of Issuance</td>
+        <td style="width:28%;">Date of Expiry</td>
+      </tr></table>
+
+      <div class="footnote">*NOTE: The BIR Data Privacy is in the BIR website (www.bir.gov.ph)</div>
+
+      <div class="caveat no-print">This reproduces the official BIR Form 2307 (Jan 2018 ENCS) field-for-field — same field numbers, TIN boxes, Part I/II/III layout, and CONFORME signature block — except the BIR seal artwork and the printed barcode, which aren't included here. Signature lines print blank for wet-ink signing. Double-check the ATC code/description against the current BIR issuance before releasing to the payee.</div>
+      <button class="no-print" onclick="window.print()" style="margin-top:14px;padding:8px 16px;">Print / Save as PDF</button>
     </body></html>`;
     const win = window.open('', '_blank');
     if(!win){ toast('Pop-up blocked — please allow pop-ups to view the 2307.'); return; }
