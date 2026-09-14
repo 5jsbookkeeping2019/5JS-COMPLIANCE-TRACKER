@@ -401,7 +401,7 @@
       <button class="tab-btn" data-tab="sales"><span class="ico" data-ico="sales"></span>Sales Summary</button>
       <button class="tab-btn" data-tab="tax2307"><span class="ico" data-ico="tax2307"></span>2307 Register</button>
       <button class="tab-btn" data-tab="sawt"><span class="ico" data-ico="sawt"></span>SAWT / 2307 Received</button>
-      <button class="tab-btn" data-tab="report"><span class="ico" data-ico="report"></span>Report</button>
+      <button class="tab-btn" data-tab="report"><span class="ico" data-ico="report"></span>eBIRForms Profile</button>
       <button class="tab-btn" data-tab="settings"><span class="ico" data-ico="settings"></span>Settings</button>
     </nav>
     <div class="main-col">
@@ -581,7 +581,7 @@
           <span class="small-note" id="tax2307-count" style="margin:0;"></span>
         </div>
       </div>
-      <div class="small-note">Log of withholding tax transactions (rental, purchase, commission, etc.) that the client (payor) deducts from a third party they're paying (payee — usually not a client, e.g. a lessor or supplier). Edit cells directly; saved automatically to the live database. Tax Withheld is calculated automatically once Gross Amount and Tax Rate are entered — it can still be overridden manually. Click "Print 2307" on a row to generate a printable Certificate of Creditable Tax Withheld (BIR Form 2307) that includes ALL entries for the same payor + payee + year + quarter. <strong>Please verify ATC codes and tax rates against the current BIR issuance first</strong> before printing/giving it to the payee. Enter/select the Client ID (from the Client Registry) in the first column to auto-fill Payor/Payor TIN — no need to type those again.</div>
+      <div class="small-note">Log of withholding tax transactions (rental, purchase, commission, etc.) that the client (payor) deducts from a third party they're paying (payee — usually not a client, e.g. a lessor or supplier). Fields mirror the actual BIR Form 2307: Payee and Payor sections each with TIN/Name/Address/Zip, then the 1st/2nd/3rd Month income payment breakdown from Part III. Edit cells directly; saved automatically to the live database. Total is added up automatically from the 3 monthly amounts, and Tax Withheld is calculated automatically from Total × Rate — it can still be overridden manually. Click "Print 2307" on a row to generate a printable Certificate of Creditable Tax Withheld that includes ALL entries for the same payor + payee + year + quarter. <strong>Please verify ATC codes and tax rates against the current BIR issuance first</strong> before printing/giving it to the payee. Enter/select the Client ID (from the Client Registry) in the first column to auto-fill Payor Name/TIN/Address/Zip — no need to type those again.</div>
       <datalist id="tax2307-client-id-options"></datalist>
       <datalist id="tax2307-income-type-options">
         <option value="RENTAL">
@@ -618,19 +618,20 @@
       <div class="table-scroll" style="margin-top:10px;" id="sawt-table"></div>
     </div>
 
-    <!-- REPORT TAB -->
+    <!-- REPORT TAB (eBIRForms Profile) -->
     <div class="tab-panel" id="panel-report">
       <div class="registry-head">
         <div class="filter-row">
           <input class="search-input" id="report-search" placeholder="Search business name, TIN, RDO...">
-          <select class="filter" id="report-status-filter"><option value="">All CLIENT? statuses</option></select>
-          <select class="filter" id="report-taxtype-filter"><option value="">All Tax Types</option></select>
+          <select class="filter" id="report-status-filter"><option value="">All client statuses</option></select>
+          <select class="filter" id="report-taxtype-filter"><option value="">All tax types</option></select>
+          <select class="filter" id="report-forms-filter"><option value="">All forms</option></select>
         </div>
         <div class="toolbar-right">
           <span class="small-note" id="report-count" style="margin:0;"></span>
         </div>
       </div>
-      <div class="small-note">Read-only view of each client's BIR registration details, ready to copy-paste into eBIRForms. Click any cell to automatically copy its contents (no need to select manually first) — there's also a "Copy Row" per client when the whole row is needed.</div>
+      <div class="small-note">Just the fields eBIRForms asks for when setting up or updating a client's profile — TIN, RDO Code, Line of Business, Registered Name, Registered Address, and Zip Code. Click any cell to copy it (no need to select manually first) — there's also a "Copy Row" per client when the whole row is needed.</div>
       <div class="table-scroll" style="margin-top:10px;" id="report-table"></div>
     </div>
 
@@ -912,7 +913,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     sales:{icon:'sales', title:'Sales Summary', sub:'Quarterly sales figures per client for tax and VAT filings.'},
     tax2307:{icon:'tax2307', title:'2307 Register', sub:'Creditable withholding tax certificates issued to clients.'},
     sawt:{icon:'sawt', title:'SAWT / 2307 Received', sub:'Certificates received from clients’ customers, for SAWT filing.'},
-    report:{icon:'report', title:'Report', sub:'Export and summary tools.'},
+    report:{icon:'report', title:'eBIRForms Profile', sub:'Just the fields eBIRForms needs, ready to copy-paste.'},
     settings:{icon:'settings', title:'Settings', sub:'Sales reps, bulk tools, and account access.'},
   };
   function updatePageHeader(tab){
@@ -2948,16 +2949,45 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
 
   /* ===================== 2307 REGISTER TAB ===================== */
+  // Field set and layout mirror the actual BIR Form 2307 (Certificate of
+  // Creditable Tax Withheld At Source): Part I Payee info, Part II Payor
+  // info (each with a Registered Address + Zip Code, same as the real
+  // form), then Part III's per-ATC line with the 1st/2nd/3rd Month income
+  // payment breakdown that the form itself uses instead of a single lump
+  // amount. "Total" (stored in gross_amount for backward compatibility) is
+  // computed automatically from the three months, same as the form's own
+  // "Total" column.
   let entries2307 = [];
   const ENTRY_2307_COLS = [
     ['client_id_no','Client ID','text'],
     ['payor_name','Payor (Client)','text'], ['payor_tin','Payor TIN','text'],
-    ['payee_name','Payee Name','text'], ['payee_tin','Payee TIN','text'], ['payee_address','Payee Address','text'],
-    ['income_type','Income Type','text'], ['atc_code','ATC','text'], ['tax_rate','Rate %','num'],
+    ['payor_address','Payor Address','text'], ['payor_zip_code','Payor Zip','text'],
+    ['payee_name','Payee Name','text'], ['payee_tin','Payee TIN','text'],
+    ['payee_address','Payee Address','text'], ['payee_zip_code','Payee Zip','text'],
+    ['atc_code','ATC','text'], ['income_type','Nature of Income Payment','text'], ['tax_rate','Rate %','num'],
     ['period_year','Year','num'], ['period_quarter','Quarter','text'],
-    ['gross_amount','Gross Amount','num'], ['tax_withheld','Tax Withheld','num'],
+    ['month1_amount','1st Month','num'], ['month2_amount','2nd Month','num'], ['month3_amount','3rd Month','num'],
+    ['gross_amount','Total','num'], ['tax_withheld','Tax Withheld','num'],
     ['date_of_payment','Date Paid','text'], ['mode_of_payment','Mode of Payment','text'], ['remarks','Remarks','text'],
   ];
+  // Standard calendar-quarter date ranges -- used to print the form's "For
+  // the Period From / To" line without needing separate stored date
+  // columns (BIR quarters are fixed calendar quarters).
+  function quarterDateRange(year, q){
+    const ranges = { Q1:['01/01','03/31'], Q2:['04/01','06/30'], Q3:['07/01','09/30'], Q4:['10/01','12/31'] };
+    const r = ranges[q];
+    if(!r || !year) return {from:'', to:''};
+    return { from: `${r[0]}/${year}`, to: `${r[1]}/${year}` };
+  }
+  // Sums whichever of the 3 monthly amounts are filled in -- null (not 0)
+  // when none are set yet, so a freshly-added row doesn't show "₱0.00".
+  function computeMonthlyTotal(rec){
+    const raw = [rec.month1_amount, rec.month2_amount, rec.month3_amount];
+    const anySet = raw.some(v=> v!==null && v!==undefined && v!=='');
+    if(!anySet) return null;
+    const sum = raw.reduce((s,v)=>{ const n = Number(v); return s + (isFinite(n)?n:0); }, 0);
+    return Math.round(sum * 100) / 100;
+  }
   function mapEntry2307FromDb(rows){
     return (rows||[]).map(r=>{
       const rec = {_id: r.id, updated_at: r.updated_at || null, updated_by: r.updated_by || ''};
@@ -3037,21 +3067,34 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       document.getElementById('tax2307-table').innerHTML = `<div class="small-note">${entries2307.length? 'No matches for this search/filter.' : 'No data yet — run cor_2307_register_schema.sql in Supabase first, then click "+ Add entry".'}</div>`;
       return;
     }
-    // When a row's Client ID resolves to a real Registry entry, the Payor/
-    // Payor TIN cells are shown read-only and sourced live from the
-    // Registry -- same "type/pick the Client ID once" pattern as Sales
+    // When a row's Client ID resolves to a real Registry entry, the Payor
+    // name/TIN/address/zip cells are shown read-only and sourced live from
+    // the Registry -- same "type/pick the Client ID once" pattern as Sales
     // Summary, so payor details never drift out of sync with the Registry.
-    const ENTRY2307_AUTO_FILLED_KEYS = ['payor_name','payor_tin'];
+    const ENTRY2307_AUTO_FILLED_KEYS = ['payor_name','payor_tin','payor_address','payor_zip_code'];
+    const ENTRY2307_AUTO_FILLED_SOURCE = {
+      payor_name: c=>c.NAME, payor_tin: c=>c.TIN,
+      payor_address: c=>c['REGISTERED ADDRESS'], payor_zip_code: c=>c['ZIP CODE'],
+    };
+    // Total is always computed from the 3 monthly amounts (matching the
+    // actual form), never typed directly.
+    const ENTRY2307_COMPUTED_KEYS = ['gross_amount'];
     const headRow = ENTRY_2307_COLS.map(([,label])=>`<th>${esc(label)}</th>`).join('') + '<th></th><th></th>';
     const rows = pool.map(r=>{
       const matched = r.client_id_no ? findClientByIdNo(r.client_id_no) : null;
+      // If no monthly amounts are entered yet (e.g. an older row from
+      // before this breakdown existed), fall back to whatever Total was
+      // already stored instead of showing blank.
+      const computedTotal = computeMonthlyTotal(r) ?? (r.gross_amount!=null ? r.gross_amount : null);
       const cells = ENTRY_2307_COLS.map(([key,,kind])=>{
         const isAutoFilled = matched && ENTRY2307_AUTO_FILLED_KEYS.includes(key);
-        const val = isAutoFilled ? (key==='payor_name'? matched.NAME : matched.TIN) : r[key];
-        const width = kind==='num' ? 85 : (key==='payee_address' ? 170 : (key==='income_type' ? 140 : 120));
+        const isComputed = ENTRY2307_COMPUTED_KEYS.includes(key);
+        const val = isAutoFilled ? ENTRY2307_AUTO_FILLED_SOURCE[key](matched) : (isComputed ? computedTotal : r[key]);
+        const width = kind==='num' ? 85 : (key==='payee_address'||key==='payor_address' ? 170 : (key==='income_type' ? 150 : (key.endsWith('zip_code') ? 70 : 120)));
         const listAttr = key==='income_type' ? ' list="tax2307-income-type-options"' : (key==='client_id_no' ? ' list="tax2307-client-id-options"' : '');
-        const roAttrs = isAutoFilled ? ' readonly title="Sourced from the Client Registry (Client ID: '+esc(r.client_id_no)+') — edit it there if it’s wrong."' : '';
-        const roStyle = isAutoFilled ? 'background:var(--paper-line);color:var(--ink-soft);' : '';
+        const lockedReason = isAutoFilled ? 'Sourced from the Client Registry (Client ID: '+esc(r.client_id_no)+') — edit it there if it’s wrong.' : (isComputed ? 'Computed automatically from the 1st/2nd/3rd Month amounts.' : '');
+        const roAttrs = (isAutoFilled || isComputed) ? ` readonly title="${lockedReason}"` : '';
+        const roStyle = (isAutoFilled || isComputed) ? 'background:var(--paper-line);color:var(--ink-soft);' : '';
         return `<td><input class="inline-text entry2307-cell${kind==='num'?' mono':''}" data-key="${esc(key)}" style="width:${width}px;${roStyle}"${listAttr}${roAttrs} value="${val!==null && val!==undefined ? esc(val) : ''}"></td>`;
       }).join('');
       const editedTitle = r.updated_by ? `Last edited by ${r.updated_by} on ${fmtAuditWhen(r.updated_at)}` : '';
@@ -3082,9 +3125,19 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           rec[key] = val;
           e.target.value = val!==null && val!==undefined ? val : '';
           const patch = {[key]: val};
-          // Auto-fill Tax Withheld whenever Gross or Rate changes, unless the
+          // Whenever a monthly amount changes, recompute Total (gross_amount)
+          // from all 3 months first -- matching the real form's own math --
+          // then recompute Tax Withheld from that Total × Rate.
+          if(key==='month1_amount' || key==='month2_amount' || key==='month3_amount'){
+            const total = computeMonthlyTotal(rec);
+            rec.gross_amount = total;
+            patch.gross_amount = total;
+            const totalInput = tr.querySelector('.entry2307-cell[data-key="gross_amount"]');
+            if(totalInput) totalInput.value = total!==null ? total : '';
+          }
+          // Auto-fill Tax Withheld whenever Total or Rate changes, unless the
           // user is editing Tax Withheld itself directly.
-          if(key==='gross_amount' || key==='tax_rate'){
+          if(key==='month1_amount' || key==='month2_amount' || key==='month3_amount' || key==='tax_rate'){
             const computed = computeTaxWithheld(rec);
             if(computed!==null){
               rec.tax_withheld = computed;
@@ -3095,14 +3148,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           }
           if(key==='client_id_no'){
             // Re-resolve immediately: if the typed/picked ID matches a real
-            // client, snapshot their current Name/TIN into this row too (so
-            // exports/prints against cor_2307_entries keep working without
-            // a join) and re-render so those cells switch to their
-            // read-only, Registry-sourced display.
+            // client, snapshot their current Name/TIN/Address/Zip into this
+            // row too (so exports/prints against cor_2307_entries keep
+            // working without a join) and re-render so those cells switch to
+            // their read-only, Registry-sourced display.
             const matched = val ? findClientByIdNo(val) : null;
             if(matched){
               rec.payor_name = matched.NAME || null; rec.payor_tin = matched.TIN || null;
+              rec.payor_address = matched['REGISTERED ADDRESS'] || null; rec.payor_zip_code = matched['ZIP CODE'] || null;
               patch.payor_name = rec.payor_name; patch.payor_tin = rec.payor_tin;
+              patch.payor_address = rec.payor_address; patch.payor_zip_code = rec.payor_zip_code;
             }
           }
           const stamp = { updated_at: new Date().toISOString(), updated_by: currentUserEmail };
@@ -3137,6 +3192,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
   }
 
+  // Mirrors the actual BIR Form 2307 layout (Republic of the Philippines /
+  // Department of Finance / Bureau of Internal Revenue, "Certificate of
+  // Creditable Tax Withheld At Source") as closely as an HTML print view
+  // reasonably can: Part I Payee info with Registered Address + Zip Code,
+  // Part II Payor info with the same, a "For the Period From/To" line, and
+  // a Part III table with the same 1st/2nd/3rd Month income payment
+  // columns (plus Total and Tax Withheld) that the real form uses.
   function openPrintable2307(rec){
     // All entries sharing the same payor + payee + year + quarter go on
     // one certificate together (one certificate can list several ATC lines).
@@ -3145,15 +3207,34 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       (r.payee_tin||r.payee_name) === (rec.payee_tin||rec.payee_name) &&
       r.period_year === rec.period_year && r.period_quarter === rec.period_quarter
     );
-    const rowsHtml = group.map(r => `
+    // Resolve Payor info live from the Client Registry match (same as the
+    // on-screen table already does) rather than trusting only the stored
+    // snapshot on the row -- covers older/imported rows whose Client ID was
+    // set without ever passing through the auto-fill-on-change handler.
+    const payorMatched = rec.client_id_no ? findClientByIdNo(rec.client_id_no) : null;
+    const payorName = (payorMatched && payorMatched.NAME) || rec.payor_name || '';
+    const payorTin = (payorMatched && payorMatched.TIN) || rec.payor_tin || '';
+    const payorAddress = (payorMatched && payorMatched['REGISTERED ADDRESS']) || rec.payor_address || '';
+    const payorZip = (payorMatched && payorMatched['ZIP CODE']) || rec.payor_zip_code || '';
+    const rowsHtml = group.map(r => {
+      const total = computeMonthlyTotal(r) ?? r.gross_amount;
+      return `
       <tr>
         <td>${esc(r.atc_code||'')}</td>
         <td>${esc(r.income_type||'')}</td>
-        <td class="num">${r.gross_amount!=null ? fmtPeso(r.gross_amount) : ''}</td>
+        <td class="num">${r.month1_amount!=null ? fmtPeso(r.month1_amount) : ''}</td>
+        <td class="num">${r.month2_amount!=null ? fmtPeso(r.month2_amount) : ''}</td>
+        <td class="num">${r.month3_amount!=null ? fmtPeso(r.month3_amount) : ''}</td>
+        <td class="num">${total!=null ? fmtPeso(total) : ''}</td>
         <td class="num">${r.tax_withheld!=null ? fmtPeso(r.tax_withheld) : ''}</td>
-      </tr>`).join('');
-    const totalGross = group.reduce((s,r)=> s + (Number(r.gross_amount)||0), 0);
+      </tr>`;
+    }).join('');
+    const totalM1 = group.reduce((s,r)=> s + (Number(r.month1_amount)||0), 0);
+    const totalM2 = group.reduce((s,r)=> s + (Number(r.month2_amount)||0), 0);
+    const totalM3 = group.reduce((s,r)=> s + (Number(r.month3_amount)||0), 0);
+    const totalGross = group.reduce((s,r)=> s + (computeMonthlyTotal(r) ?? Number(r.gross_amount) ?? 0), 0);
     const totalTax = group.reduce((s,r)=> s + (Number(r.tax_withheld)||0), 0);
+    const period = quarterDateRange(rec.period_year, rec.period_quarter);
     const quarterLabel = {Q1:'1st', Q2:'2nd', Q3:'3rd', Q4:'4th'}[rec.period_quarter] || (rec.period_quarter||'');
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>BIR Form 2307 — ${esc(rec.payee_name||'')}</title>
     <style>
@@ -3161,13 +3242,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       .form-no{font-size:10px;}
       h1{font-size:15px;text-align:center;margin:4px 0;}
       h2{font-size:12px;text-align:center;font-weight:normal;margin:2px 0 18px;}
+      .period-line{text-align:center;font-size:11px;margin-bottom:14px;}
       .section-title{font-weight:bold;background:#eee;padding:4px 6px;margin-top:14px;border:1px solid #333;}
       table.info{width:100%;border-collapse:collapse;margin-bottom:6px;}
       table.info td{border:1px solid #333;padding:5px 7px;vertical-align:top;}
-      table.info td.label{width:150px;font-weight:bold;background:#fafafa;}
+      table.info td.label{width:130px;font-weight:bold;background:#fafafa;}
+      table.info td.zip-label{width:70px;font-weight:bold;background:#fafafa;}
+      table.info td.zip-val{width:70px;}
       table.lines{width:100%;border-collapse:collapse;margin-top:10px;}
-      table.lines th, table.lines td{border:1px solid #333;padding:5px 7px;}
-      table.lines th{background:#eee;font-size:11px;}
+      table.lines th, table.lines td{border:1px solid #333;padding:5px 6px;}
+      table.lines th{background:#eee;font-size:10.5px;}
       table.lines td.num, table.lines th.num{text-align:right;}
       .totals td{font-weight:bold;}
       .sign-block{margin-top:50px;display:flex;justify-content:space-between;}
@@ -3178,26 +3262,38 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       <div class="form-no">BIR Form No. 2307</div>
       <h1>CERTIFICATE OF CREDITABLE TAX WITHHELD AT SOURCE</h1>
       <h2>For the ${esc(quarterLabel)} Quarter of ${esc(rec.period_year||'')}</h2>
+      <div class="period-line">For the Period From <b>${esc(period.from)}</b> To <b>${esc(period.to)}</b></div>
       <div class="section-title">Part I — Payee Information</div>
       <table class="info">
         <tr><td class="label">TIN</td><td>${esc(rec.payee_tin||'')}</td><td class="label">Registered Name</td><td>${esc(rec.payee_name||'')}</td></tr>
-        <tr><td class="label">Registered Address</td><td colspan="3">${esc(rec.payee_address||'')}</td></tr>
+        <tr><td class="label">Registered Address</td><td colspan="2">${esc(rec.payee_address||'')}</td><td class="zip-label">Zip Code</td></tr>
+        <tr><td class="label" style="background:#fff;border-top:none;"></td><td colspan="2" style="border-top:none;"></td><td class="zip-val">${esc(rec.payee_zip_code||'')}</td></tr>
       </table>
       <div class="section-title">Part II — Payor Information</div>
       <table class="info">
-        <tr><td class="label">TIN</td><td>${esc(rec.payor_tin||'')}</td><td class="label">Registered Name</td><td>${esc(rec.payor_name||'')}</td></tr>
+        <tr><td class="label">TIN</td><td>${esc(payorTin)}</td><td class="label">Registered Name</td><td>${esc(payorName)}</td></tr>
+        <tr><td class="label">Registered Address</td><td colspan="2">${esc(payorAddress)}</td><td class="zip-label">Zip Code</td></tr>
+        <tr><td class="label" style="background:#fff;border-top:none;"></td><td colspan="2" style="border-top:none;"></td><td class="zip-val">${esc(payorZip)}</td></tr>
       </table>
+      <div class="section-title">Part III — Details of Monthly Income Payments and Tax Withheld for the Quarter</div>
       <table class="lines">
-        <thead><tr><th>ATC</th><th>Nature of Income Payment</th><th class="num">Income Payments</th><th class="num">Tax Withheld</th></tr></thead>
+        <thead>
+          <tr><th rowspan="2">ATC</th><th rowspan="2">Nature of Income Payment</th><th colspan="4">Amount of Income Payments</th><th rowspan="2">Tax Withheld<br>For the Quarter</th></tr>
+          <tr><th class="num">1st Month</th><th class="num">2nd Month</th><th class="num">3rd Month</th><th class="num">Total</th></tr>
+        </thead>
         <tbody>${rowsHtml}</tbody>
-        <tfoot><tr class="totals"><td colspan="2">TOTAL</td><td class="num">${fmtPeso(totalGross)}</td><td class="num">${fmtPeso(totalTax)}</td></tr></tfoot>
+        <tfoot><tr class="totals">
+          <td colspan="2">TOTAL</td>
+          <td class="num">${fmtPeso(totalM1)}</td><td class="num">${fmtPeso(totalM2)}</td><td class="num">${fmtPeso(totalM3)}</td>
+          <td class="num">${fmtPeso(totalGross)}</td><td class="num">${fmtPeso(totalTax)}</td>
+        </tr></tfoot>
       </table>
       <p style="margin-top:16px;font-size:11px;">We declare, under the penalties of perjury, that this certificate has been made in good faith, verified by us, and to the best of our knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof.</p>
       <div class="sign-block">
         <div class="sign-line">Signature over Printed Name of Payor / Authorized Representative</div>
         <div class="sign-line">Title / Position</div>
       </div>
-      <div class="caveat no-print">Note: this is not an exact replica of the official BIR-issued form layout — all required details (TIN, name, address, ATC, income payment, tax withheld) are included, but please review before printing/giving it to the payee. Also verify the ATC code and tax rate against the current BIR issuance before using.</div>
+      <div class="caveat no-print">Note: this is not an exact replica of the official BIR-issued form layout (signature/declaration boxes, barcode, and field-fill instructions are simplified) — all required data fields (TIN, name, address, zip, ATC, monthly income payments, tax withheld) are included, but please review before printing/giving it to the payee. Also verify the ATC code and tax rate against the current BIR issuance before using.</div>
       <button class="no-print" onclick="window.print()" style="margin-top:16px;padding:8px 16px;">Print / Save as PDF</button>
     </body></html>`;
     const win = window.open('', '_blank');
@@ -3489,42 +3585,42 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
   }
 
-  /* ===================== REPORT TAB (read-only, copy-to-eBIRForms) ===================== */
+  /* ===================== REPORT TAB / eBIRForms PROFILE (read-only, copy-to-eBIRForms) ===================== */
+  // Just the fields eBIRForms itself asks for when creating/updating a
+  // client's profile there -- deliberately narrower than the old Report tab
+  // (which dumped every registration field). Order matches the request:
+  // TIN, RDO Code, Line of Business, Registered Name, Registered Address,
+  // Zip Code.
   const REPORT_COLS = [
-    ['CLIENT ID NO.','Client ID No.'], ['TIN','TIN'], ['RDO','RDO Code'],
-    ['NAME','Registered Name'], ['TRADE NAME','Trade Name'],
-    ['REGISTERED ADDRESS','Registered Address'], ['ZIP CODE','Zip Code'],
-    ['LINE OF BUSINESS / INDUSTRY','Line of Business'], ['TAXPAYER CLASSIFICATION','Taxpayer Classification'],
-    ['TAX TYPE','Tax Type'], ['REGISTERING OFFICE','Registering Office'],
-    ['EMAIL','Email'], ['CONTACT NO','Contact No.'],
+    ['TIN','TIN'], ['RDO','RDO Code'], ['LINE OF BUSINESS / INDUSTRY','Line of Business'],
+    ['NAME','Registered Name'], ['REGISTERED ADDRESS','Registered Address'], ['ZIP CODE','Zip Code'],
   ];
-  // Client ID/TIN/RDO/Registered Name stay pinned on screen while the rest
-  // of the table scrolls horizontally -- same frozen-column treatment as
-  // Sales Summary, so the identifying columns are always visible no matter
-  // how far right you've scrolled.
-  const REPORT_FROZEN_KEYS = ['CLIENT ID NO.','TIN','RDO','NAME'];
-  const REPORT_FROZEN_WIDTHS = {'CLIENT ID NO.':100, TIN:120, RDO:70, NAME:170};
-  const REPORT_FROZEN_LEFT = {};
-  (function(){
-    let acc = 0;
-    REPORT_FROZEN_KEYS.forEach(k=>{ REPORT_FROZEN_LEFT[k] = acc; acc += REPORT_FROZEN_WIDTHS[k]; });
-  })();
   const reportSearch = document.getElementById('report-search');
   const reportStatusFilter = document.getElementById('report-status-filter');
   const reportTaxTypeFilter = document.getElementById('report-taxtype-filter');
+  const reportFormsFilter = document.getElementById('report-forms-filter');
   reportSearch.addEventListener('input', renderReport);
   reportStatusFilter.addEventListener('change', renderReport);
   reportTaxTypeFilter.addEventListener('change', renderReport);
+  reportFormsFilter.addEventListener('change', renderReport);
 
   function initReportFilters(){
+    if(reportFormsFilter && !reportFormsFilter.dataset.built){
+      reportFormsFilter.innerHTML = '<option value="">All forms</option>' + FORMS_GRID_ROWS.map(group =>
+        `<optgroup label="${esc(group.label)}">${group.forms.map(f=>`<option value="${esc(f)}">${esc(f)}</option>`).join('')}</optgroup>`
+      ).join('');
+      reportFormsFilter.dataset.built = '1';
+    }
     const prevStatus = reportStatusFilter.value;
     const statuses = Array.from(new Set(clients.map(c=>c['CLIENT?']).filter(Boolean))).sort();
-    reportStatusFilter.innerHTML = '<option value="">All CLIENT? statuses</option>' + statuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    reportStatusFilter.innerHTML = '<option value="">All client statuses</option>' + statuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
     if(statuses.includes(prevStatus)) reportStatusFilter.value = prevStatus;
     const prevTaxType = reportTaxTypeFilter.value;
     const taxTypes = Array.from(new Set(clients.map(c=>c['TAX TYPE']).filter(Boolean))).sort();
-    reportTaxTypeFilter.innerHTML = '<option value="">All Tax Types</option>' + taxTypes.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    reportTaxTypeFilter.innerHTML = '<option value="">All tax types</option>' + taxTypes.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
     if(taxTypes.includes(prevTaxType)) reportTaxTypeFilter.value = prevTaxType;
+    const prevForms = reportFormsFilter ? reportFormsFilter.value : '';
+    if(reportFormsFilter && prevForms) reportFormsFilter.value = prevForms;
   }
 
   // Copies text to the clipboard, with a fallback for contexts where the
@@ -3551,9 +3647,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const q = (reportSearch.value||'').toLowerCase();
     const sf = reportStatusFilter.value;
     const tf = reportTaxTypeFilter.value;
+    const ff = reportFormsFilter ? reportFormsFilter.value : '';
     const filtered = clients.filter(c=>{
       if(sf && c['CLIENT?']!==sf) return false;
       if(tf && c['TAX TYPE']!==tf) return false;
+      if(ff && !parseFormsCsv(c.FORMS).map(f=>f.toUpperCase()).includes(ff.toUpperCase())) return false;
       if(!q) return true;
       const hay = [c.NAME, c['TRADE NAME'], c.TIN, c.RDO, c['CLIENT ID NO.']].join(' ').toLowerCase();
       return hay.includes(q);
@@ -3564,18 +3662,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       tableArea.innerHTML = `<div class="empty-state">${clients.length? 'No clients match the current search/filter.' : 'No clients yet.'}</div>`;
       return;
     }
-    const headRow = REPORT_COLS.map(([key,label])=>{
-      const frozen = REPORT_FROZEN_KEYS.includes(key);
-      const style = frozen ? `left:${REPORT_FROZEN_LEFT[key]}px;width:${REPORT_FROZEN_WIDTHS[key]}px;` : '';
-      return `<th class="${frozen?'frozen-col':''}" style="${style}">${esc(label)}</th>`;
-    }).join('') + '<th></th>';
+    const headRow = REPORT_COLS.map(([key,label])=> `<th>${esc(label)}</th>`).join('') + '<th></th>';
     const rows = filtered.map(c=>{
       const values = REPORT_COLS.map(([key])=> key==='TIN' ? fmtTinPlain(c.TIN) : String(c[key]||''));
-      const cells = REPORT_COLS.map(([key],i)=>{
-        const frozen = REPORT_FROZEN_KEYS.includes(key);
-        const style = frozen ? `left:${REPORT_FROZEN_LEFT[key]}px;` : '';
-        return `<td class="report-cell${frozen?' frozen-col':''}" style="${style}" data-value="${esc(values[i])}" title="Click to copy.">${esc(values[i])||'—'}</td>`;
-      }).join('');
+      const cells = REPORT_COLS.map((_,i)=>
+        `<td class="report-cell" data-value="${esc(values[i])}" title="Click to copy.">${esc(values[i])||'—'}</td>`
+      ).join('');
       return `<tr>${cells}<td><button class="tiny copy-report-row-btn" data-row="${esc(values.join('\t'))}">Copy Row</button></td></tr>`;
     }).join('');
     tableArea.innerHTML = `<table><thead><tr>${headRow}</tr></thead><tbody>${rows}</tbody></table>`;
