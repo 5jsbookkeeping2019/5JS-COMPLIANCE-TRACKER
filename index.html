@@ -2994,7 +2994,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     ['period_year','Year','num'], ['period_quarter','Quarter','text'],
     ['month1_amount','1st Month','num'], ['month2_amount','2nd Month','num'], ['month3_amount','3rd Month','num'],
     ['gross_amount','Total','num'], ['tax_withheld','Tax Withheld','num'],
-    ['date_of_payment','Date Paid','text'], ['mode_of_payment','Mode of Payment','text'], ['remarks','Remarks','text'],
+    ['date_of_payment','Date Paid','text'], ['mode_of_payment','Mode of Payment','text'],
+    // Printed name that appears UNDER the signature line on the printed
+    // certificate ("Signature over Printed Name of Payor/Payor's Authorized
+    // Representative..." and the Payee equivalent) -- left blank, those
+    // lines print empty for wet-ink signing, same as before this was added.
+    ['payor_signatory_name','Payor Signatory (Printed Name)','text'],
+    ['payee_signatory_name','Payee Signatory (Printed Name)','text'],
+    ['remarks','Remarks','text'],
   ];
   // "Quarter" is a free-typed text field (staff have entered it as "Q4",
   // "4", "4th", "quarter 4", etc.) -- pull out just the 1-4 digit so the
@@ -3450,7 +3457,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
          value, zip value) stay white as nested boxes on top of that grey --
          verified by sampling pixel colors directly off a real filed 2307. */
       .field1{border:1px solid #000;background:#c0c0c0;}
-      .field1 td{border:none;padding:3px 4px;vertical-align:middle;color:#1F3864;}
+      .field1 td{border:none;padding:3px 4px;vertical-align:middle;color:#000;}
       .field1 .num-lbl{width:16px;font-weight:bold;}
       .field1 .lbl-txt{width:98px;}
       .field1 .fromto{width:24px;}
@@ -3461,11 +3468,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       table.info{margin-bottom:0;border:1px solid #000;background:#c0c0c0;}
       table.info td{padding:3px 5px;border:none;border-bottom:1px solid #000;}
       table.info tr:last-child td{border-bottom:none;}
-      .info .rownum{width:16px;font-weight:bold;color:#1F3864;}
-      .info .cap{font-size:6.2pt;color:#1F3864;display:block;}
+      .info .rownum{width:16px;font-weight:bold;color:#000;}
+      .info .cap{font-size:6.2pt;color:#000;display:block;}
       .info .val{font-size:8pt;color:#000;display:block;background:#fff;border:1px solid #000;margin:2px 6px 2px 0;padding:2px 5px;min-height:13px;}
       .tinbox{width:44px;text-align:center;font-weight:bold;font-size:8pt;color:#000;border:1px solid #000 !important;background:#fff !important;}
-      .zipcap{width:60px;font-weight:bold;font-size:6.6pt;text-align:center;vertical-align:middle;color:#1F3864;}
+      .zipcap{width:60px;font-weight:bold;font-size:6.6pt;text-align:center;vertical-align:middle;color:#000;}
       .zipval{width:60px;text-align:center;font-weight:bold;font-size:8pt;vertical-align:middle;color:#000;border:1px solid #000 !important;background:#fff !important;}
       table.lines th{background:#c0c0c0;font-size:6.4pt;font-weight:bold;text-align:center;}
       table.lines td{font-size:7pt;}
@@ -3593,7 +3600,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       <p class="decl">We declare, under the penalties of perjury, that this certificate has been made in good faith, verified by me, and to the best of my knowledge and belief, is true and correct, pursuant to the provisions of the National Internal Revenue Code, as amended, and the regulations issued under authority thereof. Further, we give our consent to the processing of our information as contemplated under the *Data Privacy Act of 2012 (R.A No. 10173) for legitimate and lawful purposes.</p>
 
       <table class="sign-table"><tr>
-        <td style="width:50%;"><div class="sign-space">&nbsp;</div><div class="line">Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent<br>(Indicate Title/Designation and TIN)</div></td>
+        <td style="width:50%;"><div class="sign-space">${rec.payor_signatory_name ? esc(rec.payor_signatory_name) : '&nbsp;'}</div><div class="line">Signature over Printed Name of Payor/Payor's Authorized Representative/Tax Agent<br>(Indicate Title/Designation and TIN)</div></td>
       </tr></table>
       <table class="tax-agent-row"><tr>
         <td style="width:44%;">Tax Agent Accreditation No./Attorney's Roll No. (if applicable)</td>
@@ -3603,7 +3610,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
       <div class="conforme">CONFORME:</div>
       <table class="sign-table"><tr>
-        <td style="width:50%;"><div class="sign-space">&nbsp;</div><div class="line">Signature over Printed Name of Payee/Payee's Authorized Representative/Tax Agent<br>(Indicate Title/Designation and TIN)</div></td>
+        <td style="width:50%;"><div class="sign-space">${rec.payee_signatory_name ? esc(rec.payee_signatory_name) : '&nbsp;'}</div><div class="line">Signature over Printed Name of Payee/Payee's Authorized Representative/Tax Agent<br>(Indicate Title/Designation and TIN)</div></td>
       </tr></table>
       <table class="tax-agent-row"><tr>
         <td style="width:44%;">Tax Agent Accreditation No./Attorney's Roll No. (if applicable)</td>
@@ -3613,7 +3620,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
       <div class="footnote">*NOTE: The BIR Data Privacy is in the BIR website (www.bir.gov.ph)</div>
 
-      <div class="caveat no-print">This matches the official BIR Form 2307 (Jan 2018 ENCS) — field numbers, TIN boxes, Part I/II/III grid, grey section bars, the real BIR seal/barcode artwork, and CONFORME block, on Legal-size (8.5"×14") paper. The Nature of Income Payment / Rate auto-fill covers WC100 and WI100 (verified against a real filed 2307) plus a wider set of common ATC codes compiled from BIR's published EWT rate schedule (professional fees, contractors, film rentals, credit card companies, pre-need/funeral, agricultural suppliers, minerals/quarry) — please double-check those against the current BIR issuance before releasing to the payee, since they were not individually checked against an actual filed certificate the way WC100/WI100 were. Any other/unrecognized code shows whatever was typed in the entry. Signature lines print blank for wet-ink signing.</div>
+      <div class="caveat no-print">This matches the official BIR Form 2307 (Jan 2018 ENCS) — field numbers, TIN boxes, Part I/II/III grid, grey section bars, the real BIR seal/barcode artwork, and CONFORME block, on Legal-size (8.5"×14") paper. The Nature of Income Payment / Rate auto-fill covers WC100 and WI100 (verified against a real filed 2307) plus a wider set of common ATC codes compiled from BIR's published EWT rate schedule (professional fees, contractors, film rentals, credit card companies, pre-need/funeral, agricultural suppliers, minerals/quarry) — please double-check those against the current BIR issuance before releasing to the payee, since they were not individually checked against an actual filed certificate the way WC100/WI100 were. Any other/unrecognized code shows whatever was typed in the entry. Signature lines print the Payor/Payee Signatory Name typed in the 2307 Register (if any), otherwise blank for wet-ink signing.</div>
       <button class="no-print" onclick="window.print()" style="margin-top:14px;padding:8px 16px;">Print / Save as PDF</button>
     </body></html>`;
     const win = window.open('', '_blank');
