@@ -3428,16 +3428,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       .seal{width:46px;height:auto;display:block;}
       .top-meta .agency{text-align:center;font-size:7.8pt;line-height:1.25;}
       .top-meta .agency b{display:block;font-size:8.4pt;}
-      .form-title-row td{border:none;vertical-align:top;padding:3px 4px;}
-      .form-title-row .formno{border:1px solid #000;text-align:center;padding:4px;width:110px;}
-      .form-title-row .formno-blank{border:1px solid #000;width:120px;}
+      /* The whole header row (BIR Form No box | blank cell | Title | barcode)
+         is ONE fully-enclosed rectangle on the real form, with an internal
+         divider between every section -- not just the form-no box. Since
+         table{border-collapse:collapse} is set globally, giving every cell
+         the same border merges into a single clean grid line, no doubling. */
+      .form-title-row td{border:1px solid #000;vertical-align:top;padding:3px 4px;}
+      .form-title-row .formno{text-align:center;padding:4px;width:110px;}
+      .form-title-row .formno-blank{width:120px;}
       .form-title-row .formno .num{font-size:19pt;font-weight:bold;line-height:1;}
       .form-title-row .formno .lbl{font-size:6.5pt;}
       .form-title-row .title{text-align:center;}
       .form-title-row .title h1{font-family:Georgia,'Times New Roman',serif;font-size:14pt;margin:6px 0 2px;}
       .form-title-row .title h2{font-family:Georgia,'Times New Roman',serif;font-size:14pt;font-weight:normal;margin:0;}
-      .form-title-row .code{width:120px;text-align:center;font-size:6.5pt;}
-      .barcode{height:20px;width:100%;object-fit:contain;margin-bottom:2px;}
+      .form-title-row .code{width:140px;text-align:center;font-size:6.5pt;}
+      .barcode{height:34px;width:100%;object-fit:contain;margin-bottom:2px;}
       .instr{border:1px solid #000;padding:3px 5px;font-size:6.8pt;font-style:italic;}
       /* Part I/II info blocks: the real form washes the ENTIRE block (field
          numbers, captions, row backgrounds) in light grey (#c0c0c0) and only
