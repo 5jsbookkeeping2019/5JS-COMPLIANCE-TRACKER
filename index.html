@@ -3418,12 +3418,19 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       .no-border td, .no-border th{border:none;}
       .top-meta td{border:none;vertical-align:middle;}
       .boxed-grid{border-collapse:collapse;}
-      .boxed-grid td{border:1px solid #000;font-size:6.2pt;padding:3px 7px;text-align:center;line-height:1.3;}
+      /* "For BIR Use Only" is a plain shaded box with NO border; "BCS/
+         Item:" next to it has neither a box nor shading -- just text --
+         confirmed against the real filed 2307 (a common misreading is to
+         box both of these the same way). */
+      .boxed-grid td{border:none;font-size:6.2pt;padding:3px 7px;line-height:1.3;}
+      .boxed-grid .birno-box{background:#d8d8d8;text-align:center;}
+      .boxed-grid .bcs-label{text-align:left;}
       .seal{width:46px;height:auto;display:block;}
       .top-meta .agency{text-align:center;font-size:7.8pt;line-height:1.25;}
       .top-meta .agency b{display:block;font-size:8.4pt;}
       .form-title-row td{border:none;vertical-align:top;padding:3px 4px;}
       .form-title-row .formno{border:1px solid #000;text-align:center;padding:4px;width:110px;}
+      .form-title-row .formno-blank{border:1px solid #000;width:120px;}
       .form-title-row .formno .num{font-size:19pt;font-weight:bold;line-height:1;}
       .form-title-row .formno .lbl{font-size:6.5pt;}
       .form-title-row .title{text-align:center;}
@@ -3432,23 +3439,29 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       .form-title-row .code{width:120px;text-align:center;font-size:6.5pt;}
       .barcode{height:20px;width:100%;object-fit:contain;margin-bottom:2px;}
       .instr{border:1px solid #000;border-top:none;padding:3px 5px;font-size:6.8pt;font-style:italic;}
-      .field1{border:1px solid #000;}
+      /* Part I/II info blocks: the real form washes the ENTIRE block (field
+         numbers, captions, row backgrounds) in light grey (#c0c0c0) and only
+         the actual fillable boxes (TIN digits, date boxes, name/address
+         value, zip value) stay white as nested boxes on top of that grey --
+         verified by sampling pixel colors directly off a real filed 2307. */
+      .field1{border:1px solid #000;background:#c0c0c0;}
       .field1 td{border:none;padding:3px 4px;vertical-align:middle;color:#1F3864;}
       .field1 .num-lbl{width:16px;font-weight:bold;}
       .field1 .lbl-txt{width:98px;}
       .field1 .fromto{width:24px;}
-      .datebox{width:26px;text-align:center;font-weight:bold;color:#000 !important;border:1px solid #000 !important;}
+      .datebox{width:26px;text-align:center;font-weight:bold;color:#000 !important;border:1px solid #000 !important;background:#fff !important;}
       .datebox.yr{width:38px;}
       .mmddyyyy{font-size:6.2pt;font-weight:normal;width:66px;}
       .part-title{background:#c0c0c0;color:#000;text-align:center;font-weight:bold;padding:3px;font-size:8pt;border:1px solid #000;}
-      table.info{margin-bottom:0;}
-      table.info td{padding:3px 5px;}
-      .info .rownum{width:16px;font-weight:bold;border-right:none;color:#1F3864;}
+      table.info{margin-bottom:0;border:1px solid #000;background:#c0c0c0;}
+      table.info td{padding:3px 5px;border:none;border-bottom:1px solid #000;}
+      table.info tr:last-child td{border-bottom:none;}
+      .info .rownum{width:16px;font-weight:bold;color:#1F3864;}
       .info .cap{font-size:6.2pt;color:#1F3864;display:block;}
-      .info .val{font-size:8pt;padding-top:1px;min-height:11px;display:block;color:#000;}
-      .tinbox{width:44px;text-align:center;font-weight:bold;font-size:8pt;color:#000;}
+      .info .val{font-size:8pt;color:#000;display:block;background:#fff;border:1px solid #000;margin:2px 6px 2px 0;padding:2px 5px;min-height:13px;}
+      .tinbox{width:44px;text-align:center;font-weight:bold;font-size:8pt;color:#000;border:1px solid #000 !important;background:#fff !important;}
       .zipcap{width:60px;font-weight:bold;font-size:6.6pt;text-align:center;vertical-align:middle;color:#1F3864;}
-      .zipval{width:60px;text-align:center;font-weight:bold;font-size:8pt;vertical-align:middle;color:#000;}
+      .zipval{width:60px;text-align:center;font-weight:bold;font-size:8pt;vertical-align:middle;color:#000;border:1px solid #000 !important;background:#fff !important;}
       table.lines th{background:#c0c0c0;font-size:6.4pt;font-weight:bold;text-align:center;}
       table.lines td{font-size:7pt;}
       table.lines td.desc{width:27%;}
@@ -3457,11 +3470,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       .lines .subhead td{font-weight:bold;background:#c0c0c0;font-size:6.8pt;}
       .lines .totalrow td:first-child{font-weight:bold;background:#c0c0c0;}
       .lines .totalrow td{font-weight:bold;}
-      .decl{font-size:6.6pt;margin:0;line-height:1.3;background:#d8d8d8;border:1px solid #000;border-top:none;padding:4px 6px;}
+      /* Declaration paragraph prints on a plain WHITE background on the real
+         form (only the signature CAPTION bars and tax-agent strip below it
+         are grey) -- confirmed against the real filed 2307. */
+      .decl{font-size:6.6pt;margin:0;line-height:1.3;background:#fff;border:1px solid #000;border-top:none;padding:4px 6px;}
       .sign-table td{border:none;padding:0 4px;vertical-align:bottom;}
       .sign-table .line{border-top:1px solid #000;background:#d8d8d8;text-align:center;font-size:6.2pt;padding:3px 2px;}
       .sign-space{height:26px;}
-      .tax-agent-row td{border:1px solid #000;background:#d8d8d8;font-size:6.4pt;padding:8px 5px 4px;}
+      /* The Tax Agent Accreditation/Date strip is ONE continuous grey band
+         with no vertical dividers between its 3 items on the real form --
+         just underline-style blanks, not a bordered 3-column table. */
+      .tax-agent-row{border:1px solid #000;background:#d8d8d8;}
+      .tax-agent-row td{border:none;background:transparent;font-size:6.4pt;padding:8px 5px 4px;}
       .conforme{background:#bfbfbf;color:#000;text-align:center;font-weight:bold;padding:3px;font-size:8pt;border:1px solid #000;margin-top:0;}
       .footnote{font-size:6.2pt;font-style:italic;margin-top:4px;}
       .caveat{margin-top:14px;font-size:9px;color:#900;border:1px dashed #900;padding:8px;}
@@ -3469,7 +3489,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     </style></head><body>
       <table class="top-meta"><tr>
         <td style="width:130px;">
-          <table class="boxed-grid"><tr><td>For BIR<br>Use Only</td><td>BCS/<br>Item:</td></tr></table>
+          <table class="boxed-grid"><tr><td class="birno-box">For BIR<br>Use Only</td><td class="bcs-label">BCS/<br>Item:</td></tr></table>
         </td>
         <td class="agency">
           <div style="display:flex;align-items:center;justify-content:center;gap:7px;">
@@ -3481,6 +3501,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       </tr></table>
       <table class="form-title-row"><tr>
         <td class="formno"><div class="lbl">BIR Form No.</div><div class="num">2307</div><div class="lbl">January 2018 (ENCS)</div></td>
+        <td class="formno-blank">&nbsp;</td>
         <td class="title"><h1>Certificate of Creditable Tax</h1><h2>Withheld At Source</h2></td>
         <td class="code"><img class="barcode" src="${BIR_BARCODE_DATA_URI}" alt="barcode"/>2307 01/18ENCS</td>
       </tr></table>
