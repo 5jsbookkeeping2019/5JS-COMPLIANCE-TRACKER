@@ -477,6 +477,11 @@
             <option value="Sign-off & Payment">3. Sign-off &amp; Payment</option>
             <option value="Filing & Archive">4. Filing &amp; Archive</option>
           </select>
+          <select class="filter" id="tr-sort-filter">
+            <option value="due">Sort: Due date</option>
+            <option value="client_id">Sort: Client ID</option>
+            <option value="name">Sort: Business Name</option>
+          </select>
         </div>
         <div class="toolbar-right">
           <span class="small-note" id="tr-count" style="margin:0;"></span>
@@ -502,6 +507,11 @@
           </select>
           <select class="filter" id="reg-classif-filter">
             <option value="">All Taxpayer Classifications</option>
+          </select>
+          <select class="filter" id="reg-sort-filter">
+            <option value="">Default order</option>
+            <option value="client_id">Sort: Client ID</option>
+            <option value="name">Sort: Business Name</option>
           </select>
           <button class="secondary" id="add-client-btn">+ Add client manually</button>
         </div>
@@ -1141,8 +1151,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const trNotesFilter = document.getElementById('tr-notes-filter');
   const trPaymentFilter = document.getElementById('tr-payment-filter');
   const trStageFilter = document.getElementById('tr-stage-filter');
+  const trSortFilter = document.getElementById('tr-sort-filter');
   [trSearch, trNotesFilter].forEach(el=>el.addEventListener('input', renderTracker));
-  [trFormFilter, trPeriodFilter, trStatusFilter, trPaymentFilter, trStageFilter].forEach(el=>el.addEventListener('change', renderTracker));
+  [trFormFilter, trPeriodFilter, trStatusFilter, trPaymentFilter, trStageFilter, trSortFilter].forEach(el=>el.addEventListener('change', renderTracker));
 
   // Rebuilding the <select> options (needed whenever the task list changes,
   // e.g. a live update from another staff member) used to always reset the
@@ -1197,7 +1208,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       }
       return true;
     });
-    pool.sort((a,b)=> a.due.localeCompare(b.due));
+    const trSortMode = trSortFilter.value;
+    if(trSortMode === 'client_id'){
+      pool.sort((a,b)=> String(taskClient(a)['CLIENT ID NO.']||'').localeCompare(String(taskClient(b)['CLIENT ID NO.']||''), undefined, {numeric:true, sensitivity:'base'}) || a.due.localeCompare(b.due));
+    } else if(trSortMode === 'name'){
+      pool.sort((a,b)=> String(taskClient(a).NAME||'').localeCompare(String(taskClient(b).NAME||''), undefined, {sensitivity:'base'}) || a.due.localeCompare(b.due));
+    } else {
+      pool.sort((a,b)=> a.due.localeCompare(b.due));
+    }
     const cap = 500;
     document.getElementById('tr-count').textContent = `${pool.length.toLocaleString()} task(s) match` + (pool.length>cap? ` — showing first ${cap}`:'');
     const shown = pool.slice(0, cap);
@@ -1414,11 +1432,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const regRegModeFilter = document.getElementById('reg-regmode-filter');
   const regTaxTypeFilter = document.getElementById('reg-taxtype-filter');
   const regClassifFilter = document.getElementById('reg-classif-filter');
+  const regSortFilter = document.getElementById('reg-sort-filter');
   searchInput.addEventListener('input', renderRegistry);
   regStatusFilter.addEventListener('change', renderRegistry);
   regRegModeFilter.addEventListener('change', renderRegistry);
   regTaxTypeFilter.addEventListener('change', renderRegistry);
   regClassifFilter.addEventListener('change', renderRegistry);
+  regSortFilter.addEventListener('change', renderRegistry);
   document.getElementById('export-csv').addEventListener('click', exportCsv);
   document.getElementById('add-client-btn').addEventListener('click', ()=>openClientModal(null));
 
@@ -1454,6 +1474,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const hay = [c.NAME, c['TRADE NAME'], c.TIN, c.RDO, c['REGISTERED ADDRESS'], c['CLIENT ID NO.'], c['WITHHOLDING TYPES']].join(' ').toLowerCase();
       return hay.includes(q);
     });
+    const regSortMode = regSortFilter.value;
+    if(regSortMode === 'client_id'){
+      filtered.sort((a,b)=> String(a['CLIENT ID NO.']||'').localeCompare(String(b['CLIENT ID NO.']||''), undefined, {numeric:true, sensitivity:'base'}));
+    } else if(regSortMode === 'name'){
+      filtered.sort((a,b)=> String(a.NAME||'').localeCompare(String(b.NAME||''), undefined, {sensitivity:'base'}));
+    }
     const tableArea = document.getElementById('registry-table');
     if(clients.length === 0){
       tableArea.innerHTML = `<div class="empty-state"><div class="big">No clients yet</div></div>`;
@@ -2979,6 +3005,38 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(!r || !year) return {from:'', to:''};
     return { from: `${r[0]}/${year}`, to: `${r[1]}/${year}` };
   }
+  // The certificate's "For the Period" line should only span the actual
+  // month(s) that have an amount entered -- e.g. Q4 2026 with only the 1st
+  // month filled in prints "From 10/01/2026 To 10/31/2026", not the full
+  // quarter; filling in all 3 months prints the full "10/01 To 12/31".
+  // monthNums is whichever of {1,2,3} (1st/2nd/3rd month of the quarter)
+  // have a non-blank amount; falls back to the full calendar quarter when
+  // none are set yet (nothing to narrow down to).
+  function quarterPartialDateRange(year, q, monthNums){
+    if(!monthNums || monthNums.size === 0) return quarterDateRange(year, q);
+    const quarterStartMonth = { Q1:1, Q2:4, Q3:7, Q4:10 }[q];
+    if(!quarterStartMonth || !year) return quarterDateRange(year, q);
+    const pad2 = n => String(n).padStart(2,'0');
+    const minM = Math.min(...monthNums), maxM = Math.max(...monthNums);
+    const fromMonth = quarterStartMonth + (minM-1);
+    const toMonth = quarterStartMonth + (maxM-1);
+    const toLastDay = new Date(year, toMonth, 0).getDate(); // day 0 of next month = last day of toMonth
+    return {
+      from: `${pad2(fromMonth)}/01/${year}`,
+      to: `${pad2(toMonth)}/${pad2(toLastDay)}/${year}`,
+    };
+  }
+  // Which of {1,2,3} (1st/2nd/3rd month of the quarter) have at least one
+  // entry in the group with a non-blank amount for that month.
+  function activeMonthsInGroup(group){
+    const active = new Set();
+    (group||[]).forEach(r=>{
+      if(r.month1_amount!=null && r.month1_amount!=='') active.add(1);
+      if(r.month2_amount!=null && r.month2_amount!=='') active.add(2);
+      if(r.month3_amount!=null && r.month3_amount!=='') active.add(3);
+    });
+    return active;
+  }
   // Sums whichever of the 3 monthly amounts are filled in -- null (not 0)
   // when none are set yet, so a freshly-added row doesn't show "₱0.00".
   function computeMonthlyTotal(rec){
@@ -3248,7 +3306,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       while(parts.length < 4) parts.push('');
       return parts.slice(0,4).map(p=>`<td class="tinbox">${esc(p)}</td>`).join('');
     };
-    const period = quarterDateRange(rec.period_year, rec.period_quarter);
+    const period = quarterPartialDateRange(rec.period_year, rec.period_quarter, activeMonthsInGroup(group));
     const dateBoxes = (d) => {
       const [mm,dd,yyyy] = (d||'').split('/');
       return `<td class="datebox">${esc(mm||'')}</td><td class="datebox">${esc(dd||'')}</td><td class="datebox yr">${esc(yyyy||'')}</td>`;
