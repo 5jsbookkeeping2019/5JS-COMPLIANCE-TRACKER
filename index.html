@@ -2996,14 +2996,23 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     ['gross_amount','Total','num'], ['tax_withheld','Tax Withheld','num'],
     ['date_of_payment','Date Paid','text'], ['mode_of_payment','Mode of Payment','text'], ['remarks','Remarks','text'],
   ];
+  // "Quarter" is a free-typed text field (staff have entered it as "Q4",
+  // "4", "4th", "quarter 4", etc.) -- pull out just the 1-4 digit so the
+  // date-range math below works no matter how it was typed.
+  function normalizeQuarterNum(q){
+    if(q===null || q===undefined) return null;
+    const m = String(q).match(/[1-4]/);
+    return m ? Number(m[0]) : null;
+  }
   // Standard calendar-quarter date ranges -- used to print the form's "For
   // the Period From / To" line without needing separate stored date
   // columns (BIR quarters are fixed calendar quarters).
   function quarterDateRange(year, q){
-    const ranges = { Q1:['01/01','03/31'], Q2:['04/01','06/30'], Q3:['07/01','09/30'], Q4:['10/01','12/31'] };
-    const r = ranges[q];
-    if(!r || !year) return {from:'', to:''};
-    return { from: `${r[0]}/${year}`, to: `${r[1]}/${year}` };
+    const qn = normalizeQuarterNum(q);
+    if(!qn || !year) return {from:'', to:''};
+    const starts = {1:'01/01', 2:'04/01', 3:'07/01', 4:'10/01'};
+    const ends = {1:'03/31', 2:'06/30', 3:'09/30', 4:'12/31'};
+    return { from: `${starts[qn]}/${year}`, to: `${ends[qn]}/${year}` };
   }
   // The certificate's "For the Period" line should only span the actual
   // month(s) that have an amount entered -- e.g. Q4 2026 with only the 1st
@@ -3014,8 +3023,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // none are set yet (nothing to narrow down to).
   function quarterPartialDateRange(year, q, monthNums){
     if(!monthNums || monthNums.size === 0) return quarterDateRange(year, q);
-    const quarterStartMonth = { Q1:1, Q2:4, Q3:7, Q4:10 }[q];
-    if(!quarterStartMonth || !year) return quarterDateRange(year, q);
+    const qn = normalizeQuarterNum(q);
+    if(!qn || !year) return quarterDateRange(year, q);
+    const quarterStartMonth = (qn-1)*3 + 1; // Q1->1, Q2->4, Q3->7, Q4->10
     const pad2 = n => String(n).padStart(2,'0');
     const minM = Math.min(...monthNums), maxM = Math.max(...monthNums);
     const fromMonth = quarterStartMonth + (minM-1);
