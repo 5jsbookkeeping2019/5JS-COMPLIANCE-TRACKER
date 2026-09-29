@@ -3203,14 +3203,24 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // reads the same as the official form even if staff only typed a short
   // income_type label (e.g. "RENTAL") when entering the row. Falls back to
   // whatever was typed for any code not in this list.
+  // Only ATC codes confirmed against a real, filed BIR Form 2307 go in this
+  // map (WC100 from the Ortigas Commercial Corp. certificate, WI100 from the
+  // Robinsons Land Corp./individual-payee certificate) -- the description the
+  // BIR prints depends on the ATC actually used for that transaction (e.g.
+  // rentals paid to a non-individual is WC100, to an individual is WI100),
+  // it is NOT a fixed line on the form. Anything not in this map falls back
+  // to whatever staff typed in "Nature of Income Payment" -- safer than
+  // guessing official wording for a real tax document. Add more codes here
+  // only once you've confirmed the exact text against an actual filed 2307.
+  // Real BIR seal + form-revision barcode artwork, extracted from the
+  // user's own working 2307 Excel template (xl/media/image1.png and
+  // image2.png) -- embedded here so the printable certificate uses the
+  // actual official graphics instead of a CSS approximation.
+  const BIR_SEAL_DATA_URI = 'data:image/png;base64,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';
+  const BIR_BARCODE_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAAA2CAIAAAB2hoNsAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAINSURBVHhe7djBqiNBDEPRZP7/nzMzCBqBsHF4byXuWYROtcuuhehFvV9f+nw+/37f7/8b92en9XTplrK/eP3eeZId0t5nOoPLvdOufHa5y+1vxWvSfpLLXtkrXU5x00lEK3/0B+hAoFGFQKMKgUYVAo0qBBpVCDSqEGhUud54P/Jae7/uFq2newe5vE1en7Pcvi7TFOd9pmfn/WWaMlVe1qeVnep9bz477y+XKZL93XQG0QpfaFQh0KhCoFGFQKMKgUYVAo0qBBpVCDSqXG+8H3mtvV93y71eKyl7puwsuTff3udOnXN6vp3sU+QnnXOX+Pr0nKaJ39anffp+Qq3whUYVAo0qBBpVCDSqEGhUIdCoQqBRhUCjyvXG+5HX2vt1t+z1yTtcamSaLt5n2is5fVrxXbJ3lqnmMiVrJrnXTZ2nue63zpDyDC7PlifhC40qBBpVCDSqEGhUIdCoQqBRhUCjCoFGleuN9yOvtffrbtG6TLtcdnCXKeI108Spz3SG3DvVe6Xzyukk07rcJ6rmJ/VTjfjb7C/ZYZLTXZ4qT8IXGlUINKoQaFQh0KhCoFGFQKMKgUYVAo0q1xvvR15r79fdovXJ1CflW5+V0y99vH7ilfuunDjt8srsdp8o2c1X0l6Tc7/tphXZ97qc6/I8OYUvNKoQaFQh0KhCoFGFQKMKgUYVAo0qBBpFXq+/JoH4dlhn7koAAAAASUVORK5CYII=';
   const ATC_FULL_DESCRIPTIONS = {
     WC100: 'Rentals: On gross rental or lease for the continued use or possession of personal property in excess of Ten thousand pesos (₱10,000)',
-    WC160: 'Professional fees, talent fees, etc. for services rendered by individuals',
-    WC010: 'Professional fees, talent fees, etc. for services of individuals (lawyers, CPAs, engineers, etc.)',
-    WC050: 'Income payments to certain contractors',
-    WC030: 'Income distribution to beneficiaries of estates and trusts',
-    WI010: 'Income payments on purchases of goods',
-    WI020: 'Income payments on purchases of services',
+    WI100: 'RENTALS- REAL/PERSONAL PROPERTIES, POLES, SATELLITES & TRANSMISSION FACILITIES, BILLBOARDS INDIVIDUAL',
   };
   function openPrintable2307(rec){
     // All entries sharing the same payor + payee + year + quarter go on
@@ -3243,6 +3253,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const [mm,dd,yyyy] = (d||'').split('/');
       return `<td class="datebox">${esc(mm||'')}</td><td class="datebox">${esc(dd||'')}</td><td class="datebox yr">${esc(yyyy||'')}</td>`;
     };
+    // Each ATC line shows exactly the transaction(s) actually entered --
+    // the description the BIR prints depends on which ATC was used for that
+    // transaction (verified against real filed certificates: a rental paid
+    // to a non-individual payee prints as WC100's wording, to an individual
+    // payee as WI100's -- see ATC_FULL_DESCRIPTIONS above). There's no
+    // permanently pre-printed line; an empty register entry simply leaves
+    // Part III blank, matching a freshly issued certificate.
     const dataRows = group.map(r => {
       const total = computeMonthlyTotal(r) ?? r.gross_amount;
       const desc = ATC_FULL_DESCRIPTIONS[String(r.atc_code||'').toUpperCase()] || r.income_type || '';
@@ -3258,7 +3275,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       </tr>`;
     }).join('');
     const blankRow = `<tr><td class="desc">&nbsp;</td><td class="atc"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td></tr>`;
-    const fillerRows1 = Math.max(0, 8 - group.length);
+    const fillerRows1 = Math.max(0, 12 - group.length);
     const totalM1 = group.reduce((s,r)=> s + (Number(r.month1_amount)||0), 0);
     const totalM2 = group.reduce((s,r)=> s + (Number(r.month2_amount)||0), 0);
     const totalM3 = group.reduce((s,r)=> s + (Number(r.month3_amount)||0), 0);
@@ -3266,14 +3283,17 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const totalTax = group.reduce((s,r)=> s + (Number(r.tax_withheld)||0), 0);
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>BIR Form 2307 — ${esc(rec.payee_name||'')}</title>
     <style>
-      @page{ size: letter; margin: 10mm 9mm; }
+      @page{ size: 8.5in 14in; margin: 9mm 9mm; }
+      html,body{ width:8.5in; min-height:14in; }
       *{ box-sizing:border-box; }
       body{font-family:Arial,Helvetica,sans-serif;font-size:7.4pt;color:#000;margin:0;}
       table{border-collapse:collapse;width:100%;}
       td,th{border:1px solid #000;padding:2px 4px;vertical-align:top;}
       .no-border td, .no-border th{border:none;}
       .top-meta td{border:none;vertical-align:middle;}
-      .top-meta .boxed{border:1px solid #000;font-size:6.5pt;padding:3px 5px;width:80px;}
+      .boxed-grid{border-collapse:collapse;}
+      .boxed-grid td{border:1px solid #000;font-size:6.2pt;padding:3px 7px;text-align:center;line-height:1.3;}
+      .seal{width:46px;height:auto;display:block;}
       .top-meta .agency{text-align:center;font-size:7.8pt;line-height:1.25;}
       .top-meta .agency b{display:block;font-size:8.4pt;}
       .form-title-row td{border:none;vertical-align:top;padding:3px 4px;}
@@ -3283,14 +3303,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       .form-title-row .title{text-align:center;}
       .form-title-row .title h1{font-family:Georgia,'Times New Roman',serif;font-size:14pt;margin:6px 0 2px;}
       .form-title-row .title h2{font-family:Georgia,'Times New Roman',serif;font-size:14pt;font-weight:normal;margin:0;}
-      .form-title-row .code{width:110px;text-align:right;font-size:6.5pt;}
+      .form-title-row .code{width:120px;text-align:center;font-size:6.5pt;}
+      .barcode{height:20px;width:100%;object-fit:contain;margin-bottom:2px;}
       .instr{border:1px solid #000;border-top:none;padding:3px 5px;font-size:6.8pt;font-style:italic;}
-      .field1 td{border:1px solid #000;padding:3px 5px;}
-      .field1 .num-lbl{width:16px;font-weight:bold;vertical-align:middle;border-right:none;}
-      .datebox{width:26px;text-align:center;font-weight:bold;}
+      .field1{border:1px solid #000;}
+      .field1 td{border:none;padding:3px 4px;vertical-align:middle;}
+      .field1 .num-lbl{width:16px;font-weight:bold;}
+      .field1 .lbl-txt{width:98px;}
+      .field1 .fromto{width:24px;}
+      .datebox{width:26px;text-align:center;font-weight:bold;border:1px solid #000 !important;}
       .datebox.yr{width:38px;}
-      .mmddyyyy{font-size:6.2pt;font-weight:normal;}
-      .part-title{background:#000;color:#fff;text-align:center;font-weight:bold;padding:3px;font-size:8pt;border:1px solid #000;}
+      .mmddyyyy{font-size:6.2pt;font-weight:normal;width:66px;}
+      .part-title{background:#c0c0c0;color:#000;text-align:center;font-weight:bold;padding:3px;font-size:8pt;border:1px solid #000;}
       table.info{margin-bottom:0;}
       table.info td{padding:3px 5px;}
       .info .rownum{width:16px;font-weight:bold;border-right:none;}
@@ -3299,43 +3323,51 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       .tinbox{width:44px;text-align:center;font-weight:bold;font-size:8pt;}
       .zipcap{width:60px;font-weight:bold;font-size:6.6pt;text-align:center;vertical-align:middle;}
       .zipval{width:60px;text-align:center;font-weight:bold;font-size:8pt;vertical-align:middle;}
-      table.lines th{background:#e2e2e2;font-size:6.4pt;font-weight:bold;text-align:center;}
+      table.lines th{background:#c0c0c0;font-size:6.4pt;font-weight:bold;text-align:center;}
       table.lines td{font-size:7pt;}
       table.lines td.desc{width:27%;}
       table.lines td.atc, table.lines th.atc{width:44px;text-align:center;}
       table.lines td.num, table.lines th.num{text-align:right;width:12%;}
-      .lines .subhead td{font-weight:bold;background:#f2f2f2;font-size:6.8pt;}
+      .lines .subhead td{font-weight:bold;background:#c0c0c0;font-size:6.8pt;}
+      .lines .totalrow td:first-child{font-weight:bold;background:#c0c0c0;}
       .lines .totalrow td{font-weight:bold;}
-      .decl{font-size:6.6pt;margin:5px 2px;line-height:1.3;}
+      .decl{font-size:6.6pt;margin:0;line-height:1.3;background:#d8d8d8;border:1px solid #000;border-top:none;padding:4px 6px;}
       .sign-table td{border:none;padding:0 4px;vertical-align:bottom;}
-      .sign-table .line{border-top:1px solid #000;text-align:center;font-size:6.2pt;padding-top:2px;}
+      .sign-table .line{border-top:1px solid #000;background:#d8d8d8;text-align:center;font-size:6.2pt;padding:3px 2px;}
       .sign-space{height:26px;}
-      .tax-agent-row td{border:1px solid #000;font-size:6.4pt;padding:8px 5px 2px;}
-      .conforme{background:#000;color:#fff;text-align:center;font-weight:bold;padding:3px;font-size:8pt;border:1px solid #000;margin-top:6px;}
+      .tax-agent-row td{border:1px solid #000;background:#d8d8d8;font-size:6.4pt;padding:8px 5px 4px;}
+      .conforme{background:#bfbfbf;color:#000;text-align:center;font-weight:bold;padding:3px;font-size:8pt;border:1px solid #000;margin-top:0;}
       .footnote{font-size:6.2pt;font-style:italic;margin-top:4px;}
       .caveat{margin-top:14px;font-size:9px;color:#900;border:1px dashed #900;padding:8px;}
       @media print{ .caveat{ display:none; } .no-print{display:none;} }
     </style></head><body>
       <table class="top-meta"><tr>
-        <td style="width:100px;"><div class="boxed">For BIR<br>Use Only<br><br>BCS/<br>Item:</div></td>
-        <td class="agency">Republic of the Philippines<br><b>Department of Finance</b><br>Bureau of Internal Revenue</td>
-        <td style="width:100px;"></td>
+        <td style="width:130px;">
+          <table class="boxed-grid"><tr><td>For BIR<br>Use Only</td><td>BCS/<br>Item:</td></tr></table>
+        </td>
+        <td class="agency">
+          <div style="display:flex;align-items:center;justify-content:center;gap:7px;">
+            <img class="seal" src="${BIR_SEAL_DATA_URI}" alt="BIR seal"/>
+            <div style="text-align:left;">Republic of the Philippines<br><b>Department of Finance</b><br>Bureau of Internal Revenue</div>
+          </div>
+        </td>
+        <td style="width:130px;"></td>
       </tr></table>
       <table class="form-title-row"><tr>
         <td class="formno"><div class="lbl">BIR Form No.</div><div class="num">2307</div><div class="lbl">January 2018 (ENCS)</div></td>
         <td class="title"><h1>Certificate of Creditable Tax</h1><h2>Withheld At Source</h2></td>
-        <td class="code">2307 01/18ENCS</td>
+        <td class="code"><img class="barcode" src="${BIR_BARCODE_DATA_URI}" alt="barcode"/>2307 01/18ENCS</td>
       </tr></table>
       <div class="instr">Fill in all applicable spaces. Mark all appropriate boxes with an &quot;X&quot;.</div>
       <table class="field1"><tr>
         <td class="num-lbl">1</td>
-        <td style="width:110px;">For the Period</td>
-        <td style="width:30px;text-align:center;">From</td>
+        <td class="lbl-txt">For the Period</td>
+        <td class="fromto">From</td>
         ${dateBoxes(period.from)}
-        <td class="mmddyyyy" style="border-left:none;width:70px;">(MM/DD/YYYY)</td>
-        <td style="width:24px;text-align:center;">To</td>
+        <td class="mmddyyyy">(MM/DD/YYYY)</td>
+        <td class="fromto">To</td>
         ${dateBoxes(period.to)}
-        <td class="mmddyyyy" style="border-left:none;">(MM/DD/YYYY)</td>
+        <td class="mmddyyyy">(MM/DD/YYYY)</td>
       </tr></table>
 
       <div class="part-title">Part I &ndash; Payee Information</div>
@@ -3386,7 +3418,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           <tr>
             <th rowspan="2" class="desc">Income Payments Subject to<br>Expanded Withholding Tax</th>
             <th rowspan="2" class="atc">ATC</th>
-            <th colspan="4">Amount of Income Payments</th>
+            <th colspan="4">AMOUNT OF INCOME PAYMENTS</th>
             <th rowspan="2">Tax Withheld<br>For the Quarter</th>
           </tr>
           <tr>
@@ -3400,8 +3432,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           ${dataRows}
           ${blankRow.repeat(fillerRows1)}
           <tr class="totalrow"><td colspan="2">Total</td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num">${fmtN(totalGross)}</td><td class="num">${fmtN(totalTax)}</td></tr>
-          <tr class="subhead"><td colspan="7">Money Payments Subject to Withholding of Business Tax (Government &amp; Private)</td></tr>
-          ${blankRow.repeat(6)}
+          <tr class="subhead"><td colspan="2">Money Payments Subject to Withholding<br>of Business Tax (Government &amp; Private)</td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num"></td></tr>
+          ${blankRow.repeat(10)}
           <tr class="totalrow"><td colspan="2">Total</td><td class="num"></td><td class="num"></td><td class="num"></td><td class="num">&ndash;</td><td class="num">&ndash;</td></tr>
         </tbody>
       </table>
@@ -3429,7 +3461,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
       <div class="footnote">*NOTE: The BIR Data Privacy is in the BIR website (www.bir.gov.ph)</div>
 
-      <div class="caveat no-print">This reproduces the official BIR Form 2307 (Jan 2018 ENCS) field-for-field — same field numbers, TIN boxes, Part I/II/III layout, and CONFORME signature block — except the BIR seal artwork and the printed barcode, which aren't included here. Signature lines print blank for wet-ink signing. Double-check the ATC code/description against the current BIR issuance before releasing to the payee.</div>
+      <div class="caveat no-print">This matches the official BIR Form 2307 (Jan 2018 ENCS) — field numbers, TIN boxes, Part I/II/III grid, grey section bars, the real BIR seal/barcode artwork, and CONFORME block, on Legal-size (8.5"×14") paper. The Nature of Income Payment wording is auto-filled only for ATC codes verified against a real filed 2307 (currently WC100, WI100); any other code shows whatever was typed in the entry. Signature lines print blank for wet-ink signing. Double-check the ATC code/description against the current BIR issuance before releasing to the payee.</div>
       <button class="no-print" onclick="window.print()" style="margin-top:14px;padding:8px 16px;">Print / Save as PDF</button>
     </body></html>`;
     const win = window.open('', '_blank');
