@@ -675,6 +675,14 @@
       </div>
       <div class="small-note" id="taxtype-reassign-preview" style="margin-top:8px;"></div>
 
+      <h3 style="margin-top:30px;">Branch Client ID Numbering</h3>
+      <div class="small-note">For a client with "Registering Office" = Branch, set its "Main Client ID" to its Main/Head Office client's Client ID No. (in the Client modal, below Registering Office) — this list then auto-fills with every branch that isn't yet numbered off its Main, so you can assign it a clean ID like 5JS-0001-B1, 5JS-0001-B2 in one click instead of an unrelated standalone ID. A rename here also updates that branch's existing Sales Summary rows and 2307 Register entries so nothing gets orphaned.</div>
+      <div class="table-scroll" style="margin-top:12px;max-width:760px;" id="branch-renumber-table"></div>
+      <div style="margin-top:10px;">
+        <button class="secondary" id="branch-renumber-apply-btn" disabled>Apply Branch ID Numbering</button>
+      </div>
+      <div class="small-note" id="branch-renumber-unresolved" style="margin-top:8px;"></div>
+
       <h3 style="margin-top:30px;">Recent Credential Views</h3>
       <div class="small-note">Who revealed a stored password in the Credentials tab, and when — written automatically the moment "Show" is clicked; nothing here can be edited or deleted from within the app.</div>
       <div class="table-scroll" style="margin-top:12px;max-width:640px;" id="creds-access-log-table"></div>
@@ -896,6 +904,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     'LINE OF BUSINESS CATEGORY 2':'line_of_business_category_2', 'LINE OF BUSINESS CATEGORY 3':'line_of_business_category_3',
     'PROFESSIONAL FEE':'professional_fee', 'BILLING FREQUENCY':'billing_frequency',
     'SALES REPRESENTATIVE':'sales_representative',
+    // For a client whose Tax Type is "Branch": the Client ID No. of its
+    // Main/Head Office client, so the two can be linked -- see the "Branch
+    // Client ID Numbering" tool in Settings, which uses this to number
+    // branches off their Main's ID (e.g. 5JS-0001-B1, 5JS-0001-B2) instead
+    // of each branch getting an unrelated standalone ID.
+    'MAIN CLIENT ID':'main_client_id_no',
   };
   function mapClientFromDb(row){
     const c = {_id: row.id};
@@ -1052,7 +1066,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(tab === 'tax2307') renderEntries2307();
     if(tab === 'sawt') renderSawt();
     if(tab === 'report') renderReport();
-    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); renderCredsAccessLog(); }
+    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); renderBranchRenumberTable(); renderCredsAccessLog(); }
   }
 
   // Jumps to another tab programmatically (reuses the same click handler
@@ -1836,6 +1850,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       ['Head Office','Head Office'],
       ['Branch','Branch'],
     ]],
+    // Only meaningful when Registering Office above is "Branch": the Client
+    // ID No. of this branch's Main/Head Office client. Free-typed (with a
+    // suggestion list of existing Client IDs) rather than a strict dropdown
+    // so it still saves even if the Main hasn't been entered yet. Used by
+    // the "Branch Client ID Numbering" tool in Settings to number every
+    // branch off its Main's ID (5JS-0001-B1, 5JS-0001-B2, ...) in one click.
+    ['MAIN CLIENT ID','Main Client ID (if Branch)',''],
     // Business Size per RA 11976 (EOPT) / RR 8-2024 -- separate dimension from
     // "Taxpayer Classification" above (which is Individual vs Corporation).
     // Thresholds are ANNUAL GROSS SALES: Micro <3M, Small 3M-<20M,
@@ -2278,16 +2299,23 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const isNew = !clientId;
     const c = isNew ? Object.assign({_id: uid(), 'CLIENT?':'YES', 'CLIENT ID NO.': nextClientIdNo()}, prefill||{}) : clientById[clientId];
     const root = document.getElementById('modal-root');
+    // Other clients' Client IDs, for the "Main Client ID" field's suggestion
+    // list below -- excludes this client itself (a client can't be its own
+    // Main) and blanks.
+    const mainIdDlOpts = clients.filter(oc=>oc._id!==c._id && oc['CLIENT ID NO.']).map(oc=>`<option value="${esc(oc['CLIENT ID NO.'])}">${esc(oc['CLIENT ID NO.'])} — ${esc(oc.NAME)}</option>`).join('');
     const fieldsHtml = CLIENT_FIELDS.map(([key,label,cls,type,opts])=> type==='checkbox' ? `
       <div class="field ${cls||''}"><label>${esc(label)}</label><input type="checkbox" data-key="${esc(key)}" data-type="checkbox" ${String(c[key]||'').toUpperCase()==='YES'?'checked':''} style="width:auto;margin-top:6px;"></div>
     ` : type==='select' ? `
       <div class="field ${cls||''}"><label>${esc(label)}</label><select data-key="${esc(key)}">${selectOptionsHtml(opts, c[key])}</select></div>
-    ` : type==='formsgrid' ? formsGridHtml(c[key]) : `
+    ` : type==='formsgrid' ? formsGridHtml(c[key]) : key==='MAIN CLIENT ID' ? `
+      <div class="field ${cls||''}"><label>${esc(label)}</label><input data-key="${esc(key)}" list="client-main-id-dl" value="${esc(c[key])}"></div>
+    ` : `
       <div class="field ${cls||''}"><label>${esc(label)}</label><input data-key="${esc(key)}" value="${esc(c[key])}"></div>
     `).join('');
     root.innerHTML = `<div class="modal-backdrop" id="modal-backdrop">
       <div class="modal">
         <h2>${isNew? 'Add New Client' : 'Edit Client'}</h2>
+        <datalist id="client-main-id-dl">${mainIdDlOpts}</datalist>
         <div class="review-grid">${fieldsHtml}</div>
         <div style="margin-top:10px;">
           <button class="secondary" id="autofill-forms-btn" type="button">🪄 Auto-fill Forms from Registered Tax Types</button>
@@ -2602,16 +2630,20 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function renderReviewForm(d, rawText){
     const area = document.getElementById('review-area');
     if(!d['CLIENT ID NO.']) d = Object.assign({'CLIENT ID NO.': nextClientIdNo()}, d);
+    const mainIdDlOpts = clients.filter(oc=>oc['CLIENT ID NO.']).map(oc=>`<option value="${esc(oc['CLIENT ID NO.'])}">${esc(oc['CLIENT ID NO.'])} — ${esc(oc.NAME)}</option>`).join('');
     const fieldsHtml = CLIENT_FIELDS.map(([key,label,cls,type,opts])=> type==='checkbox' ? `
       <div class="field ${cls||''}"><label>${esc(label)}</label><input type="checkbox" data-key="${esc(key)}" data-type="checkbox" ${String(d[key]||'').toUpperCase()==='YES'?'checked':''} style="width:auto;margin-top:6px;"></div>
     ` : type==='select' ? `
       <div class="field ${cls||''}"><label>${esc(label)}</label><select data-key="${esc(key)}">${selectOptionsHtml(opts, d[key])}</select></div>
-    ` : type==='formsgrid' ? formsGridHtml(d[key]) : `
+    ` : type==='formsgrid' ? formsGridHtml(d[key]) : key==='MAIN CLIENT ID' ? `
+      <div class="field ${cls||''}"><label>${esc(label)}</label><input data-key="${esc(key)}" list="client-review-main-id-dl" value="${esc(d[key])}"></div>
+    ` : `
       <div class="field ${cls||''}"><label>${esc(label)}</label><input data-key="${esc(key)}" value="${esc(d[key])}"></div>
     `).join('');
     area.innerHTML = `
       <div class="stamp-wrap">
         ${rawText ? '<div class="stamp">EXTRACTED<br/>✓ REVIEW</div>' : ''}
+        <datalist id="client-review-main-id-dl">${mainIdDlOpts}</datalist>
         <div class="review-grid" style="margin-top:26px;">${fieldsHtml}</div>
       </div>
       <div style="margin-top:20px;display:flex;gap:10px;">
@@ -4459,6 +4491,130 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
   });
 
+  /* ---------- "Branch Client ID Numbering" (Settings tab) ----------
+     For every client whose Registering Office is "Branch" and has a Main
+     Client ID set (see CLIENT_FIELDS / the Client modal), assigns it a
+     Client ID No. of "<Main's Client ID>-B<n>" -- the next free number
+     under that Main -- UNLESS its current Client ID No. already follows
+     that exact pattern for its CURRENT Main, in which case it's left
+     alone. That makes this idempotent: re-running it never reshuffles
+     IDs that are already correct, so it's safe to leave running as new
+     branches get added over time. Applying a rename also relinks any
+     Sales Summary row / 2307 Register entry that was pointing at the
+     branch's OLD Client ID No., so existing data never silently detaches
+     from the branch it belongs to. */
+  function escapeRegex(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  function planBranchRenumbering(){
+    const branches = clients.filter(c=>c['REGISTERING OFFICE']==='Branch' && (c['MAIN CLIENT ID']||'').trim())
+      .slice().sort((a,b)=>String(a.NAME||'').localeCompare(String(b.NAME||'')));
+    // Index numbers already in correct use per Main first, so a newly
+    // assigned number never collides with an existing, already-correct
+    // sibling branch.
+    const usedByMain = {};
+    branches.forEach(c=>{
+      const mainId = c['MAIN CLIENT ID'].trim();
+      const cur = String(c['CLIENT ID NO.']||'').trim();
+      const m = cur && new RegExp('^'+escapeRegex(mainId)+'-B(\\d+)$','i').exec(cur);
+      if(m){
+        if(!usedByMain[mainId]) usedByMain[mainId] = new Set();
+        usedByMain[mainId].add(parseInt(m[1],10));
+      }
+    });
+    const plans = [], unresolved = [];
+    branches.forEach(c=>{
+      const mainId = c['MAIN CLIENT ID'].trim();
+      const mainClient = findClientByIdNo(mainId);
+      if(!mainClient){ unresolved.push(c); return; }
+      const cur = String(c['CLIENT ID NO.']||'').trim();
+      if(cur && new RegExp('^'+escapeRegex(mainId)+'-B\\d+$','i').test(cur)) return; // already correct -- leave it
+      if(!usedByMain[mainId]) usedByMain[mainId] = new Set();
+      let n = 1;
+      while(usedByMain[mainId].has(n)) n++;
+      usedByMain[mainId].add(n);
+      plans.push({ client:c, mainClient, oldId:cur, newId: mainId+'-B'+n });
+    });
+    return {plans, unresolved};
+  }
+
+  let branchRenumberPlans = [];
+  function renderBranchRenumberTable(){
+    const area = document.getElementById('branch-renumber-table');
+    const applyBtn = document.getElementById('branch-renumber-apply-btn');
+    const unresolvedEl = document.getElementById('branch-renumber-unresolved');
+    if(!area) return;
+    const {plans, unresolved} = planBranchRenumbering();
+    branchRenumberPlans = plans;
+    if(!plans.length){
+      area.innerHTML = `<div class="small-note">Nothing to number right now — every Branch client with a Main Client ID set already has a clean ID.</div>`;
+    } else {
+      const rows = plans.map(p=>`<tr><td>${esc(p.client.NAME)}</td><td>${esc(p.mainClient.NAME)} (${esc(p.mainClient['CLIENT ID NO.'])})</td><td class="mono">${p.oldId? esc(p.oldId) : '<span style="color:var(--ink-soft);">(none yet)</span>'}</td><td class="mono"><strong>${esc(p.newId)}</strong></td></tr>`).join('');
+      area.innerHTML = `<table><thead><tr><th>Branch</th><th>Main Client</th><th>Current ID</th><th>New ID</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+    applyBtn.disabled = !plans.length;
+    unresolvedEl.textContent = unresolved.length
+      ? `${unresolved.length} Branch client(s) have a Main Client ID that doesn't match any existing Client ID No. — fix that first: ${unresolved.map(c=>c.NAME).join(', ')}`
+      : '';
+  }
+
+  document.getElementById('branch-renumber-apply-btn').addEventListener('click', async ()=>{
+    const plans = branchRenumberPlans;
+    if(!plans.length) return;
+    const summary = plans.map(p=>`${p.client.NAME}: ${p.oldId||'(none)'} → ${p.newId}`).join('\n');
+    if(!confirm(`Assign clean Branch Client IDs for ${plans.length} client(s)?\n\n${summary}\n\nThis also relinks any Sales Summary row / 2307 Register entry currently pointing at each branch's OLD Client ID No. This cannot be undone automatically — you'd need to reverse it the same way.`)) return;
+    const btn = document.getElementById('branch-renumber-apply-btn');
+    btn.disabled = true;
+    try{
+      const stamp = { updated_at: new Date().toISOString(), updated_by: currentUserEmail };
+      let failedCount = 0;
+      for(const p of plans){
+        const { error } = await sb.from('cor_clients').update({client_id_no: p.newId, updated_at: stamp.updated_at, updated_by: stamp.updated_by}).eq('id', p.client._id);
+        if(error){ console.error(error); failedCount++; continue; }
+        logFieldAudit('cor_clients_audit', 'client_id', p.client._id, 'CLIENT ID NO.', 'Client ID No.', p.oldId, p.newId);
+        p.client['CLIENT ID NO.'] = p.newId;
+        if(p.oldId){
+          // Relink every Sales Summary row / 2307 Register entry that was
+          // pointing at this branch's OLD Client ID No. -- otherwise the
+          // rename would silently orphan existing data (its Registry
+          // auto-fill would stop matching).
+          const affectedSales = salesSummary.filter(r=>r.client_id_no===p.oldId);
+          const affectedEntries = entries2307.filter(r=>r.client_id_no===p.oldId);
+          const salesUpdates = affectedSales.map(r=> sb.from('cor_sales_summary').update({client_id_no: p.newId, updated_at: stamp.updated_at, updated_by: stamp.updated_by}).eq('id', r._id));
+          const entryUpdates = affectedEntries.map(r=> sb.from('cor_2307_entries').update({client_id_no: p.newId, updated_at: stamp.updated_at, updated_by: stamp.updated_by}).eq('id', r._id));
+          const results = await Promise.all([...salesUpdates, ...entryUpdates]);
+          results.forEach(res=>{ if(res && res.error){ console.error(res.error); failedCount++; } });
+          affectedSales.forEach(r=>{
+            logFieldAudit('cor_sales_summary_audit', 'record_id', r._id, 'client_id_no', 'Client ID', p.oldId, p.newId);
+            r.client_id_no = p.newId; r.updated_at = stamp.updated_at; r.updated_by = stamp.updated_by;
+          });
+          // The 2307 Register tab doesn't have field-level audit logging
+          // wired up for any of its edits (not just this one) -- so, same
+          // as everywhere else in that tab, this relink isn't logged there.
+          affectedEntries.forEach(r=>{
+            r.client_id_no = p.newId; r.updated_at = stamp.updated_at; r.updated_by = stamp.updated_by;
+          });
+        }
+      }
+      initRegistryFilters(); initReportFilters(); initSalesSummaryFilters(); initEntries2307Filters(); initReassignTool(); initTtReassignTool();
+      renderBranchRenumberTable();
+      const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
+      if(activeTab==='registry') renderRegistry();
+      if(activeTab==='sales') renderSalesSummary();
+      if(activeTab==='tax2307') renderEntries2307();
+      if(failedCount){
+        toast(`${failedCount} update(s) failed — please try again (some may already be updated; check the table above).`);
+      } else {
+        toast(`Done — ${plans.length} branch(es) renumbered.`);
+      }
+    } finally {
+      // Re-derive the button's disabled state from the current plan list
+      // (via renderBranchRenumberTable, already called above on success)
+      // rather than force-enabling it -- otherwise a successful run that
+      // left zero plans would still leave "Apply" clickable for nothing.
+      renderBranchRenumberTable();
+    }
+  });
+
   function openCredsModal(kind, id){
     const isNew = !id;
     const fields = kind==='accounts' ? CREDS_ACCOUNTS_FIELDS : CREDS_OST_FIELDS;
@@ -4662,6 +4818,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     initReportFilters();
     initReassignTool();
     initTtReassignTool();
+    renderBranchRenumberTable();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
@@ -4688,7 +4845,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const idx = salesSummary.findIndex(r=>r._id===mapped._id);
       if(idx>=0) salesSummary[idx] = mapped; else salesSummary.push(mapped);
     }
-    initSalesSummaryFilters(); initReassignTool(); initTtReassignTool();
+    initSalesSummaryFilters(); initReassignTool(); initTtReassignTool(); renderBranchRenumberTable();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
   function handleEntry2307Realtime(payload){
@@ -4734,7 +4891,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(idx>=0) clients[idx] = mapped; else clients.push(mapped);
       clientById[mapped._id] = mapped;
     }
-    initRegistryFilters(); initReportFilters();
+    initRegistryFilters(); initReportFilters(); renderBranchRenumberTable();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
