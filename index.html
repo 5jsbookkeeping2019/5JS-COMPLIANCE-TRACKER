@@ -260,7 +260,7 @@
   #cor-app .tag-list{display:flex;flex-wrap:wrap;gap:4px;}
   #cor-app .tag{font-family:'IBM Plex Mono',monospace;font-size:10px;background:var(--gold-soft);color:var(--gold);border-radius:10px;padding:2px 8px;}
   #cor-app .status-pill{font-family:'IBM Plex Mono',monospace;font-size:10.5px;border-radius:10px;padding:3px 9px;display:inline-block;white-space:nowrap;}
-  #cor-app .status-YES, #cor-app .status-ACTIVE, #cor-app .status-DONE{background:var(--forest-soft);color:var(--forest);}
+  #cor-app .status-YES, #cor-app .status-ACTIVE, #cor-app .status-DONE, #cor-app .status-FILING{background:var(--forest-soft);color:var(--forest);}
   #cor-app .status-NO, #cor-app .status-CLOSED, #cor-app .status-INACTIVE, #cor-app .status-FORCLOSURE{background:rgba(33,28,24,0.06);color:var(--ink-soft);}
   #cor-app .status-PENDING{background:var(--gold-soft);color:var(--gold);}
   #cor-app .status-OVERDUE{background:var(--stamp-soft);color:var(--critical);font-weight:600;}
@@ -464,6 +464,7 @@
             <option value="A">N/A (not applicable)</option>
           </select>
           <input class="search-input" id="tr-notes-filter" placeholder="Filter by notes (e.g. ZERO FILING)...">
+          <select class="filter" id="tr-client-status-filter"><option value="">All client statuses</option></select>
           <select class="filter" id="tr-payment-filter">
             <option value="">All (payment)</option>
             <option value="DUE_UNPAID">Has Tax Due, not yet given to liaison</option>
@@ -563,6 +564,7 @@
           <input class="search-input" id="sales-search" placeholder="Search client, TIN, trade name...">
           <select class="filter" id="sales-year-filter"><option value="">All years</option></select>
           <select class="filter" id="sales-taxtype-filter"><option value="">All tax types</option></select>
+          <select class="filter" id="sales-client-status-filter"><option value="">All client statuses</option></select>
           <select class="filter" id="sales-agent-filter"><option value="">All Sales Representatives</option></select>
           <select class="filter" id="sales-missing-filter"><option value="">Show all (no missing-field filter)</option></select>
           <button class="secondary" id="add-sales-year-btn">+ Add New Year</button>
@@ -571,7 +573,7 @@
           <span class="small-note" id="sales-count" style="margin:0;"></span>
         </div>
       </div>
-      <div class="small-note">Combined VAT and Non-VAT (NVAT) clients, per quarter — from the Sales Summary file. Edit any cell directly (same as Task Tracker) — saved automatically to the live database. Use the "Show all" dropdown to find who's still missing a value for a particular field (e.g. Q3 Sales) — this excludes actual "0" values (confirmed zero filing), blank only. There's no manual "Add client" here — the Client Registry is the source: every new client added there automatically gets its own row here (Client ID/Name/TIN/Trade Name already filled in), so the two always stay linked. When a new year starts, use "+ Add New Year" to build a fresh set of rows for every Active/For Closure/Annual Client that doesn't have an End of Service Date yet (i.e. still existing and not yet tagged as service-ended) — no need to do it one by one or wait for a new SQL script.</div>
+      <div class="small-note">Combined VAT and Non-VAT (NVAT) clients, per quarter — from the Sales Summary file. Edit any cell directly (same as Task Tracker) — saved automatically to the live database. Use the "Show all" dropdown to find who's still missing a value for a particular field (e.g. Q3 Sales) — this excludes actual "0" values (confirmed zero filing), blank only. There's no manual "Add client" here — the Client Registry is the source: every new client added there automatically gets its own row here (Client ID/Name/TIN/Trade Name already filled in), so the two always stay linked. When a new year starts, use "+ Add New Year" to build a fresh set of rows for every Active/0 Filing/For Closure/Annual Client that doesn't have an End of Service Date yet (i.e. still existing and not yet tagged as service-ended) — no need to do it one by one or wait for a new SQL script.</div>
       <datalist id="sales-client-id-options"></datalist>
       <div class="table-scroll" style="margin-top:10px;" id="sales-table"></div>
     </div>
@@ -1254,11 +1256,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const trPeriodFilter = document.getElementById('tr-period-filter');
   const trStatusFilter = document.getElementById('tr-status-filter');
   const trNotesFilter = document.getElementById('tr-notes-filter');
+  const trClientStatusFilter = document.getElementById('tr-client-status-filter');
   const trPaymentFilter = document.getElementById('tr-payment-filter');
   const trStageFilter = document.getElementById('tr-stage-filter');
   const trSortFilter = document.getElementById('tr-sort-filter');
   [trSearch, trNotesFilter].forEach(el=>el.addEventListener('input', renderTracker));
-  [trFormFilter, trPeriodFilter, trStatusFilter, trPaymentFilter, trStageFilter, trSortFilter].forEach(el=>el.addEventListener('change', renderTracker));
+  [trFormFilter, trPeriodFilter, trStatusFilter, trClientStatusFilter, trPaymentFilter, trStageFilter, trSortFilter].forEach(el=>el.addEventListener('change', renderTracker));
 
   // Rebuilding the <select> options (needed whenever the task list changes,
   // e.g. a live update from another staff member) used to always reset the
@@ -1273,6 +1276,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     trPeriodFilter.innerHTML = '<option value="">All periods</option>' + periods.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('');
     if(forms.includes(prevForm)) trFormFilter.value = prevForm;
     if(periods.includes(prevPeriod)) trPeriodFilter.value = prevPeriod;
+    // Client Status (CLIENT?) filter -- e.g. "0 FILING" or "FOR CLOSURE" --
+    // so staff can pull up just the tasks belonging to clients in one of
+    // those statuses (zero-filers, or clients winding down) instead of
+    // hunting for them one by one across every task.
+    const prevClientStatus = trClientStatusFilter.value;
+    const clientStatuses = Array.from(new Set(clients.map(c=>c['CLIENT?']).filter(Boolean))).sort();
+    trClientStatusFilter.innerHTML = '<option value="">All client statuses</option>' + clientStatuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    if(clientStatuses.includes(prevClientStatus)) trClientStatusFilter.value = prevClientStatus;
   }
 
   // Keep the Task Tracker's table filling all the way down to the bottom of
@@ -1290,6 +1301,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const q = (trSearch.value||'').toLowerCase();
     const nq = (trNotesFilter.value||'').toLowerCase();
     const ff = trFormFilter.value, pf = trPeriodFilter.value, sf = trStatusFilter.value;
+    const csf = trClientStatusFilter.value;
     const payf = trPaymentFilter.value;
     const stf = trStageFilter.value;
     let pool = tasks.filter(t=>{
@@ -1301,6 +1313,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       else if(sf==='Z' && t.status!=='ZERO') return false;
       else if(sf==='N' && !t.notes) return false;
       else if(sf==='A' && t.status!=='NA') return false;
+      if(csf && taskClient(t)['CLIENT?']!==csf) return false;
       if(payf==='DUE_UNPAID' && !(t.taxDue!==null && t.taxDue>0 && !t.paymentStatus)) return false;
       else if(payf==='LIAISON' && t.paymentStatus!=='GIVEN TO LIAISON') return false;
       else if(payf==='PAID' && t.paymentStatus!=='PAID') return false;
@@ -1926,6 +1939,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     ['CLIENT?','Client Status','','select',[
       ['','— Select —'],
       ['YES','Active (YES)'],
+      ['0 FILING','0 Filing (Active, zero transactions)'],
       ['NO','No Longer Client (NO)'],
       ['FOR CLOSURE','For Closure'],
       ['CLOSED','Closed'],
@@ -2797,11 +2811,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const salesSearch = document.getElementById('sales-search');
   const salesYearFilter = document.getElementById('sales-year-filter');
   const salesTaxTypeFilter = document.getElementById('sales-taxtype-filter');
+  const salesClientStatusFilter = document.getElementById('sales-client-status-filter');
   const salesAgentFilter = document.getElementById('sales-agent-filter');
   const salesMissingFilter = document.getElementById('sales-missing-filter');
   salesSearch.addEventListener('input', renderSalesSummary);
   salesYearFilter.addEventListener('change', renderSalesSummary);
   salesTaxTypeFilter.addEventListener('change', renderSalesSummary);
+  salesClientStatusFilter.addEventListener('change', renderSalesSummary);
   salesAgentFilter.addEventListener('change', renderSalesSummary);
   salesMissingFilter.addEventListener('change', renderSalesSummary);
 
@@ -2830,13 +2846,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // Idempotent -- checks local state first, so it's harmless if called
   // more than once for the same client+year.
   // Only for client statuses that actually still have filing obligations
-  // -- YES (Active, includes "zero filing" clients -- that's just an
-  // Active client with a note in Client Status Remarks, not a separate
-  // status), FOR CLOSURE (still files zero/final returns until actually
-  // closed), and ANNUAL CLIENT (usually just 1701/1702 once a year, but
-  // still needs a row). NOT for NO / CLOSED (genuinely no longer clients)
-  // or blank/NEW (no filing obligation confirmed yet).
-  const SALES_SUMMARY_AUTO_STATUSES = new Set(['YES', 'FOR CLOSURE', 'ANNUAL CLIENT']);
+  // -- YES (Active), 0 FILING (Active, just consistently zero amounts),
+  // FOR CLOSURE (still files zero/final returns until actually closed),
+  // and ANNUAL CLIENT (usually just 1701/1702 once a year, but still needs
+  // a row). NOT for NO / CLOSED (genuinely no longer clients) or
+  // blank/NEW (no filing obligation confirmed yet).
+  const SALES_SUMMARY_AUTO_STATUSES = new Set(['YES', '0 FILING', 'FOR CLOSURE', 'ANNUAL CLIENT']);
   // A client only qualifies for automatic Sales Summary rows while they're
   // both an active-ish status (see SALES_SUMMARY_AUTO_STATUSES) AND do not
   // yet have an End of Service Date set. Once End of Service Date is filled
@@ -2890,7 +2905,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const already = new Set(salesSummary.filter(s=>Number(s.year)===year).map(s=>s.client_id_no));
     const toInsert = eligible.filter(c => !already.has(c['CLIENT ID NO.']));
     if(!toInsert.length){ toast(`Nothing to add -- every qualifying client already has a row for ${year}.`); return; }
-    if(!confirm(`This will create ${toInsert.length} new Sales Summary row(s) for ${year} (Active/For Closure/Annual Client, no End of Service Date yet, no row yet for this year). Continue?`)) return;
+    if(!confirm(`This will create ${toInsert.length} new Sales Summary row(s) for ${year} (Active/0 Filing/For Closure/Annual Client, no End of Service Date yet, no row yet for this year). Continue?`)) return;
     btn.disabled = true;
     const rows = toInsert.map(c => ({
       client_id_no: c['CLIENT ID NO.'], year,
@@ -2922,6 +2937,15 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     salesTaxTypeFilter.innerHTML = '<option value="">All tax types</option>' + types.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
     if(types.includes(prevTax)) salesTaxTypeFilter.value = prevTax;
 
+    // Client Status (e.g. "0 FILING", "FOR CLOSURE") -- sourced from the
+    // Client Registry (CLIENT?), resolved per row via its Client ID, same
+    // as the Name/TIN/Trade Name auto-fill above. A row with no matching
+    // client (blank/unlinked Client ID) just won't match any status filter.
+    const prevClientStatus = salesClientStatusFilter.value;
+    const clientStatuses = Array.from(new Set(clients.map(c=>c['CLIENT?']).filter(Boolean))).sort();
+    salesClientStatusFilter.innerHTML = '<option value="">All client statuses</option>' + clientStatuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    if(clientStatuses.includes(prevClientStatus)) salesClientStatusFilter.value = prevClientStatus;
+
     const prevAgent = salesAgentFilter.value;
     const agents = Array.from(new Set(salesSummary.map(r=>r.agent).filter(Boolean))).sort();
     salesAgentFilter.innerHTML = '<option value="">All Sales Representatives</option>' + agents.map(a=>`<option value="${esc(a)}">${esc(a)}</option>`).join('');
@@ -2944,11 +2968,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const q = (salesSearch.value||'').toLowerCase();
     const yf = salesYearFilter.value;
     const tf = salesTaxTypeFilter.value;
+    const csf = salesClientStatusFilter.value;
     const af = salesAgentFilter.value;
     const mf = salesMissingFilter.value;
     let pool = salesSummary.filter(r=>{
       if(yf && String(r.year)!==yf) return false;
       if(tf && normalizeTaxType(r.tax_type) !== tf) return false;
+      if(csf){
+        const matched = r.client_id_no ? findClientByIdNo(r.client_id_no) : null;
+        if(!matched || matched['CLIENT?']!==csf) return false;
+      }
       if(af && r.agent !== af) return false;
       if(mf && !(r[mf]===null || r[mf]===undefined || r[mf]==='')) return false;
       if(q){
@@ -4891,7 +4920,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(idx>=0) clients[idx] = mapped; else clients.push(mapped);
       clientById[mapped._id] = mapped;
     }
-    initRegistryFilters(); initReportFilters(); renderBranchRenumberTable();
+    initRegistryFilters(); initReportFilters(); initTrackerFilters(); renderBranchRenumberTable();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
