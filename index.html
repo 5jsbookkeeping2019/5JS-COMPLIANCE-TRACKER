@@ -778,6 +778,44 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       return rec;
     });
   }
+  // Total Declared Sales / Total Expenses are always derived from the 4
+  // quarters -- never typed in directly -- so the total can't silently
+  // drift out of sync with (or be edited independently of) the actual
+  // quarterly figures it's supposed to represent. Mirrors computeMonthlyTotal
+  // in the 2307 Register: blank (not 0) when none of the 4 quarters have a
+  // value yet, so a brand-new row doesn't show a misleading zero; for a row
+  // created before this existed, falls back to whatever Total was already
+  // stored until the quarters are filled in.
+  function computeSalesQuarterSum(rec, field){
+    const raw = [rec['q1_'+field], rec['q2_'+field], rec['q3_'+field], rec['q4_'+field]];
+    const anySet = raw.some(v=> v!==null && v!==undefined && v!=='');
+    if(!anySet) return null;
+    const sum = raw.reduce((s,v)=>{ const n = Number(v); return s + (isFinite(n)?n:0); }, 0);
+    return Math.round(sum * 100) / 100;
+  }
+  // Percentage Tax (PT) Due auto-computes for Non-VAT clients only:
+  //  - Plain "Non-VAT" -> 3% of THAT quarter's declared Sales (blank, not
+  //    zero, until that quarter's Sales is filled in -- same "don't show a
+  //    misleading zero" rule as the other computed totals).
+  //  - "Non-VAT (8% Flat Rate)" -> always ₱0, every quarter, regardless of
+  //    Sales -- the 8% flat income tax rate option already stands in lieu
+  //    of percentage tax, so none is ever due.
+  // Returns `undefined` (not null/0) for every other Tax Type (VAT, Branch,
+  // Non-Profit Organization, or an unrecognized free-typed value) to mean
+  // "not auto-computed here" -- PT Due stays a normal, manually-typed field
+  // for those, exactly as before this feature.
+  function computePTTaxDue(rec, quarter){
+    const tt = normalizeTaxType(rec.tax_type);
+    if(tt === 'Non-VAT (8% Flat Rate)') return 0;
+    if(tt === 'Non-VAT'){
+      const sales = rec['q'+quarter+'_sales'];
+      if(sales===null || sales===undefined || sales==='') return null;
+      const n = Number(sales);
+      if(!isFinite(n)) return null;
+      return Math.round(n * 0.03 * 100) / 100;
+    }
+    return undefined;
+  }
 
   const STATUS_DISPLAY = {NA:'N/A'};
   function fmtPeso(n){
@@ -785,6 +823,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const num = Number(n);
     if(Number.isNaN(num)) return '';
     return '₱' + num.toLocaleString('en-PH', {minimumFractionDigits:0, maximumFractionDigits:2});
+  }
+  // Comma-grouped display for editable number cells (Sales Summary, etc.) --
+  // e.g. 1500000 -> "1,500,000" -- so large sales/expenses/tax-due figures
+  // are readable at a glance. Safe to use on an editable <input> because the
+  // save handlers already strip commas back out before parsing
+  // (val.replace(/,/g,'')) -- this only changes what's displayed, not what
+  // gets typed/parsed/saved.
+  function fmtNumInput(n){
+    if(n===null || n===undefined || n==='') return '';
+    const num = Number(n);
+    if(!isFinite(num)) return String(n);
+    return num.toLocaleString('en-PH', {maximumFractionDigits:2});
   }
 
   // ---------- DB <-> app object mapping ----------
@@ -1567,6 +1617,32 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   ];
   const LOB_CATEGORY_KEYS = ['LINE OF BUSINESS CATEGORY','LINE OF BUSINESS CATEGORY 2','LINE OF BUSINESS CATEGORY 3'];
 
+  // Single source of truth for Tax Type, in a sensible fixed order (not
+  // alphabetical) -- VAT / Non-VAT / Non-VAT 8% / Branch / Non-Profit.
+  // Reused by the Client edit modal's dropdown AND the Sales Summary tax
+  // type filter, so the filter lists these in a tidy, predictable order
+  // instead of whatever order the raw free-typed values happen to sort to.
+  const TAX_TYPE_OPTS = [
+    ['VAT','VAT'],
+    ['Non-VAT','Non-VAT'],
+    ['Non-VAT (8% Flat Rate)','Non-VAT — 8% Flat Income Tax Rate'],
+    ['Branch','Branch'],
+    ['Non-Profit Organization','Non-Profit Organization'],
+  ];
+  // Older/free-typed Sales Summary rows can have the same tax type stored
+  // with different spacing/capitalization ("VAT", "vat ", "Vat") -- which is
+  // exactly what made the tax type filter look like "a mess" (near-duplicate
+  // options that don't actually group together). This folds any case/
+  // whitespace variant of a known TAX_TYPE_OPTS value onto its canonical
+  // label for both the filter's option list and its matching, without
+  // silently rewriting the stored data itself.
+  function normalizeTaxType(raw){
+    const t = String(raw||'').trim();
+    if(!t) return '';
+    const hit = TAX_TYPE_OPTS.find(([v])=> v.toLowerCase() === t.toLowerCase());
+    return hit ? hit[0] : t;
+  }
+
   const CLIENT_FIELDS = [
     ['CLIENT ID NO.','Client ID No.',''],
     ['NAME','Client Name','full'], ['TRADE NAME','Trade Name',''],
@@ -1736,14 +1812,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // extra options kept because real existing data actually uses them
     // (13 clients on the 8% flat-rate option, 1 on Non-Profit) -- added so no
     // client's real classification gets silently dropped by the migration.
-    ['TAX TYPE','Tax Type','','select',[
-      ['','— Select —'],
-      ['VAT','VAT'],
-      ['Non-VAT','Non-VAT'],
-      ['Non-VAT (8% Flat Rate)','Non-VAT — 8% Flat Income Tax Rate'],
-      ['Branch','Branch'],
-      ['Non-Profit Organization','Non-Profit Organization'],
-    ]],
+    ['TAX TYPE','Tax Type','','select', [['','— Select —'], ...TAX_TYPE_OPTS]],
     // Registering Office -- separate from Tax Type (a branch can still be
     // VAT or Non-VAT). Kept as its own dropdown per the user's spec instead
     // of overloading the Tax Type field with "Branch".
@@ -2793,7 +2862,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
   function initSalesSummaryFilters(){
     const prevTax = salesTaxTypeFilter.value;
-    const types = Array.from(new Set(salesSummary.map(r=>r.tax_type).filter(Boolean))).sort();
+    // Normalize first (folds "VAT"/"vat "/"Vat" together) so the dropdown
+    // doesn't show the same tax type several times, then list in the fixed
+    // TAX_TYPE_OPTS order -- with any value that isn't one of the 5 known
+    // types (an old free-typed one-off) appended afterward, sorted, so it's
+    // still visible/selectable instead of silently disappearing.
+    const normalizedSet = new Set(salesSummary.map(r=>normalizeTaxType(r.tax_type)).filter(Boolean));
+    const known = TAX_TYPE_OPTS.map(([v])=>v).filter(v=>normalizedSet.has(v));
+    const knownSet = new Set(known);
+    const extras = Array.from(normalizedSet).filter(v=>!knownSet.has(v)).sort();
+    const types = [...known, ...extras];
     salesTaxTypeFilter.innerHTML = '<option value="">All tax types</option>' + types.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
     if(types.includes(prevTax)) salesTaxTypeFilter.value = prevTax;
 
@@ -2823,7 +2901,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const mf = salesMissingFilter.value;
     let pool = salesSummary.filter(r=>{
       if(yf && String(r.year)!==yf) return false;
-      if(tf && r.tax_type !== tf) return false;
+      if(tf && normalizeTaxType(r.tax_type) !== tf) return false;
       if(af && r.agent !== af) return false;
       if(mf && !(r[mf]===null || r[mf]===undefined || r[mf]==='')) return false;
       if(q){
@@ -2864,12 +2942,30 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // so it's locked here too. Use the Client Registry / "+ Add New Year" /
     // Settings instead.
     const ALWAYS_LOCKED_KEYS = new Set(['client_id_no','year','tax_type','birth_incorp_date','civil_status','agent']);
+    // Total Declared Sales / Total Expenses are always computed from the 4
+    // quarters (see computeSalesQuarterSum) -- never typed in directly --
+    // so the total can't be edited out of sync with the actual quarterly
+    // figures it's supposed to add up to.
+    const COMPUTED_KEYS = new Set(['total_sales','total_expenses']);
     const rows = pool.map(r=>{
       const matched = r.client_id_no ? findClientByIdNo(r.client_id_no) : null;
       const cells = SALES_SUMMARY_COLS.map(([key,,kind,opts])=>{
+        // q1_pt_tax_due .. q4_pt_tax_due auto-compute only for Non-VAT /
+        // Non-VAT (8% Flat Rate) clients -- see computePTTaxDue. `undefined`
+        // means "not applicable for this row's Tax Type", so it stays a
+        // normal editable field for VAT/Branch/Non-Profit rows.
+        const ptMatch = /^q([1-4])_pt_tax_due$/.exec(key);
+        const ptAutoVal = ptMatch ? computePTTaxDue(r, ptMatch[1]) : undefined;
+        const isPTAuto = ptAutoVal !== undefined;
         const isAutoFilled = matched && AUTO_FILLED_KEYS.includes(key);
-        const isLocked = isAutoFilled || ALWAYS_LOCKED_KEYS.has(key);
-        const val = isAutoFilled ? (key==='name'? matched.NAME : key==='tin'? matched.TIN : matched['TRADE NAME']) : r[key];
+        const isComputed = COMPUTED_KEYS.has(key) || isPTAuto;
+        const isLocked = isAutoFilled || isComputed || ALWAYS_LOCKED_KEYS.has(key);
+        const computedVal = key==='total_sales' ? computeSalesQuarterSum(r,'sales')
+          : key==='total_expenses' ? computeSalesQuarterSum(r,'expenses')
+          : isPTAuto ? ptAutoVal : null;
+        const val = isAutoFilled ? (key==='name'? matched.NAME : key==='tin'? matched.TIN : matched['TRADE NAME'])
+          : isComputed ? (computedVal!==null ? computedVal : (r[key]!=null ? r[key] : null))
+          : r[key];
         const frozen = SALES_FROZEN_KEYS.includes(key);
         const width = frozen ? SALES_FROZEN_WIDTHS[key] : (kind==='num' ? 90 : (kind==='select' ? 150 : (key==='tin' ? 110 : 130)));
         const tdStyle = frozen ? `left:${SALES_FROZEN_LEFT[key]}px;` : '';
@@ -2895,13 +2991,29 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         const listAttr = key==='client_id_no' ? ' list="sales-client-id-options"' : '';
         const lockReason = isAutoFilled
           ? 'Sourced from the Client Registry (Client ID: '+esc(r.client_id_no)+') — edit it there if it’s wrong.'
+          : isPTAuto
+          ? (ptAutoVal===0 ? 'Automatically ₱0 — the 8% Flat Income Tax Rate option already covers percentage tax, so none is due.' : "Computed automatically as 3% of this quarter's Sales (Non-VAT percentage tax) — edit Sales instead.")
+          : isComputed
+          ? 'Computed automatically from the 4 quarters above — edit Q1-Q4 instead.'
           : 'This field is locked in Sales Summary and cannot be edited here.';
         const roAttrs = isLocked ? ' readonly title="'+lockReason+'"' : '';
         const roStyle = isLocked ? 'background:var(--paper-line);color:var(--ink-soft);' : '';
-        return `<td class="${frozen?'frozen-col':''}" style="${tdStyle}"><input class="inline-text sales-cell${kind==='num'?' mono':''}" data-key="${esc(key)}"${listAttr}${roAttrs} style="width:${width}px;${roStyle}" value="${val!==null && val!==undefined ? esc(val) : ''}"></td>`;
+        // Sales/expenses/tax-due amounts get comma-grouped for readability
+        // (e.g. "1,500,000") -- safe on an editable field since the change
+        // handler already strips commas back out before parsing/saving.
+        // "Year" is also kind 'num' (for right-aligned styling) but isn't a
+        // money amount, so it's left as a plain 4-digit number.
+        const displayVal = (kind==='num' && key!=='year') ? fmtNumInput(val) : (val!==null && val!==undefined ? val : '');
+        return `<td class="${frozen?'frozen-col':''}" style="${tdStyle}"><input class="inline-text sales-cell${kind==='num'?' mono':''}" data-key="${esc(key)}"${listAttr}${roAttrs} style="width:${width}px;${roStyle}" value="${esc(displayVal)}"></td>`;
       }).join('');
       const editedTitle = r.updated_by ? `Last edited by ${r.updated_by} on ${fmtAuditWhen(r.updated_at)}` : '';
-      return `<tr data-id="${esc(r._id)}" title="${esc(editedTitle)}">${cells}<td><button class="tiny history-sales-btn" data-id="${esc(r._id)}">History</button></td><td><button class="tiny delete-sales-btn" data-id="${esc(r._id)}">Delete</button></td></tr>`;
+      // Deleting a Sales Summary row is admin-only, same restriction as
+      // removing a client from the Registry or a Sales Representative --
+      // staff can still edit the unlocked cells and everything is tracked
+      // in the audit trail (History button), but only an admin can make a
+      // row disappear entirely.
+      const deleteBtnHtml = isAdmin() ? `<button class="tiny delete-sales-btn" data-id="${esc(r._id)}">Delete</button>` : '';
+      return `<tr data-id="${esc(r._id)}" title="${esc(editedTitle)}">${cells}<td><button class="tiny history-sales-btn" data-id="${esc(r._id)}">History</button></td><td>${deleteBtnHtml}</td></tr>`;
     }).join('');
     document.getElementById('sales-table').innerHTML = `<table><thead><tr>${headRow}</tr></thead><tbody>${rows}</tbody></table>`;
     document.querySelectorAll('#sales-table tbody tr').forEach(tr=>{
@@ -2927,7 +3039,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
             val = val==='' ? null : val;
           }
           rec[key] = val;
-          e.target.value = val!==null && val!==undefined ? val : '';
+          e.target.value = (colDef[2]==='num' && key!=='year') ? fmtNumInput(val) : (val!==null && val!==undefined ? val : '');
           const patch = {[key]: val};
           if(key==='client_id_no'){
             // Re-resolve immediately: if the typed/picked ID matches a real
@@ -2941,12 +3053,54 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
               patch.name = rec.name; patch.tin = rec.tin; patch.trade_name = rec.trade_name;
             }
           }
+          // Whenever any of the 4 quarterly Sales (or Expenses) figures
+          // changes, recompute Total Declared Sales (or Total Expenses) from
+          // all 4 quarters and save/show that instead -- keeps the two
+          // totals permanently in sync with their quarters since they can
+          // no longer be typed in directly (see COMPUTED_KEYS above).
+          const computedAudits = []; // [{key, oldVal, newVal}] -- any derived fields this edit recomputed
+          const qSalesMatch = /^q([1-4])_sales$/.exec(key);
+          if(qSalesMatch){
+            const oldTotal = rec.total_sales;
+            const newTotal = computeSalesQuarterSum(rec, 'sales');
+            rec.total_sales = newTotal; patch.total_sales = newTotal;
+            const totalInput = tr.querySelector('.sales-cell[data-key="total_sales"]');
+            if(totalInput) totalInput.value = fmtNumInput(newTotal);
+            computedAudits.push({key:'total_sales', oldVal:oldTotal, newVal:newTotal});
+
+            // This quarter's Sales also feeds that same quarter's Percentage
+            // Tax Due for Non-VAT / Non-VAT (8% Flat Rate) clients -- see
+            // computePTTaxDue. Not applicable (undefined) for VAT/Branch/
+            // Non-Profit rows, so nothing changes there.
+            const ptKey = 'q'+qSalesMatch[1]+'_pt_tax_due';
+            const ptAutoVal = computePTTaxDue(rec, qSalesMatch[1]);
+            if(ptAutoVal !== undefined){
+              const oldPt = rec[ptKey];
+              rec[ptKey] = ptAutoVal; patch[ptKey] = ptAutoVal;
+              const ptInput = tr.querySelector('.sales-cell[data-key="'+ptKey+'"]');
+              if(ptInput) ptInput.value = fmtNumInput(ptAutoVal);
+              if(oldPt !== ptAutoVal) computedAudits.push({key:ptKey, oldVal:oldPt, newVal:ptAutoVal});
+            }
+          } else if(key==='q1_expenses' || key==='q2_expenses' || key==='q3_expenses' || key==='q4_expenses'){
+            const oldTotal = rec.total_expenses;
+            const newTotal = computeSalesQuarterSum(rec, 'expenses');
+            rec.total_expenses = newTotal; patch.total_expenses = newTotal;
+            const totalInput = tr.querySelector('.sales-cell[data-key="total_expenses"]');
+            if(totalInput) totalInput.value = fmtNumInput(newTotal);
+            computedAudits.push({key:'total_expenses', oldVal:oldTotal, newVal:newTotal});
+          }
           const stamp = { updated_at: new Date().toISOString(), updated_by: currentUserEmail };
           Object.assign(patch, stamp);
           rec.updated_at = stamp.updated_at; rec.updated_by = stamp.updated_by;
           const { error } = await sb.from('cor_sales_summary').update(patch).eq('id', id);
           if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
-          else logFieldAudit('cor_sales_summary_audit', 'record_id', id, key, colDef[1], oldVal, val);
+          else {
+            logFieldAudit('cor_sales_summary_audit', 'record_id', id, key, colDef[1], oldVal, val);
+            computedAudits.forEach(ca=>{
+              const computedLabel = SALES_SUMMARY_COLS.find(c=>c[0]===ca.key)[1];
+              logFieldAudit('cor_sales_summary_audit', 'record_id', id, ca.key, computedLabel, ca.oldVal, ca.newVal);
+            });
+          }
           if(key==='client_id_no') renderSalesSummary(); else tr.title = `Last edited by ${stamp.updated_by} on ${fmtAuditWhen(stamp.updated_at)}`;
         });
       });
@@ -2962,7 +3116,17 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       btn.addEventListener('click', async ()=>{
         const id = btn.dataset.id;
         const rec = salesSummary.find(x=>x._id===id);
-        if(!confirm(`Delete the row for "${rec? rec.name : ''}"? This cannot be undone.`)) return;
+        const label = `${rec? rec.name||'' : ''} (${rec? rec.year||'' : ''})`;
+        // A plain OK/Cancel confirm is one accidental click away from wiping
+        // a year of sales/expenses figures -- require typing the client's
+        // name back, same "type it to confirm" friction as other apps use
+        // for destructive actions, so this can't happen by reflex.
+        const typed = prompt(`This permanently deletes the Sales Summary row for ${label}. This cannot be undone.\n\nTo confirm, type the client's name exactly as shown below:\n${rec? rec.name||'' : ''}`);
+        if(typed === null) return;
+        if(typed.trim().toLowerCase() !== String(rec? rec.name||'' : '').trim().toLowerCase()){
+          toast('Name didn\'t match — delete cancelled, nothing was removed.');
+          return;
+        }
         btn.disabled = true;
         const { error } = await sb.from('cor_sales_summary').delete().eq('id', id);
         if(error){ console.error(error); toast('Delete failed — please try again.'); btn.disabled = false; return; }
