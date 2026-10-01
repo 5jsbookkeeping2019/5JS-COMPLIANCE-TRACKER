@@ -3682,7 +3682,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       while(parts.length < 4) parts.push('');
       return parts.slice(0,4).map(p=>`<td class="tinbox">${esc(p)}</td>`).join('');
     };
-    const period = quarterPartialDateRange(rec.period_year, rec.period_quarter, activeMonthsInGroup(group));
+    // The printed "Period" range is based ONLY on the entry being generated
+    // (rec) -- NOT activeMonthsInGroup(group). Part III below still lists
+    // every entry sharing this payor+payee+quarter+year as its own line
+    // (multiple ATC transactions legitimately go on one certificate), but
+    // if THIS entry only has e.g. Month 1 filled in, the Period shown stays
+    // narrowed to Month 1 even when a sibling entry for the same payee/
+    // quarter has Month 2/3 filled -- the period only widens to the full
+    // quarter when the entry being generated from itself has all 3 months
+    // filled in.
+    const period = quarterPartialDateRange(rec.period_year, rec.period_quarter, activeMonthsInGroup([rec]));
     const dateBoxes = (d) => {
       const [mm,dd,yyyy] = (d||'').split('/');
       return `<td class="datebox">${esc(mm||'')}</td><td class="datebox">${esc(dd||'')}</td><td class="datebox yr">${esc(yyyy||'')}</td>`;
