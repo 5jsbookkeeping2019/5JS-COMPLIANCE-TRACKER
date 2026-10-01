@@ -665,6 +665,16 @@
       </div>
       <div class="small-note" id="reassign-preview" style="margin-top:8px;"></div>
 
+      <h3 style="margin-top:30px;">Clean Up Tax Type Names</h3>
+      <div class="small-note">Finds Tax Type values recorded on Client Registry and Sales Summary that don't exactly match one of the 5 canonical Tax Types (VAT, Non-VAT, Non-VAT — 8% Flat Rate, Branch, Non-Profit Organization) — e.g. an old free-typed value, a typo, or different casing/spacing — so you can retitle them to the canonical one in one click. "To" is restricted to those 5 so the result is always clean. This also fixes every quarter's auto-computed Percentage Tax Due that depends on Tax Type (see the Sales Summary tab).</div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center;">
+        <select class="filter" id="taxtype-reassign-from-select" style="min-width:220px;"><option value="">— From (existing value) —</option></select>
+        <span style="color:var(--ink-soft);">→</span>
+        <select class="filter" id="taxtype-reassign-to-select" style="min-width:220px;"><option value="">— To (canonical Tax Type) —</option></select>
+        <button class="secondary" id="taxtype-reassign-apply-btn" disabled>Apply</button>
+      </div>
+      <div class="small-note" id="taxtype-reassign-preview" style="margin-top:8px;"></div>
+
       <h3 style="margin-top:30px;">Recent Credential Views</h3>
       <div class="small-note">Who revealed a stored password in the Credentials tab, and when — written automatically the moment "Show" is clicked; nothing here can be edited or deleted from within the app.</div>
       <div class="table-scroll" style="margin-top:12px;max-width:640px;" id="creds-access-log-table"></div>
@@ -1042,7 +1052,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(tab === 'tax2307') renderEntries2307();
     if(tab === 'sawt') renderSawt();
     if(tab === 'report') renderReport();
-    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); renderCredsAccessLog(); }
+    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); renderCredsAccessLog(); }
   }
 
   // Jumps to another tab programmatically (reuses the same click handler
@@ -4342,6 +4352,113 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
   });
 
+  /* ---------- "Clean Up Tax Type Names" bulk reassign (Settings tab) ----------
+     Same From -> To -> Apply pattern as Bulk Reassign Sales Representative
+     above, but "From" only ever lists raw Tax Type values that DON'T already
+     exactly match one of the 5 canonical TAX_TYPE_OPTS -- i.e. the genuinely
+     messy/free-typed ones worth cleaning up (an old import, a typo, different
+     casing/spacing) -- and "To" is restricted to those same 5 canonical
+     values, so a clean-up can only ever land on a clean name. Covers both
+     Client Registry (cor_clients.tax_type) and Sales Summary
+     (cor_sales_summary.tax_type); a Sales Summary row's Percentage Tax Due
+     for all 4 quarters is also recomputed under the new Tax Type (see
+     computePTTaxDue) so the cleanup doesn't leave stale PT figures behind. */
+  const ttReassignFromSelect = document.getElementById('taxtype-reassign-from-select');
+  const ttReassignToSelect = document.getElementById('taxtype-reassign-to-select');
+  const ttReassignApplyBtn = document.getElementById('taxtype-reassign-apply-btn');
+  const ttReassignPreviewEl = document.getElementById('taxtype-reassign-preview');
+  const TAX_TYPE_CANONICAL_SET = new Set(TAX_TYPE_OPTS.map(([v])=>v));
+
+  function ttReassignAffectedCounts(fromVal){
+    if(!fromVal) return {clientCount:0, salesCount:0};
+    const clientCount = clients.filter(c=>c['TAX TYPE']===fromVal).length;
+    const salesCount = salesSummary.filter(r=>r.tax_type===fromVal).length;
+    return {clientCount, salesCount};
+  }
+  function updateTtReassignPreview(){
+    const fromVal = ttReassignFromSelect.value;
+    const toVal = ttReassignToSelect.value;
+    if(!fromVal){ ttReassignPreviewEl.textContent = ''; ttReassignApplyBtn.disabled = true; return; }
+    const {clientCount, salesCount} = ttReassignAffectedCounts(fromVal);
+    ttReassignPreviewEl.textContent = `This will update ${clientCount} Client Registry entry(ies) and ${salesCount} Sales Summary row(s) from "${fromVal}" to "${toVal || '(pick a target above)'}".`;
+    ttReassignApplyBtn.disabled = !(fromVal && toVal && fromVal!==toVal && (clientCount+salesCount)>0);
+  }
+  ttReassignFromSelect.addEventListener('change', updateTtReassignPreview);
+  ttReassignToSelect.addEventListener('change', updateTtReassignPreview);
+
+  // Rebuilds both dropdowns (preserving the current picks where still
+  // valid) -- called on load, whenever Settings is shown, and whenever the
+  // underlying Client Registry / Sales Summary data changes (including via
+  // realtime updates from another staff member), so "From" always reflects
+  // what's actually messy in the data right now.
+  function initTtReassignTool(){
+    if(!ttReassignFromSelect) return;
+    const prevFrom = ttReassignFromSelect.value;
+    const fromValues = Array.from(new Set([
+      ...clients.map(c=>c['TAX TYPE']).filter(Boolean),
+      ...salesSummary.map(r=>r.tax_type).filter(Boolean),
+    ])).filter(v=>!TAX_TYPE_CANONICAL_SET.has(v)).sort((a,b)=>a.localeCompare(b));
+    ttReassignFromSelect.innerHTML = '<option value="">— From (existing value) —</option>' + fromValues.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    if(fromValues.includes(prevFrom)) ttReassignFromSelect.value = prevFrom;
+
+    const prevTo = ttReassignToSelect.value;
+    ttReassignToSelect.innerHTML = '<option value="">— To (canonical Tax Type) —</option>' + TAX_TYPE_OPTS.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join('');
+    if(TAX_TYPE_CANONICAL_SET.has(prevTo)) ttReassignToSelect.value = prevTo;
+    updateTtReassignPreview();
+  }
+
+  ttReassignApplyBtn.addEventListener('click', async ()=>{
+    const fromVal = ttReassignFromSelect.value, toVal = ttReassignToSelect.value;
+    if(!fromVal || !toVal || fromVal===toVal) return;
+    const {clientCount, salesCount} = ttReassignAffectedCounts(fromVal);
+    if(!confirm(`Clean up Tax Type "${fromVal}" → "${toVal}" across ${clientCount} Client Registry entry(ies) and ${salesCount} Sales Summary row(s)?\n\nThis also recomputes those Sales Summary rows' Percentage Tax Due (Q1-Q4) to match the new Tax Type. This cannot be undone automatically — you'd need to reverse it the same way.`)) return;
+    ttReassignApplyBtn.disabled = true;
+    const affectedClients = clients.filter(c=>c['TAX TYPE']===fromVal);
+    const affectedSales = salesSummary.filter(r=>r.tax_type===fromVal);
+    try{
+      const stamp = { updated_at: new Date().toISOString(), updated_by: currentUserEmail };
+      const clientUpdates = affectedClients.map(c=> sb.from('cor_clients').update({tax_type: toVal, updated_at: stamp.updated_at, updated_by: stamp.updated_by}).eq('id', c._id));
+      const salesUpdates = affectedSales.map(r=>{
+        const patch = {tax_type: toVal, updated_at: stamp.updated_at, updated_by: stamp.updated_by};
+        const tempRec = Object.assign({}, r, {tax_type: toVal});
+        for(let qn=1; qn<=4; qn++){
+          const ptKey = 'q'+qn+'_pt_tax_due';
+          const ptAutoVal = computePTTaxDue(tempRec, qn);
+          if(ptAutoVal !== undefined) patch[ptKey] = ptAutoVal;
+        }
+        return sb.from('cor_sales_summary').update(patch).eq('id', r._id);
+      });
+      const results = await Promise.all([...clientUpdates, ...salesUpdates]);
+      const failed = results.filter(r=>r && r.error);
+      affectedClients.forEach(c=>{
+        logFieldAudit('cor_clients_audit', 'client_id', c._id, 'TAX TYPE', 'Tax Type', fromVal, toVal);
+        c['TAX TYPE'] = toVal;
+      });
+      affectedSales.forEach(r=>{
+        logFieldAudit('cor_sales_summary_audit', 'record_id', r._id, 'tax_type', 'Tax Type', fromVal, toVal);
+        r.tax_type = toVal; r.updated_at = stamp.updated_at; r.updated_by = stamp.updated_by;
+        for(let qn=1; qn<=4; qn++){
+          const ptKey = 'q'+qn+'_pt_tax_due';
+          const ptAutoVal = computePTTaxDue(r, qn);
+          if(ptAutoVal !== undefined) r[ptKey] = ptAutoVal;
+        }
+      });
+      initRegistryFilters(); initReportFilters(); initSalesSummaryFilters();
+      const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
+      if(activeTab==='registry') renderRegistry();
+      if(activeTab==='sales') renderSalesSummary();
+      if(failed.length){
+        console.error(failed.map(f=>f.error));
+        toast(`${failed.length} row(s) failed to update — please try again (some rows may already be updated; check the "From" list above).`);
+      } else {
+        toast(`Done — ${clientCount} Client Registry entry(ies) and ${salesCount} Sales Summary row(s) cleaned up to "${toVal}".`);
+      }
+    } finally {
+      ttReassignApplyBtn.disabled = false;
+      initTtReassignTool();
+    }
+  });
+
   function openCredsModal(kind, id){
     const isNew = !id;
     const fields = kind==='accounts' ? CREDS_ACCOUNTS_FIELDS : CREDS_OST_FIELDS;
@@ -4544,6 +4661,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     initSawtFilters();
     initReportFilters();
     initReassignTool();
+    initTtReassignTool();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
@@ -4570,7 +4688,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const idx = salesSummary.findIndex(r=>r._id===mapped._id);
       if(idx>=0) salesSummary[idx] = mapped; else salesSummary.push(mapped);
     }
-    initSalesSummaryFilters(); initReassignTool();
+    initSalesSummaryFilters(); initReassignTool(); initTtReassignTool();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
   function handleEntry2307Realtime(payload){
