@@ -748,13 +748,44 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     salesReps.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(r=>SALES_REP_OPTS.push([r.name, r.name]));
   }
 
+  // Single source of truth for Tax Type, in a sensible fixed order (not
+  // alphabetical) -- VAT / Non-VAT / Non-VAT 8% / Branch / Non-Profit.
+  // Reused by the Client edit modal's dropdown, the Sales Summary tax type
+  // filter, AND the editable Tax Type column in the Sales Summary table
+  // itself, so all three list these in the same tidy, predictable order
+  // instead of whatever order the raw free-typed values happen to sort to.
+  const TAX_TYPE_OPTS = [
+    ['VAT','VAT'],
+    ['Non-VAT','Non-VAT'],
+    ['Non-VAT (8% Flat Rate)','Non-VAT — 8% Flat Income Tax Rate'],
+    ['Branch','Branch'],
+    ['Non-Profit Organization','Non-Profit Organization'],
+  ];
+  // Older/free-typed Sales Summary rows can have the same tax type stored
+  // with different spacing/capitalization ("VAT", "vat ", "Vat") -- which is
+  // exactly what made the tax type filter look like "a mess" (near-duplicate
+  // options that don't actually group together). This folds any case/
+  // whitespace variant of a known TAX_TYPE_OPTS value onto its canonical
+  // label for both the filter's option list and its matching, without
+  // silently rewriting the stored data itself.
+  function normalizeTaxType(raw){
+    const t = String(raw||'').trim();
+    if(!t) return '';
+    const hit = TAX_TYPE_OPTS.find(([v])=> v.toLowerCase() === t.toLowerCase());
+    return hit ? hit[0] : t;
+  }
+  // Same options, with a blank "— Select —" placeholder up front, for the
+  // editable Tax Type dropdown in the Sales Summary tab (the Client modal
+  // builds its own copy of this inline -- see CLIENT_FIELDS below).
+  const SALES_TAX_TYPE_SELECT_OPTS = [['','— Select —'], ...TAX_TYPE_OPTS];
+
   // cor_sales_summary columns, in display order: [db_col, header_label, kind, opts?]
   // kind 'num' -> right-aligned/peso-formatted, 'text' -> left-aligned as-is,
   // 'select' -> dropdown sourced from opts (array ref, e.g. SALES_REP_OPTS).
   const SALES_SUMMARY_COLS = [
     ['client_id_no','Client ID','text'],
     ['year','Year','num'], ['name','Client','text'], ['tin','TIN','text'], ['trade_name','Trade Name','text'],
-    ['tax_type','Tax Type','text'], ['tax_option','Tax Option','text'], ['mq','M/Q','text'],
+    ['tax_type','Tax Type','select',SALES_TAX_TYPE_SELECT_OPTS], ['tax_option','Tax Option','text'], ['mq','M/Q','text'],
     ['pf','PF','num'], ['agent','Sales Representative','select',SALES_REP_OPTS], ['birth_incorp_date','Birthday/Incorp.','text'],
     ['civil_status','Civil Stat','text'], ['rental_tax_compensation','Rental Tax / Comp.','text'],
     ['q1_sales','Q1 Sales','num'], ['q1_expenses','Q1 Expenses','num'], ['q1_pt_tax_due','Q1 PT Due','num'],
@@ -1616,32 +1647,6 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     ['Other','Other'],
   ];
   const LOB_CATEGORY_KEYS = ['LINE OF BUSINESS CATEGORY','LINE OF BUSINESS CATEGORY 2','LINE OF BUSINESS CATEGORY 3'];
-
-  // Single source of truth for Tax Type, in a sensible fixed order (not
-  // alphabetical) -- VAT / Non-VAT / Non-VAT 8% / Branch / Non-Profit.
-  // Reused by the Client edit modal's dropdown AND the Sales Summary tax
-  // type filter, so the filter lists these in a tidy, predictable order
-  // instead of whatever order the raw free-typed values happen to sort to.
-  const TAX_TYPE_OPTS = [
-    ['VAT','VAT'],
-    ['Non-VAT','Non-VAT'],
-    ['Non-VAT (8% Flat Rate)','Non-VAT — 8% Flat Income Tax Rate'],
-    ['Branch','Branch'],
-    ['Non-Profit Organization','Non-Profit Organization'],
-  ];
-  // Older/free-typed Sales Summary rows can have the same tax type stored
-  // with different spacing/capitalization ("VAT", "vat ", "Vat") -- which is
-  // exactly what made the tax type filter look like "a mess" (near-duplicate
-  // options that don't actually group together). This folds any case/
-  // whitespace variant of a known TAX_TYPE_OPTS value onto its canonical
-  // label for both the filter's option list and its matching, without
-  // silently rewriting the stored data itself.
-  function normalizeTaxType(raw){
-    const t = String(raw||'').trim();
-    if(!t) return '';
-    const hit = TAX_TYPE_OPTS.find(([v])=> v.toLowerCase() === t.toLowerCase());
-    return hit ? hit[0] : t;
-  }
 
   const CLIENT_FIELDS = [
     ['CLIENT ID NO.','Client ID No.',''],
@@ -2935,13 +2940,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // These columns are locked (read-only) regardless of Client ID match:
     // Client ID and Year identify which client/year the row belongs to, so
     // editing them in place would risk silently reassigning or duplicating
-    // a row -- Tax Type, Birthday/Incorp. and Civil Stat are reference data
-    // that shouldn't drift from row to row by accidental inline edits, and
-    // Sales Representative is set once per client in the Client Registry
-    // (that's the single source of truth for "who brought in this client")
-    // so it's locked here too. Use the Client Registry / "+ Add New Year" /
-    // Settings instead.
-    const ALWAYS_LOCKED_KEYS = new Set(['client_id_no','year','tax_type','birth_incorp_date','civil_status','agent']);
+    // a row -- Birthday/Incorp. and Civil Stat are reference data that
+    // shouldn't drift from row to row by accidental inline edits, and Sales
+    // Representative is set once per client in the Client Registry (that's
+    // the single source of truth for "who brought in this client") so it's
+    // locked here too. Use the Client Registry / "+ Add New Year" / Settings
+    // instead. Tax Type is NOT in this list -- it's editable directly below,
+    // via its own dropdown, since PT Due (see computePTTaxDue) depends on it
+    // per-row and staff need to be able to fix it without a trip to the
+    // Client Registry.
+    const ALWAYS_LOCKED_KEYS = new Set(['client_id_no','year','birth_incorp_date','civil_status','agent']);
     // Total Declared Sales / Total Expenses are always computed from the 4
     // quarters (see computeSalesQuarterSum) -- never typed in directly --
     // so the total can't be edited out of sync with the actual quarterly
@@ -3088,6 +3096,25 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
             const totalInput = tr.querySelector('.sales-cell[data-key="total_expenses"]');
             if(totalInput) totalInput.value = fmtNumInput(newTotal);
             computedAudits.push({key:'total_expenses', oldVal:oldTotal, newVal:newTotal});
+          } else if(key==='tax_type'){
+            // Changing Tax Type can flip whether (and how) each quarter's
+            // Percentage Tax Due auto-computes -- e.g. switching a client
+            // from VAT to Non-VAT should immediately start deriving PT Due
+            // as 3% of Sales instead of leaving whatever was last typed in.
+            // Recompute all 4 quarters now so nothing is left showing a
+            // stale value (or a stale locked/unlocked state) until some
+            // unrelated field happens to be edited. The full re-render this
+            // triggers below (see renderSalesSummary() call) is what
+            // actually flips each cell's locked/editable appearance.
+            for(let qn=1; qn<=4; qn++){
+              const ptKey = 'q'+qn+'_pt_tax_due';
+              const ptAutoVal = computePTTaxDue(rec, qn);
+              if(ptAutoVal !== undefined && rec[ptKey] !== ptAutoVal){
+                const oldPt = rec[ptKey];
+                rec[ptKey] = ptAutoVal; patch[ptKey] = ptAutoVal;
+                computedAudits.push({key:ptKey, oldVal:oldPt, newVal:ptAutoVal});
+              }
+            }
           }
           const stamp = { updated_at: new Date().toISOString(), updated_by: currentUserEmail };
           Object.assign(patch, stamp);
@@ -3101,7 +3128,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
               logFieldAudit('cor_sales_summary_audit', 'record_id', id, ca.key, computedLabel, ca.oldVal, ca.newVal);
             });
           }
-          if(key==='client_id_no') renderSalesSummary(); else tr.title = `Last edited by ${stamp.updated_by} on ${fmtAuditWhen(stamp.updated_at)}`;
+          if(key==='client_id_no' || key==='tax_type') renderSalesSummary(); else tr.title = `Last edited by ${stamp.updated_by} on ${fmtAuditWhen(stamp.updated_at)}`;
         });
       });
     });
