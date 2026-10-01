@@ -799,12 +799,32 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // builds its own copy of this inline -- see CLIENT_FIELDS below).
   const SALES_TAX_TYPE_SELECT_OPTS = [['','— Select —'], ...TAX_TYPE_OPTS];
 
+  // Single source of truth for Client Status (the "CLIENT?" field) -- same
+  // idea as TAX_TYPE_OPTS above. Reused by the Client edit modal's dropdown
+  // AND the Sales Summary tab's own editable "Client Status" column/filter,
+  // so both always offer the exact same set of statuses.
+  const CLIENT_STATUS_OPTS = [
+    ['YES','Active (YES)'],
+    ['0 FILING','0 Filing (Active, zero transactions)'],
+    ['NO','No Longer Client (NO)'],
+    ['FOR CLOSURE','For Closure'],
+    ['CLOSED','Closed'],
+    ['ANNUAL CLIENT','Annual Client Only'],
+    ['NEW','New Client'],
+  ];
+  const SALES_CLIENT_STATUS_SELECT_OPTS = [['','— Select —'], ...CLIENT_STATUS_OPTS];
+
   // cor_sales_summary columns, in display order: [db_col, header_label, kind, opts?]
   // kind 'num' -> right-aligned/peso-formatted, 'text' -> left-aligned as-is,
   // 'select' -> dropdown sourced from opts (array ref, e.g. SALES_REP_OPTS).
   const SALES_SUMMARY_COLS = [
     ['client_id_no','Client ID','text'],
     ['year','Year','num'], ['name','Client','text'], ['tin','TIN','text'], ['trade_name','Trade Name','text'],
+    // Its own editable copy, same as Tax Type below -- pre-filled from the
+    // Client Registry when the row is created, but independently editable
+    // here afterward (does NOT push changes back to the Registry, and a
+    // later Registry change doesn't silently override it here either).
+    ['client_status','Client Status','select',SALES_CLIENT_STATUS_SELECT_OPTS],
     ['tax_type','Tax Type','select',SALES_TAX_TYPE_SELECT_OPTS], ['tax_option','Tax Option','text'], ['mq','M/Q','text'],
     ['pf','PF','num'], ['agent','Sales Representative','select',SALES_REP_OPTS], ['birth_incorp_date','Birthday/Incorp.','text'],
     ['civil_status','Civil Stat','text'], ['rental_tax_compensation','Rental Tax / Comp.','text'],
@@ -1672,6 +1692,20 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return clients.find(c => String(c['CLIENT ID NO.']||'').trim().toUpperCase() === needle) || null;
   }
 
+  // Sales Summary's "Client Status" column is its own independently-editable
+  // copy (see SALES_SUMMARY_COLS) -- but rows created before that column
+  // existed (or before cor_sales_summary_client_status_migration.sql's
+  // backfill reaches them) have it blank. Rather than showing those rows as
+  // blank/unfiltered, fall back to the matched Client Registry's current
+  // status for DISPLAY and FILTERING only -- this is never written back to
+  // the row; the moment someone actually edits the dropdown and it saves,
+  // r.client_status becomes set and this fallback stops applying to that row.
+  function resolveSalesClientStatus(r){
+    if(r.client_status) return r.client_status;
+    const m = r.client_id_no ? findClientByIdNo(r.client_id_no) : null;
+    return (m && m['CLIENT?']) || '';
+  }
+
   // Shared option list for every Line of Business Category slot (see
   // CLIENT_FIELDS below) -- kept as one constant so all slots + the cascade
   // logic in wireFormsGridCascade always stay in sync.
@@ -1936,16 +1970,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // Name/TIN/Trade Name/Tax Type already do).
     ['SALES REPRESENTATIVE','Sales Representative','','select',SALES_REP_OPTS],
     ['EMAIL','Email',''], ['CONTACT PERSON','Contact Person',''], ['CONTACT NO','Contact No.',''],
-    ['CLIENT?','Client Status','','select',[
-      ['','— Select —'],
-      ['YES','Active (YES)'],
-      ['0 FILING','0 Filing (Active, zero transactions)'],
-      ['NO','No Longer Client (NO)'],
-      ['FOR CLOSURE','For Closure'],
-      ['CLOSED','Closed'],
-      ['ANNUAL CLIENT','Annual Client Only'],
-      ['NEW','New Client'],
-    ]],
+    ['CLIENT?','Client Status','','select', SALES_CLIENT_STATUS_SELECT_OPTS],
     ['CLIENT STATUS REMARKS','Client Status Remarks / Notes','full'],
   ];
 
@@ -2830,8 +2855,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
   // The first 4 columns (Year, Client, TIN, Trade Name) stay pinned on
   // screen while the rest of the (very wide) table scrolls horizontally.
-  const SALES_FROZEN_KEYS = ['client_id_no','year','name','tin','trade_name'];
-  const SALES_FROZEN_WIDTHS = {client_id_no:95, year:60, name:150, tin:120, trade_name:150};
+  const SALES_FROZEN_KEYS = ['client_id_no','year','name','tin','trade_name','client_status'];
+  const SALES_FROZEN_WIDTHS = {client_id_no:95, year:60, name:150, tin:120, trade_name:150, client_status:110};
   const SALES_FROZEN_LEFT = {};
   (function(){
     let acc = 0;
@@ -2874,6 +2899,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       client_id_no: rec['CLIENT ID NO.'],
       year, name: rec.NAME || null, tin: rec.TIN || null,
       trade_name: rec['TRADE NAME'] || null, tax_type: rec['TAX TYPE'] || null,
+      client_status: rec['CLIENT?'] || null,
       agent: rec['SALES REPRESENTATIVE'] || null,
     };
     const { data, error } = await sb.from('cor_sales_summary').insert(insertRow).select().single();
@@ -2910,7 +2936,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const rows = toInsert.map(c => ({
       client_id_no: c['CLIENT ID NO.'], year,
       name: c.NAME || null, tin: c.TIN || null, trade_name: c['TRADE NAME'] || null,
-      tax_type: c['TAX TYPE'] || null, agent: c['SALES REPRESENTATIVE'] || null,
+      tax_type: c['TAX TYPE'] || null, client_status: c['CLIENT?'] || null,
+      agent: c['SALES REPRESENTATIVE'] || null,
     }));
     const { data, error } = await sb.from('cor_sales_summary').insert(rows).select();
     btn.disabled = false;
@@ -2937,12 +2964,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     salesTaxTypeFilter.innerHTML = '<option value="">All tax types</option>' + types.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
     if(types.includes(prevTax)) salesTaxTypeFilter.value = prevTax;
 
-    // Client Status (e.g. "0 FILING", "FOR CLOSURE") -- sourced from the
-    // Client Registry (CLIENT?), resolved per row via its Client ID, same
-    // as the Name/TIN/Trade Name auto-fill above. A row with no matching
-    // client (blank/unlinked Client ID) just won't match any status filter.
+    // Client Status (e.g. "0 FILING", "FOR CLOSURE") -- its own editable
+    // column on the Sales Summary row itself (see SALES_SUMMARY_COLS). Rows
+    // that already have their own client_status use that; rows that don't
+    // yet (not backfilled, or created before this column existed) fall back
+    // to the matched Client Registry status via resolveSalesClientStatus, so
+    // the filter still works for older rows -- in the same canonical order,
+    // with any stray/legacy value appended afterward instead of hidden.
     const prevClientStatus = salesClientStatusFilter.value;
-    const clientStatuses = Array.from(new Set(clients.map(c=>c['CLIENT?']).filter(Boolean))).sort();
+    const csKnownSet = new Set(salesSummary.map(r=>resolveSalesClientStatus(r)).filter(Boolean));
+    const csKnown = CLIENT_STATUS_OPTS.map(([v])=>v).filter(v=>csKnownSet.has(v));
+    const csExtras = Array.from(csKnownSet).filter(v=>!CLIENT_STATUS_OPTS.some(([kv])=>kv===v)).sort();
+    const clientStatuses = [...csKnown, ...csExtras];
     salesClientStatusFilter.innerHTML = '<option value="">All client statuses</option>' + clientStatuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
     if(clientStatuses.includes(prevClientStatus)) salesClientStatusFilter.value = prevClientStatus;
 
@@ -2974,10 +3007,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     let pool = salesSummary.filter(r=>{
       if(yf && String(r.year)!==yf) return false;
       if(tf && normalizeTaxType(r.tax_type) !== tf) return false;
-      if(csf){
-        const matched = r.client_id_no ? findClientByIdNo(r.client_id_no) : null;
-        if(!matched || matched['CLIENT?']!==csf) return false;
-      }
+      if(csf && resolveSalesClientStatus(r) !== csf) return false;
       if(af && r.agent !== af) return false;
       if(mf && !(r[mf]===null || r[mf]===undefined || r[mf]==='')) return false;
       if(q){
@@ -3016,10 +3046,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // Representative is set once per client in the Client Registry (that's
     // the single source of truth for "who brought in this client") so it's
     // locked here too. Use the Client Registry / "+ Add New Year" / Settings
-    // instead. Tax Type is NOT in this list -- it's editable directly below,
-    // via its own dropdown, since PT Due (see computePTTaxDue) depends on it
-    // per-row and staff need to be able to fix it without a trip to the
-    // Client Registry.
+    // instead. Tax Type and Client Status are NOT in this list -- both are
+    // editable directly below via their own dropdowns (Tax Type because PT
+    // Due, see computePTTaxDue, depends on it per-row; Client Status so
+    // staff can flag e.g. "0 FILING"/"FOR CLOSURE" right here) without a
+    // trip to the Client Registry -- see SALES_SUMMARY_COLS for how each
+    // starts out pre-filled from the Registry but is independently editable
+    // afterward.
     const ALWAYS_LOCKED_KEYS = new Set(['client_id_no','year','birth_incorp_date','civil_status','agent']);
     // Total Declared Sales / Total Expenses are always computed from the 4
     // quarters (see computeSalesQuarterSum) -- never typed in directly --
@@ -3044,6 +3077,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           : isPTAuto ? ptAutoVal : null;
         const val = isAutoFilled ? (key==='name'? matched.NAME : key==='tin'? matched.TIN : matched['TRADE NAME'])
           : isComputed ? (computedVal!==null ? computedVal : (r[key]!=null ? r[key] : null))
+          : key==='client_status' ? resolveSalesClientStatus(r)
           : r[key];
         const frozen = SALES_FROZEN_KEYS.includes(key);
         const width = frozen ? SALES_FROZEN_WIDTHS[key] : (kind==='num' ? 90 : (kind==='select' ? 150 : (key==='tin' ? 110 : 130)));
@@ -3200,6 +3234,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
             });
           }
           if(key==='client_id_no' || key==='tax_type') renderSalesSummary(); else tr.title = `Last edited by ${stamp.updated_by} on ${fmtAuditWhen(stamp.updated_at)}`;
+          // Keep the Tax Type / Client Status filter dropdowns in sync with
+          // whatever's actually on the rows right now -- otherwise typing in
+          // a status/type that's new to this table wouldn't show up as a
+          // filter option until some unrelated full refresh happened to run.
+          if(key==='tax_type' || key==='client_status') initSalesSummaryFilters();
         });
       });
     });
