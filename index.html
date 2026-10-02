@@ -697,12 +697,17 @@
       <div class="small-note" id="branch-renumber-unresolved" style="margin-top:8px;"></div>
 
       <h3 style="margin-top:30px;">Relink Unlinked Sales Summary Rows</h3>
-      <div class="small-note">Finds Sales Summary rows whose Client ID is blank, or doesn't match any current Client Registry entry — e.g. a row created before a Client ID was assigned, or one left behind after a Registry rename — and matches them to a Registry client by exact Client Name, so Name/TIN/Trade Name go back to being sourced live from the Registry instead of showing whatever (possibly outdated or mistyped) text was stored directly on the row. Only exact, unambiguous name matches are offered here for one-click relinking; anything else is listed below as needing a manual Client ID instead.</div>
+      <div class="small-note">Finds Sales Summary rows whose Client ID is blank, or doesn't match any current Client Registry entry — e.g. a row created before a Client ID was assigned, or one left behind after a Registry rename — and matches them to a Registry client by exact Client Name, so Name/TIN/Trade Name go back to being sourced live from the Registry instead of showing whatever (possibly outdated or mistyped) text was stored directly on the row. When a Head Office and its Branch(es) share the same Name (the usual case — same legal business, different TIN branch-code suffix), the row's TIN is used to pick the right one between them; if that still can't narrow it to exactly one, it's left for manual review instead of guessing. Anything else unmatched or still ambiguous is listed below as needing a manual Client ID instead.</div>
       <div class="table-scroll" style="margin-top:12px;max-width:760px;" id="sales-relink-table"></div>
       <div style="margin-top:10px;">
         <button class="secondary" id="sales-relink-apply-btn" disabled>Relink Matched Rows</button>
       </div>
       <div class="small-note" id="sales-relink-unresolved" style="margin-top:8px;"></div>
+
+      <h3 style="margin-top:30px;">Branch Tag vs. Client Registry Audit</h3>
+      <div class="small-note">"Branch" on a Sales Summary row's Tax Type or Tax Option is just a free label on that row — it's a completely separate thing from the Client Registry's own "Registering Office" + "Main Client ID" fields, which is what the Branch Client ID Numbering tool above actually reads to assign a 5JS-0001-B1-style Client ID. The two don't talk to each other, so it's easy for them to drift apart. This lists every Sales Summary row tagged Branch (Tax Type and/or Tax Option) whose Client Registry entry ISN'T set up to match — Registering Office isn't Branch, Main Client ID is blank, or the Client ID hasn't been renumbered yet — read-only, for manual review (fix each one in the Client Registry or Settings tools above, whichever is actually correct for that client).</div>
+      <div class="table-scroll" style="margin-top:12px;max-width:900px;" id="branch-audit-table"></div>
+      <div class="small-note" id="branch-audit-summary" style="margin-top:8px;"></div>
 
       <h3 style="margin-top:30px;">Recent Credential Views</h3>
       <div class="small-note">Who revealed a stored password in the Credentials tab, and when — written automatically the moment "Show" is clicked; nothing here can be edited or deleted from within the app.</div>
@@ -1186,7 +1191,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(tab === 'tax2307') renderEntries2307();
     if(tab === 'sawt') renderSawt();
     if(tab === 'report') renderReport();
-    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderCredsAccessLog(); }
+    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderCredsAccessLog(); }
   }
 
   // Jumps to another tab programmatically (reuses the same click handler
@@ -4893,7 +4898,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         }
       }
       initRegistryFilters(); initReportFilters(); initSalesSummaryFilters(); initEntries2307Filters(); initReassignTool(); initTtReassignTool(); initToReassignTool();
-      renderBranchRenumberTable(); renderSalesRelinkTable();
+      renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable();
       const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
       if(activeTab==='registry') renderRegistry();
       if(activeTab==='sales') renderSalesSummary();
@@ -4924,11 +4929,24 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
      what surfaced this: a 2026 row showing a Client Name that matched the
      Registry but a TIN that didn't, with the Client ID column blank).
      This tool finds every such row, matches it to a Registry client by
-     EXACT Client Name only (never TIN, since TIN is specifically the field
-     that's untrustworthy on these rows), and offers a one-click relink.
-     Ambiguous (multiple clients share that name) or unmatched rows are
-     listed separately as needing a manual Client ID instead of being
-     guessed at. */
+     EXACT Client Name first (never TIN as the PRIMARY signal, since TIN is
+     specifically the field that's untrustworthy on these rows), and offers
+     a one-click relink. Ambiguous (multiple clients share that name) or
+     unmatched rows are listed separately as needing a manual Client ID
+     instead of being guessed at.
+       A Head Office and its Branch(es) almost always share the exact same
+     legal business Name (that's the whole point of a branch -- same
+     company, different TIN branch-code suffix/RDO/address; see the "ZMM
+     KIDS MANDARIN CLUB" real example that surfaced this), so Name alone
+     is ambiguous between them every time. For THAT specific case, TIN is
+     used as a secondary tiebreaker -- but only to narrow an already
+     Name-matched candidate set down to exactly one, never as the primary
+     match: if the row's TIN doesn't uniquely pick one of the same-named
+     candidates (no match, or still 2+), it falls back to "ambiguous" the
+     same as before, so a wrong/stale TIN can only fail to narrow -- it can
+     never mislink the row onto some unrelated client outside that
+     same-name set. */
+  function tinDigitsOnly(raw){ return String(raw||'').replace(/\D/g,''); }
   function planSalesRelink(){
     const plans = [], unresolved = [];
     salesSummary.forEach(r=>{
@@ -4937,9 +4955,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const nameNeedle = String(r.name||'').trim();
       if(!nameNeedle){ unresolved.push({row:r, reason:'No Client ID and no Client Name on this row to match by.'}); return; }
       const needleUpper = nameNeedle.toUpperCase();
-      const matches = clients.filter(c=> String(c.NAME||'').trim().toUpperCase() === needleUpper);
+      let matches = clients.filter(c=> String(c.NAME||'').trim().toUpperCase() === needleUpper);
       if(matches.length === 0){ unresolved.push({row:r, reason:`No Client Registry entry named "${nameNeedle}".`}); return; }
-      if(matches.length > 1){ unresolved.push({row:r, reason:`${matches.length} Client Registry entries are named "${nameNeedle}" -- ambiguous.`}); return; }
+      if(matches.length > 1){
+        const tinDigits = tinDigitsOnly(r.tin);
+        const tinNarrowed = tinDigits ? matches.filter(c=> tinDigitsOnly(c.TIN) === tinDigits) : [];
+        if(tinNarrowed.length === 1){
+          matches = tinNarrowed; // uniquely narrowed by TIN among the same-named candidates (e.g. Head Office vs. Branch)
+        } else {
+          unresolved.push({row:r, reason:`${matches.length} Client Registry entries are named "${nameNeedle}" -- ambiguous${tinDigits ? ' (this row\'s TIN doesn\'t uniquely match one of them either)' : ''}.`});
+          return;
+        }
+      }
       const matched = matches[0];
       const newId = String(matched['CLIENT ID NO.']||'').trim();
       if(!newId){ unresolved.push({row:r, reason:`"${nameNeedle}" matches a Registry entry that has no Client ID assigned yet.`}); return; }
@@ -5004,6 +5031,72 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       renderSalesRelinkTable();
     }
   });
+
+  /* ---------- "Branch Tag vs. Client Registry Audit" (Settings tab) ----------
+     Read-only, no Apply button -- unlike Branch Client ID Numbering above,
+     there's no single correct auto-fix here (a mismatch could mean the
+     Sales Summary tag is wrong, OR the Client Registry isn't set up yet,
+     and only staff know which). Finds every Sales Summary row tagged
+     Branch on Tax Type and/or Tax Option (see TAX_TYPE_OPTS/TAX_OPTION_OPTS
+     -- both have their own independent "Branch" value, neither of which
+     reads or writes the Client Registry's "Registering Office"/"Main
+     Client ID" fields that the renumbering tool above actually depends on)
+     and checks whether its linked Client Registry entry is consistently
+     set up as a branch too:
+       1. Client ID doesn't resolve to a Registry entry at all.
+       2. Registry entry's Registering Office isn't "Branch".
+       3. Registering Office is "Branch" but Main Client ID is blank.
+       4. Both are set, but the Client ID hasn't actually been renumbered
+          to "<Main Client ID>-B<n>" yet (run Branch Client ID Numbering
+          above to fix this one). */
+  function auditBranchTags(){
+    const issues = [];
+    salesSummary.forEach(r=>{
+      const tt = normalizeTaxType(r.tax_type);
+      const opt = normalizeTaxOption(r.tax_option);
+      if(tt !== 'Branch' && opt !== 'Branch') return; // not tagged Branch at all -- nothing to audit
+      const idVal = String(r.client_id_no||'').trim();
+      const taggedVia = [tt==='Branch'?'Tax Type':null, opt==='Branch'?'Tax Option':null].filter(Boolean).join(' + ');
+      const client = idVal ? findClientByIdNo(idVal) : null;
+      if(!client){
+        issues.push({row:r, taggedVia, reason: idVal ? `Client ID "${idVal}" doesn't match any current Client Registry entry.` : 'No Client ID on this row at all.', regOffice:'', mainId:''});
+        return;
+      }
+      const regOffice = String(client['REGISTERING OFFICE']||'').trim();
+      const mainId = String(client['MAIN CLIENT ID']||'').trim();
+      if(regOffice !== 'Branch'){
+        issues.push({row:r, taggedVia, reason: `Client Registry's Registering Office is ${regOffice ? `"${regOffice}"` : '(blank)'}, not Branch.`, regOffice, mainId});
+        return;
+      }
+      if(!mainId){
+        issues.push({row:r, taggedVia, reason: 'Registering Office is Branch, but Main Client ID is blank in the Client Registry.', regOffice, mainId});
+        return;
+      }
+      if(!new RegExp('^'+escapeRegex(mainId)+'-B\\d+$','i').test(idVal)){
+        issues.push({row:r, taggedVia, reason: `Registering Office + Main Client ID are set, but Client ID "${idVal}" hasn't been renumbered to "${mainId}-B<n>" yet -- run Branch Client ID Numbering above.`, regOffice, mainId});
+        return;
+      }
+      // Fully consistent -- not an issue, not included.
+    });
+    return issues;
+  }
+
+  function renderBranchAuditTable(){
+    const area = document.getElementById('branch-audit-table');
+    const summaryEl = document.getElementById('branch-audit-summary');
+    if(!area) return;
+    const issues = auditBranchTags();
+    const taggedCount = salesSummary.filter(r=> normalizeTaxType(r.tax_type)==='Branch' || normalizeTaxOption(r.tax_option)==='Branch').length;
+    if(!issues.length){
+      area.innerHTML = taggedCount
+        ? `<div class="small-note">All ${taggedCount} Branch-tagged Sales Summary row(s) match a consistently-set-up Client Registry entry — nothing to review.</div>`
+        : `<div class="small-note">No Sales Summary rows are currently tagged Branch (Tax Type or Tax Option).</div>`;
+    } else {
+      const rows = issues.map(it=>`<tr><td class="mono">${esc(it.row.client_id_no||'(blank)')}</td><td>${esc(it.row.name||'')}</td><td>${esc(it.row.year||'')}</td><td>${esc(it.taggedVia)}</td><td>${esc(it.regOffice||'—')}</td><td>${esc(it.mainId||'—')}</td><td>${esc(it.reason)}</td></tr>`).join('');
+      area.innerHTML = `<table><thead><tr><th>Client ID</th><th>Client</th><th>Year</th><th>Tagged Branch via</th><th>Registering Office</th><th>Main Client ID</th><th>Issue</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+    summaryEl.textContent = issues.length ? `${issues.length} of ${taggedCount} Branch-tagged row(s) need a manual look.` : '';
+  }
 
   function openCredsModal(kind, id){
     const isNew = !id;
@@ -5211,6 +5304,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     initToReassignTool();
     renderBranchRenumberTable();
     renderSalesRelinkTable();
+    renderBranchAuditTable();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
@@ -5237,7 +5331,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const idx = salesSummary.findIndex(r=>r._id===mapped._id);
       if(idx>=0) salesSummary[idx] = mapped; else salesSummary.push(mapped);
     }
-    initSalesSummaryFilters(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable();
+    initSalesSummaryFilters(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
   function handleEntry2307Realtime(payload){
@@ -5283,7 +5377,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(idx>=0) clients[idx] = mapped; else clients.push(mapped);
       clientById[mapped._id] = mapped;
     }
-    initRegistryFilters(); initReportFilters(); initTrackerFilters(); renderBranchRenumberTable(); renderSalesRelinkTable();
+    initRegistryFilters(); initReportFilters(); initTrackerFilters(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
