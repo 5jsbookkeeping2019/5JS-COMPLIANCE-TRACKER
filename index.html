@@ -679,7 +679,7 @@
       <div class="small-note" id="taxtype-reassign-preview" style="margin-top:8px;"></div>
 
       <h3 style="margin-top:30px;">Clean Up Tax Option Names</h3>
-      <div class="small-note">Finds Tax Option values recorded on Sales Summary that don't exactly match one of the 5 canonical Tax Options (8%, Itemized, OSD, BMBE, Branch) — e.g. an old free-typed value, a typo, or different casing/spacing — so you can retitle them to the canonical one in one click. "To" is restricted to those 5 so the result is always clean. This also fixes every quarter's auto-computed Percentage Tax Due that depends on Tax Option for plain Non-VAT clients (see the Sales Summary tab).</div>
+      <div class="small-note">Finds Tax Option values recorded on Sales Summary that don't exactly match one of the 8 canonical Tax Options (8%, Itemized, OSD, BMBE, Branch, Mixed Income - 8%, Mixed Income - Itemized, Mixed Income - OSD) — e.g. an old free-typed value, a typo, or different casing/spacing — so you can retitle them to the canonical one in one click. "To" is restricted to those 8 so the result is always clean. This also fixes every quarter's auto-computed Percentage Tax Due that depends on Tax Option for plain Non-VAT clients (see the Sales Summary tab).</div>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center;">
         <select class="filter" id="taxoption-reassign-from-select" style="min-width:220px;"><option value="">— From (existing value) —</option></select>
         <span style="color:var(--ink-soft);">→</span>
@@ -847,18 +847,31 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // client who really did elect 8%). Only "8%" zeroes out PT Due below --
   // Itemized and OSD are both still Graduated-rate elections, so a plain
   // Non-VAT client on either one is still liable for the normal 3% PT.
-  // BMBE and Branch were added afterward as two more row-level
-  // classifications staff need to flag the same way (a BMBE-registered
-  // enterprise under RA 9178, or a row that's really a branch of another
-  // client) -- neither currently changes the PT Due math below (they fall
+  // BMBE, Branch, and Mixed Income Earner were added afterward as more
+  // row-level classifications staff need to flag the same way (a
+  // BMBE-registered enterprise under RA 9178, a row that's really a branch
+  // of another client, or a client who earns both compensation income AND
+  // business/professional income -- the latter isn't mutually exclusive
+  // with VAT/Non-VAT the way Tax Type's own options are, so it lives here
+  // as a flag rather than in TAX_TYPE_OPTS). A Mixed Income Earner still
+  // has to elect 8%/Itemized/OSD for the business/profession-income portion
+  // just like a plain Non-VAT client does -- it's not a 4th alternative to
+  // those three -- so it's modeled as 3 combined options below (not a bare
+  // "Mixed Income") the same way Non-VAT's own Itemized vs. OSD split is
+  // modeled, rather than as a separate yes/no flag next to this dropdown.
+  // BMBE/Branch don't currently change the PT Due math below (they fall
   // through to the same 3%-of-Sales branch as Itemized/OSD/blank); flag
-  // here if that should zero out PT Due the way "8%" does.
+  // here if either should zero out or otherwise change PT Due the way
+  // "8%" (and "Mixed Income - 8%", see computePTTaxDue) does.
   const TAX_OPTION_OPTS = [
     ['8%','8% Flat Income Tax Rate'],
     ['Itemized','Graduated Rates — Itemized Deductions'],
     ['OSD','Graduated Rates — Optional Standard Deduction (OSD)'],
     ['BMBE','BMBE (Barangay Micro Business Enterprise)'],
     ['Branch','Branch'],
+    ['Mixed Income - 8%','Mixed Income Earner — 8% Flat Rate (business/profession income)'],
+    ['Mixed Income - Itemized','Mixed Income Earner — Graduated Rates, Itemized Deductions'],
+    ['Mixed Income - OSD','Mixed Income Earner — Graduated Rates, Optional Standard Deduction (OSD)'],
   ];
   const SALES_TAX_OPTION_SELECT_OPTS = [['','— Select —'], ...TAX_OPTION_OPTS];
   // Same "fold case/whitespace variants onto the canonical value" treatment
@@ -939,21 +952,30 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   //    just tick the 8% option on their 1701Q while staying registered as
   //    plain "Non-VAT" -- so this has to be checked independently of Tax
   //    Type, not folded into it.
+  //  - Plain "Non-VAT" Tax Type with Tax Option "Mixed Income - 8%" -> also
+  //    always ₱0, same reasoning as plain "8%" above -- a Mixed Income
+  //    Earner who elects the 8% flat rate for their business/profession
+  //    income gets the same in-lieu-of-percentage-tax treatment for that
+  //    income, it's just additionally on top of separately-taxed
+  //    compensation income (which never runs through this Sales Summary
+  //    PT Due column at all).
   //  - Plain "Non-VAT" with Tax Option "Itemized", "OSD", "BMBE", "Branch",
-  //    or blank -> 3% of THAT quarter's declared Sales (blank, not zero,
-  //    until that quarter's Sales is filled in -- same "don't show a
-  //    misleading zero" rule as the other computed totals). BMBE/Branch
-  //    are flagging-only for now -- say if either should zero out PT Due
-  //    the way "8%" does instead.
+  //    "Mixed Income - Itemized", "Mixed Income - OSD", or blank -> 3% of
+  //    THAT quarter's declared Sales (blank, not zero, until that
+  //    quarter's Sales is filled in -- same "don't show a misleading zero"
+  //    rule as the other computed totals). BMBE/Branch are flagging-only
+  //    for now -- say if either should zero out or otherwise change PT Due
+  //    the way "8%"/"Mixed Income - 8%" does.
   // Returns `undefined` (not null/0) for every other Tax Type (VAT, Branch,
   // Non-Profit Organization, or an unrecognized free-typed value) to mean
   // "not auto-computed here" -- PT Due stays a normal, manually-typed field
   // for those, exactly as before this feature.
+  const ZERO_PT_TAX_OPTIONS = new Set(['8%','Mixed Income - 8%']);
   function computePTTaxDue(rec, quarter){
     const tt = normalizeTaxType(rec.tax_type);
     const opt = normalizeTaxOption(rec.tax_option);
     if(tt === 'Non-VAT (8% Flat Rate)') return 0;
-    if(tt === 'Non-VAT' && opt === '8%') return 0;
+    if(tt === 'Non-VAT' && ZERO_PT_TAX_OPTIONS.has(opt)) return 0;
     if(tt === 'Non-VAT'){
       const sales = rec['q'+quarter+'_sales'];
       if(sales===null || sales===undefined || sales==='') return null;
@@ -4672,9 +4694,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
      Option doesn't exist on the Client Registry at all (see TAX_OPTION_OPTS
      above: it's a per-year election, not a permanent client trait). "From"
      only ever lists raw Tax Option values that DON'T already exactly match
-     one of the 5 canonical TAX_OPTION_OPTS (8%, Itemized, OSD, BMBE, Branch)
-     -- i.e. the genuinely messy/free-typed ones worth cleaning up -- and
-     "To" is restricted to those same 5 canonical values. A row's Percentage Tax Due
+     one of the 8 canonical TAX_OPTION_OPTS (8%, Itemized, OSD, BMBE, Branch,
+     Mixed Income - 8%, Mixed Income - Itemized, Mixed Income - OSD) -- i.e.
+     the genuinely messy/free-typed ones worth cleaning up -- and "To" is
+     restricted to those same 8 canonical values. A row's Percentage Tax Due
      for all 4 quarters is also recomputed under the new Tax Option (see
      computePTTaxDue) so the cleanup doesn't leave a stale PT figure behind
      for anyone who gets reassigned onto/off of "8%". */
