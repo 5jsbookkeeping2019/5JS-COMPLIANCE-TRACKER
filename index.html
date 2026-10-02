@@ -702,7 +702,7 @@
       <div style="margin-top:10px;">
         <button class="secondary" id="sales-relink-apply-btn" disabled>Relink Matched Rows</button>
       </div>
-      <div class="small-note" id="sales-relink-unresolved" style="margin-top:8px;"></div>
+      <div id="sales-relink-unresolved" style="margin-top:8px;"></div>
 
       <h3 style="margin-top:30px;">Branch Tag vs. Client Registry Audit</h3>
       <div class="small-note">"Branch" on a Sales Summary row's Tax Type or Tax Option is just a free label on that row — it's a completely separate thing from the Client Registry's own "Registering Office" + "Main Client ID" fields, which is what the Branch Client ID Numbering tool above actually reads to assign a 5JS-0001-B1-style Client ID. The two don't talk to each other, so it's easy for them to drift apart. This lists every Sales Summary row tagged Branch (Tax Type and/or Tax Option) whose Client Registry entry ISN'T set up to match — Registering Office isn't Branch, Main Client ID is blank, or the Client ID hasn't been renumbered yet — read-only, for manual review (fix each one in the Client Registry or Settings tools above, whichever is actually correct for that client).</div>
@@ -5003,9 +5003,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       area.innerHTML = `<table><thead><tr><th>Client</th><th>Year</th><th>Current ID</th><th>New ID</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
     applyBtn.disabled = !plans.length;
-    unresolvedEl.textContent = unresolved.length
-      ? `${unresolved.length} Sales Summary row(s) couldn't be auto-matched — fix these manually (pick the right Client ID directly on the Sales Summary row): ${unresolved.map(u=>`${u.row.name||'(no name)'} ${u.row.year} — ${u.reason}`).join(' | ')}`
-      : '';
+    // A real-world run of this can easily hit 300+ unresolved rows (every
+    // Sales Summary row from before the Client Registry existed in its
+    // current form has no match at all, which is expected, not a bug) --
+    // one giant run-on paragraph of "|"-joined entries was unreadable at
+    // that size, so this renders as its own scrollable table (same
+    // table-scroll pattern as the plan table above) instead of plain text.
+    if(!unresolved.length){
+      unresolvedEl.innerHTML = '';
+    } else {
+      const uRows = unresolved.map(u=>`<tr><td>${esc(u.row.name||'(no name)')}</td><td>${esc(u.row.year)}</td><td>${esc(u.reason)}</td></tr>`).join('');
+      unresolvedEl.innerHTML = `<div class="small-note" style="margin-bottom:8px;">${unresolved.length} Sales Summary row(s) couldn't be auto-matched — fix these manually (pick the right Client ID directly on the Sales Summary row):</div><div class="table-scroll" style="max-width:1200px;max-height:420px;"><table><thead><tr><th style="min-width:200px;">Client</th><th>Year</th><th style="min-width:400px;">Reason</th></tr></thead><tbody>${uRows}</tbody></table></div>`;
+    }
   }
 
   document.getElementById('sales-relink-apply-btn').addEventListener('click', async ()=>{
