@@ -678,6 +678,16 @@
       </div>
       <div class="small-note" id="taxtype-reassign-preview" style="margin-top:8px;"></div>
 
+      <h3 style="margin-top:30px;">Clean Up Tax Option Names</h3>
+      <div class="small-note">Finds Tax Option values recorded on Sales Summary that don't exactly match one of the 3 canonical Tax Options (8%, Itemized, OSD) — e.g. an old free-typed value, a typo, or different casing/spacing — so you can retitle them to the canonical one in one click. "To" is restricted to those 3 so the result is always clean. This also fixes every quarter's auto-computed Percentage Tax Due that depends on Tax Option for plain Non-VAT clients (see the Sales Summary tab).</div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center;">
+        <select class="filter" id="taxoption-reassign-from-select" style="min-width:220px;"><option value="">— From (existing value) —</option></select>
+        <span style="color:var(--ink-soft);">→</span>
+        <select class="filter" id="taxoption-reassign-to-select" style="min-width:220px;"><option value="">— To (canonical Tax Option) —</option></select>
+        <button class="secondary" id="taxoption-reassign-apply-btn" disabled>Apply</button>
+      </div>
+      <div class="small-note" id="taxoption-reassign-preview" style="margin-top:8px;"></div>
+
       <h3 style="margin-top:30px;">Branch Client ID Numbering</h3>
       <div class="small-note">For a client with "Registering Office" = Branch, set its "Main Client ID" to its Main/Head Office client's Client ID No. (in the Client modal, below Registering Office) — this list then auto-fills with every branch that isn't yet numbered off its Main, so you can assign it a clean ID like 5JS-0001-B1, 5JS-0001-B2 in one click instead of an unrelated standalone ID. A rename here also updates that branch's existing Sales Summary rows and 2307 Register entries so nothing gets orphaned.</div>
       <div class="table-scroll" style="margin-top:12px;max-width:760px;" id="branch-renumber-table"></div>
@@ -685,6 +695,14 @@
         <button class="secondary" id="branch-renumber-apply-btn" disabled>Apply Branch ID Numbering</button>
       </div>
       <div class="small-note" id="branch-renumber-unresolved" style="margin-top:8px;"></div>
+
+      <h3 style="margin-top:30px;">Relink Unlinked Sales Summary Rows</h3>
+      <div class="small-note">Finds Sales Summary rows whose Client ID is blank, or doesn't match any current Client Registry entry — e.g. a row created before a Client ID was assigned, or one left behind after a Registry rename — and matches them to a Registry client by exact Client Name, so Name/TIN/Trade Name go back to being sourced live from the Registry instead of showing whatever (possibly outdated or mistyped) text was stored directly on the row. Only exact, unambiguous name matches are offered here for one-click relinking; anything else is listed below as needing a manual Client ID instead.</div>
+      <div class="table-scroll" style="margin-top:12px;max-width:760px;" id="sales-relink-table"></div>
+      <div style="margin-top:10px;">
+        <button class="secondary" id="sales-relink-apply-btn" disabled>Relink Matched Rows</button>
+      </div>
+      <div class="small-note" id="sales-relink-unresolved" style="margin-top:8px;"></div>
 
       <h3 style="margin-top:30px;">Recent Credential Views</h3>
       <div class="small-note">Who revealed a stored password in the Credentials tab, and when — written automatically the moment "Show" is clicked; nothing here can be edited or deleted from within the app.</div>
@@ -816,24 +834,29 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const SALES_CLIENT_STATUS_SELECT_OPTS = [['','— Select —'], ...CLIENT_STATUS_OPTS];
 
   // Single source of truth for "Tax Option" -- the annual election a
-  // Non-VAT individual/professional makes on BIR Form 1701Q/1701 between
-  // the 8% flat income tax rate and the regular Graduated rates. This is a
-  // PER YEAR election (not a permanent trait of the client the way Tax
-  // Type mostly is), which is exactly why it already lives only on the
-  // Sales Summary row and not in the Client Registry. Was previously a
-  // plain free-typed text field -- turned into a canonical dropdown now
-  // that computePTTaxDue below actually depends on reading it reliably
-  // (can't risk a free-typed "8", "eight percent", "8% po" etc. silently
-  // failing to zero out PT Due for a client who really did elect 8%).
+  // Non-VAT individual/professional makes on BIR Form 1701Q/1701: either
+  // the 8% flat income tax rate, or the regular Graduated rates computed
+  // using one of the two allowed deduction methods, Itemized Deductions or
+  // the Optional Standard Deduction (OSD). This is a PER YEAR election (not
+  // a permanent trait of the client the way Tax Type mostly is), which is
+  // exactly why it already lives only on the Sales Summary row and not in
+  // the Client Registry. Was previously a plain free-typed text field --
+  // turned into a canonical dropdown now that computePTTaxDue below
+  // actually depends on reading it reliably (can't risk a free-typed "8",
+  // "eight percent", "8% po" etc. silently failing to zero out PT Due for a
+  // client who really did elect 8%). Only "8%" zeroes out PT Due below --
+  // Itemized and OSD are both still Graduated-rate elections, so a plain
+  // Non-VAT client on either one is still liable for the normal 3% PT.
   const TAX_OPTION_OPTS = [
     ['8%','8% Flat Income Tax Rate'],
-    ['Graduated','Graduated Income Tax Rates'],
+    ['Itemized','Graduated Rates — Itemized Deductions'],
+    ['OSD','Graduated Rates — Optional Standard Deduction (OSD)'],
   ];
   const SALES_TAX_OPTION_SELECT_OPTS = [['','— Select —'], ...TAX_OPTION_OPTS];
   // Same "fold case/whitespace variants onto the canonical value" treatment
-  // as normalizeTaxType -- an older row that already has "8%" or "Graduated"
-  // typed in some other casing/spacing still matches correctly instead of
-  // silently falling through to "not elected 8%".
+  // as normalizeTaxType -- an older row that already has "8%", "Itemized",
+  // or "OSD" typed in some other casing/spacing still matches correctly
+  // instead of silently falling through to "not elected 8%".
   function normalizeTaxOption(raw){
     const t = String(raw||'').trim();
     if(!t) return '';
@@ -900,7 +923,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   //    regardless of Sales -- the 8% flat income tax rate already stands
   //    in lieu of percentage tax, so none is ever due.
   //  - Plain "Non-VAT" Tax Type whose Tax Option for THIS taxable year
-  //    (row-level, since the 8%-vs-Graduated election is an annual one,
+  //    (row-level, since the 8%/Itemized/OSD election is an annual one,
   //    not a permanent trait of the client -- see TAX_OPTION_OPTS) is "8%"
   //    -> also always ₱0, for the same reason as above. A Non-VAT client
   //    doesn't have to formally change their registered Tax Type to
@@ -908,8 +931,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   //    just tick the 8% option on their 1701Q while staying registered as
   //    plain "Non-VAT" -- so this has to be checked independently of Tax
   //    Type, not folded into it.
-  //  - Plain "Non-VAT" with any other (or no) Tax Option -> 3% of THAT
-  //    quarter's declared Sales (blank, not zero, until that quarter's
+  //  - Plain "Non-VAT" with Tax Option "Itemized", "OSD", or blank -> 3% of
+  //    THAT quarter's declared Sales (blank, not zero, until that quarter's
   //    Sales is filled in -- same "don't show a misleading zero" rule as
   //    the other computed totals).
   // Returns `undefined` (not null/0) for every other Tax Type (VAT, Branch,
@@ -1131,7 +1154,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(tab === 'tax2307') renderEntries2307();
     if(tab === 'sawt') renderSawt();
     if(tab === 'report') renderReport();
-    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); renderBranchRenumberTable(); renderCredsAccessLog(); }
+    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderCredsAccessLog(); }
   }
 
   // Jumps to another tab programmatically (reuses the same click handler
@@ -3009,10 +3032,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     salesTaxTypeFilter.innerHTML = '<option value="">All tax types</option>' + types.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
     if(types.includes(prevTax)) salesTaxTypeFilter.value = prevTax;
 
-    // Tax Option (the annual 8%-vs-Graduated election, see TAX_OPTION_OPTS
-    // and computePTTaxDue) -- same normalize-then-canonical-order-then-
-    // extras treatment as Tax Type above, so "8%"/"8%  "/"8 %" etc. fold
-    // together instead of each showing up as its own filter option.
+    // Tax Option (the annual 8% / Itemized / OSD election, see
+    // TAX_OPTION_OPTS and computePTTaxDue) -- same normalize-then-
+    // canonical-order-then-extras treatment as Tax Type above, so "8%"/
+    // "8%  "/"8 %" etc. fold together instead of each showing up as its
+    // own filter option.
     const prevTaxOption = salesTaxOptionFilter.value;
     const toNormalizedSet = new Set(salesSummary.map(r=>normalizeTaxOption(r.tax_option)).filter(Boolean));
     const toKnown = TAX_OPTION_OPTS.map(([v])=>v).filter(v=>toNormalizedSet.has(v));
@@ -3295,8 +3319,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           }
           // tax_option also triggers a full re-render now -- PT Due (see
           // computePTTaxDue) depends on it for plain Non-VAT rows, so
-          // switching the election between 8% and Graduated needs the PT
-          // Due cells to immediately lock-to-₱0 or unlock back to editable.
+          // switching the election between 8%, Itemized, and OSD needs the
+          // PT Due cells to immediately lock-to-₱0 or unlock back to editable.
           if(key==='client_id_no' || key==='tax_type' || key==='tax_option') renderSalesSummary(); else tr.title = `Last edited by ${stamp.updated_by} on ${fmtAuditWhen(stamp.updated_at)}`;
           // Keep the Tax Type / Client Status filter dropdowns in sync with
           // whatever's actually on the rows right now -- otherwise typing in
@@ -4632,6 +4656,105 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
   });
 
+  /* ---------- "Clean Up Tax Option Names" bulk reassign (Settings tab) ----------
+     Same From -> To -> Apply pattern as Clean Up Tax Type Names above, but
+     scoped to Sales Summary only (cor_sales_summary.tax_option) -- Tax
+     Option doesn't exist on the Client Registry at all (see TAX_OPTION_OPTS
+     above: it's a per-year election, not a permanent client trait). "From"
+     only ever lists raw Tax Option values that DON'T already exactly match
+     one of the 3 canonical TAX_OPTION_OPTS (8%, Itemized, OSD) -- i.e. the
+     genuinely messy/free-typed ones worth cleaning up -- and "To" is
+     restricted to those same 3 canonical values. A row's Percentage Tax Due
+     for all 4 quarters is also recomputed under the new Tax Option (see
+     computePTTaxDue) so the cleanup doesn't leave a stale PT figure behind
+     for anyone who gets reassigned onto/off of "8%". */
+  const toReassignFromSelect = document.getElementById('taxoption-reassign-from-select');
+  const toReassignToSelect = document.getElementById('taxoption-reassign-to-select');
+  const toReassignApplyBtn = document.getElementById('taxoption-reassign-apply-btn');
+  const toReassignPreviewEl = document.getElementById('taxoption-reassign-preview');
+  const TAX_OPTION_CANONICAL_SET = new Set(TAX_OPTION_OPTS.map(([v])=>v));
+
+  function toReassignAffectedCounts(fromVal){
+    if(!fromVal) return {salesCount:0};
+    const salesCount = salesSummary.filter(r=>r.tax_option===fromVal).length;
+    return {salesCount};
+  }
+  function updateToReassignPreview(){
+    const fromVal = toReassignFromSelect.value;
+    const toVal = toReassignToSelect.value;
+    if(!fromVal){ toReassignPreviewEl.textContent = ''; toReassignApplyBtn.disabled = true; return; }
+    const {salesCount} = toReassignAffectedCounts(fromVal);
+    toReassignPreviewEl.textContent = `This will update ${salesCount} Sales Summary row(s) from "${fromVal}" to "${toVal || '(pick a target above)'}".`;
+    toReassignApplyBtn.disabled = !(fromVal && toVal && fromVal!==toVal && salesCount>0);
+  }
+  toReassignFromSelect.addEventListener('change', updateToReassignPreview);
+  toReassignToSelect.addEventListener('change', updateToReassignPreview);
+
+  // Rebuilds both dropdowns (preserving the current picks where still
+  // valid) -- called on load, whenever Settings is shown, and whenever
+  // Sales Summary data changes (including via realtime updates from
+  // another staff member), so "From" always reflects what's actually
+  // messy in the data right now.
+  function initToReassignTool(){
+    if(!toReassignFromSelect) return;
+    const prevFrom = toReassignFromSelect.value;
+    const fromValues = Array.from(new Set(
+      salesSummary.map(r=>r.tax_option).filter(Boolean)
+    )).filter(v=>!TAX_OPTION_CANONICAL_SET.has(v)).sort((a,b)=>a.localeCompare(b));
+    toReassignFromSelect.innerHTML = '<option value="">— From (existing value) —</option>' + fromValues.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    if(fromValues.includes(prevFrom)) toReassignFromSelect.value = prevFrom;
+
+    const prevTo = toReassignToSelect.value;
+    toReassignToSelect.innerHTML = '<option value="">— To (canonical Tax Option) —</option>' + TAX_OPTION_OPTS.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join('');
+    if(TAX_OPTION_CANONICAL_SET.has(prevTo)) toReassignToSelect.value = prevTo;
+    updateToReassignPreview();
+  }
+
+  toReassignApplyBtn.addEventListener('click', async ()=>{
+    const fromVal = toReassignFromSelect.value, toVal = toReassignToSelect.value;
+    if(!fromVal || !toVal || fromVal===toVal) return;
+    const {salesCount} = toReassignAffectedCounts(fromVal);
+    if(!confirm(`Clean up Tax Option "${fromVal}" → "${toVal}" across ${salesCount} Sales Summary row(s)?\n\nThis also recomputes those rows' Percentage Tax Due (Q1-Q4) to match the new Tax Option. This cannot be undone automatically — you'd need to reverse it the same way.`)) return;
+    toReassignApplyBtn.disabled = true;
+    const affectedSales = salesSummary.filter(r=>r.tax_option===fromVal);
+    try{
+      const stamp = { updated_at: new Date().toISOString(), updated_by: currentUserEmail };
+      const salesUpdates = affectedSales.map(r=>{
+        const patch = {tax_option: toVal, updated_at: stamp.updated_at, updated_by: stamp.updated_by};
+        const tempRec = Object.assign({}, r, {tax_option: toVal});
+        for(let qn=1; qn<=4; qn++){
+          const ptKey = 'q'+qn+'_pt_tax_due';
+          const ptAutoVal = computePTTaxDue(tempRec, qn);
+          if(ptAutoVal !== undefined) patch[ptKey] = ptAutoVal;
+        }
+        return sb.from('cor_sales_summary').update(patch).eq('id', r._id);
+      });
+      const results = await Promise.all(salesUpdates);
+      const failed = results.filter(r=>r && r.error);
+      affectedSales.forEach(r=>{
+        logFieldAudit('cor_sales_summary_audit', 'record_id', r._id, 'tax_option', 'Tax Option', fromVal, toVal);
+        r.tax_option = toVal; r.updated_at = stamp.updated_at; r.updated_by = stamp.updated_by;
+        for(let qn=1; qn<=4; qn++){
+          const ptKey = 'q'+qn+'_pt_tax_due';
+          const ptAutoVal = computePTTaxDue(r, qn);
+          if(ptAutoVal !== undefined) r[ptKey] = ptAutoVal;
+        }
+      });
+      initSalesSummaryFilters();
+      const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
+      if(activeTab==='sales') renderSalesSummary();
+      if(failed.length){
+        console.error(failed.map(f=>f.error));
+        toast(`${failed.length} row(s) failed to update — please try again (some rows may already be updated; check the "From" list above).`);
+      } else {
+        toast(`Done — ${salesCount} Sales Summary row(s) cleaned up to "${toVal}".`);
+      }
+    } finally {
+      toReassignApplyBtn.disabled = false;
+      initToReassignTool();
+    }
+  });
+
   /* ---------- "Branch Client ID Numbering" (Settings tab) ----------
      For every client whose Registering Office is "Branch" and has a Main
      Client ID set (see CLIENT_FIELDS / the Client modal), assigns it a
@@ -4736,8 +4859,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           });
         }
       }
-      initRegistryFilters(); initReportFilters(); initSalesSummaryFilters(); initEntries2307Filters(); initReassignTool(); initTtReassignTool();
-      renderBranchRenumberTable();
+      initRegistryFilters(); initReportFilters(); initSalesSummaryFilters(); initEntries2307Filters(); initReassignTool(); initTtReassignTool(); initToReassignTool();
+      renderBranchRenumberTable(); renderSalesRelinkTable();
       const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
       if(activeTab==='registry') renderRegistry();
       if(activeTab==='sales') renderSalesSummary();
@@ -4753,6 +4876,99 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       // rather than force-enabling it -- otherwise a successful run that
       // left zero plans would still leave "Apply" clickable for nothing.
       renderBranchRenumberTable();
+    }
+  });
+
+  /* ---------- "Relink Unlinked Sales Summary Rows" (Settings tab) ----------
+     A Sales Summary row's Name/TIN/Trade Name only stay live-synced to the
+     Client Registry while its Client ID actually resolves to a real client
+     (see AUTO_FILLED_KEYS in renderSalesSummary) -- a row whose Client ID
+     is blank, or points at an ID that no longer exists (e.g. the Registry
+     entry was renumbered elsewhere, or the row was created/imported before
+     a Client ID was ever assigned), silently falls back to showing
+     whatever raw text happens to be stored directly on that row instead --
+     which can drift out of date or even be a flat-out typo (that's exactly
+     what surfaced this: a 2026 row showing a Client Name that matched the
+     Registry but a TIN that didn't, with the Client ID column blank).
+     This tool finds every such row, matches it to a Registry client by
+     EXACT Client Name only (never TIN, since TIN is specifically the field
+     that's untrustworthy on these rows), and offers a one-click relink.
+     Ambiguous (multiple clients share that name) or unmatched rows are
+     listed separately as needing a manual Client ID instead of being
+     guessed at. */
+  function planSalesRelink(){
+    const plans = [], unresolved = [];
+    salesSummary.forEach(r=>{
+      const idVal = String(r.client_id_no||'').trim();
+      if(idVal && findClientByIdNo(idVal)) return; // already properly linked -- nothing to do
+      const nameNeedle = String(r.name||'').trim();
+      if(!nameNeedle){ unresolved.push({row:r, reason:'No Client ID and no Client Name on this row to match by.'}); return; }
+      const needleUpper = nameNeedle.toUpperCase();
+      const matches = clients.filter(c=> String(c.NAME||'').trim().toUpperCase() === needleUpper);
+      if(matches.length === 0){ unresolved.push({row:r, reason:`No Client Registry entry named "${nameNeedle}".`}); return; }
+      if(matches.length > 1){ unresolved.push({row:r, reason:`${matches.length} Client Registry entries are named "${nameNeedle}" -- ambiguous.`}); return; }
+      const matched = matches[0];
+      const newId = String(matched['CLIENT ID NO.']||'').trim();
+      if(!newId){ unresolved.push({row:r, reason:`"${nameNeedle}" matches a Registry entry that has no Client ID assigned yet.`}); return; }
+      // Guard against creating a confusing duplicate: if the matched client
+      // already has a DIFFERENT Sales Summary row for this same year, don't
+      // auto-relink onto a second one for the same year -- that needs a
+      // manual look (likely a genuine duplicate row to merge/delete) rather
+      // than silently ending up with two rows for the same client/year.
+      const conflict = salesSummary.find(other=> other._id!==r._id && String(other.client_id_no||'').trim().toUpperCase()===newId.toUpperCase() && other.year===r.year);
+      if(conflict){ unresolved.push({row:r, reason:`"${matched.NAME}" already has a separate ${r.year} Sales Summary row (Client ID ${newId}) -- needs a manual merge, not an auto-relink.`}); return; }
+      plans.push({row:r, matchedClient:matched, oldId: idVal, newId});
+    });
+    return {plans, unresolved};
+  }
+
+  let salesRelinkPlans = [];
+  function renderSalesRelinkTable(){
+    const area = document.getElementById('sales-relink-table');
+    const applyBtn = document.getElementById('sales-relink-apply-btn');
+    const unresolvedEl = document.getElementById('sales-relink-unresolved');
+    if(!area) return;
+    const {plans, unresolved} = planSalesRelink();
+    salesRelinkPlans = plans;
+    if(!plans.length){
+      area.innerHTML = `<div class="small-note">Nothing to relink right now — every Sales Summary row either already has a valid Client ID, or has no exact Registry name match to offer.</div>`;
+    } else {
+      const rows = plans.map(p=>`<tr><td>${esc(p.row.name)}</td><td>${esc(p.row.year)}</td><td class="mono">${p.oldId? esc(p.oldId) : '<span style="color:var(--ink-soft);">(blank)</span>'}</td><td class="mono"><strong>${esc(p.newId)}</strong></td></tr>`).join('');
+      area.innerHTML = `<table><thead><tr><th>Client</th><th>Year</th><th>Current ID</th><th>New ID</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+    applyBtn.disabled = !plans.length;
+    unresolvedEl.textContent = unresolved.length
+      ? `${unresolved.length} Sales Summary row(s) couldn't be auto-matched — fix these manually (pick the right Client ID directly on the Sales Summary row): ${unresolved.map(u=>`${u.row.name||'(no name)'} ${u.row.year} — ${u.reason}`).join(' | ')}`
+      : '';
+  }
+
+  document.getElementById('sales-relink-apply-btn').addEventListener('click', async ()=>{
+    const plans = salesRelinkPlans;
+    if(!plans.length) return;
+    const summary = plans.map(p=>`${p.row.name} (${p.row.year}): ${p.oldId||'(blank)'} → ${p.newId}`).join('\n');
+    if(!confirm(`Relink ${plans.length} Sales Summary row(s) to their matching Client Registry entry?\n\n${summary}\n\nOnce relinked, each row's Name/TIN/Trade Name will show live from the Client Registry instead of whatever was stored directly on the row. This cannot be undone automatically — you'd need to reverse it the same way.`)) return;
+    const btn = document.getElementById('sales-relink-apply-btn');
+    btn.disabled = true;
+    try{
+      const stamp = { updated_at: new Date().toISOString(), updated_by: currentUserEmail };
+      let failedCount = 0;
+      for(const p of plans){
+        const { error } = await sb.from('cor_sales_summary').update({client_id_no: p.newId, updated_at: stamp.updated_at, updated_by: stamp.updated_by}).eq('id', p.row._id);
+        if(error){ console.error(error); failedCount++; continue; }
+        logFieldAudit('cor_sales_summary_audit', 'record_id', p.row._id, 'client_id_no', 'Client ID', p.oldId, p.newId);
+        p.row.client_id_no = p.newId; p.row.updated_at = stamp.updated_at; p.row.updated_by = stamp.updated_by;
+      }
+      initSalesSummaryFilters();
+      renderSalesRelinkTable();
+      const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
+      if(activeTab==='sales') renderSalesSummary();
+      if(failedCount){
+        toast(`${failedCount} update(s) failed — please try again (some may already be updated; check the table above).`);
+      } else {
+        toast(`Done — ${plans.length} Sales Summary row(s) relinked.`);
+      }
+    } finally {
+      renderSalesRelinkTable();
     }
   });
 
@@ -4959,7 +5175,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     initReportFilters();
     initReassignTool();
     initTtReassignTool();
+    initToReassignTool();
     renderBranchRenumberTable();
+    renderSalesRelinkTable();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
@@ -4986,7 +5204,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const idx = salesSummary.findIndex(r=>r._id===mapped._id);
       if(idx>=0) salesSummary[idx] = mapped; else salesSummary.push(mapped);
     }
-    initSalesSummaryFilters(); initReassignTool(); initTtReassignTool(); renderBranchRenumberTable();
+    initSalesSummaryFilters(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
   function handleEntry2307Realtime(payload){
@@ -5032,7 +5250,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(idx>=0) clients[idx] = mapped; else clients.push(mapped);
       clientById[mapped._id] = mapped;
     }
-    initRegistryFilters(); initReportFilters(); initTrackerFilters(); renderBranchRenumberTable();
+    initRegistryFilters(); initReportFilters(); initTrackerFilters(); renderBranchRenumberTable(); renderSalesRelinkTable();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
