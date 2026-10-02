@@ -814,6 +814,32 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   ];
   const SALES_CLIENT_STATUS_SELECT_OPTS = [['','— Select —'], ...CLIENT_STATUS_OPTS];
 
+  // Single source of truth for "Tax Option" -- the annual election a
+  // Non-VAT individual/professional makes on BIR Form 1701Q/1701 between
+  // the 8% flat income tax rate and the regular Graduated rates. This is a
+  // PER YEAR election (not a permanent trait of the client the way Tax
+  // Type mostly is), which is exactly why it already lives only on the
+  // Sales Summary row and not in the Client Registry. Was previously a
+  // plain free-typed text field -- turned into a canonical dropdown now
+  // that computePTTaxDue below actually depends on reading it reliably
+  // (can't risk a free-typed "8", "eight percent", "8% po" etc. silently
+  // failing to zero out PT Due for a client who really did elect 8%).
+  const TAX_OPTION_OPTS = [
+    ['8%','8% Flat Income Tax Rate'],
+    ['Graduated','Graduated Income Tax Rates'],
+  ];
+  const SALES_TAX_OPTION_SELECT_OPTS = [['','— Select —'], ...TAX_OPTION_OPTS];
+  // Same "fold case/whitespace variants onto the canonical value" treatment
+  // as normalizeTaxType -- an older row that already has "8%" or "Graduated"
+  // typed in some other casing/spacing still matches correctly instead of
+  // silently falling through to "not elected 8%".
+  function normalizeTaxOption(raw){
+    const t = String(raw||'').trim();
+    if(!t) return '';
+    const hit = TAX_OPTION_OPTS.find(([v])=> v.toLowerCase() === t.toLowerCase());
+    return hit ? hit[0] : t;
+  }
+
   // cor_sales_summary columns, in display order: [db_col, header_label, kind, opts?]
   // kind 'num' -> right-aligned/peso-formatted, 'text' -> left-aligned as-is,
   // 'select' -> dropdown sourced from opts (array ref, e.g. SALES_REP_OPTS).
@@ -825,7 +851,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // here afterward (does NOT push changes back to the Registry, and a
     // later Registry change doesn't silently override it here either).
     ['client_status','Client Status','select',SALES_CLIENT_STATUS_SELECT_OPTS],
-    ['tax_type','Tax Type','select',SALES_TAX_TYPE_SELECT_OPTS], ['tax_option','Tax Option','text'], ['mq','M/Q','text'],
+    ['tax_type','Tax Type','select',SALES_TAX_TYPE_SELECT_OPTS],
+    // Also editable right here, same reasoning as Tax Type -- PT Due (see
+    // computePTTaxDue) now reads this too, so staff can flag "this Non-VAT
+    // client elected 8% this year" without a trip anywhere else.
+    ['tax_option','Tax Option','select',SALES_TAX_OPTION_SELECT_OPTS], ['mq','M/Q','text'],
     ['pf','PF','num'], ['agent','Sales Representative','select',SALES_REP_OPTS], ['birth_incorp_date','Birthday/Incorp.','text'],
     ['civil_status','Civil Stat','text'], ['rental_tax_compensation','Rental Tax / Comp.','text'],
     ['q1_sales','Q1 Sales','num'], ['q1_expenses','Q1 Expenses','num'], ['q1_pt_tax_due','Q1 PT Due','num'],
@@ -865,19 +895,31 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return Math.round(sum * 100) / 100;
   }
   // Percentage Tax (PT) Due auto-computes for Non-VAT clients only:
-  //  - Plain "Non-VAT" -> 3% of THAT quarter's declared Sales (blank, not
-  //    zero, until that quarter's Sales is filled in -- same "don't show a
-  //    misleading zero" rule as the other computed totals).
-  //  - "Non-VAT (8% Flat Rate)" -> always ₱0, every quarter, regardless of
-  //    Sales -- the 8% flat income tax rate option already stands in lieu
-  //    of percentage tax, so none is ever due.
+  //  - "Non-VAT (8% Flat Rate)" Tax Type -> always ₱0, every quarter,
+  //    regardless of Sales -- the 8% flat income tax rate already stands
+  //    in lieu of percentage tax, so none is ever due.
+  //  - Plain "Non-VAT" Tax Type whose Tax Option for THIS taxable year
+  //    (row-level, since the 8%-vs-Graduated election is an annual one,
+  //    not a permanent trait of the client -- see TAX_OPTION_OPTS) is "8%"
+  //    -> also always ₱0, for the same reason as above. A Non-VAT client
+  //    doesn't have to formally change their registered Tax Type to
+  //    "Non-VAT (8% Flat Rate)" just to elect 8% for one year -- plenty
+  //    just tick the 8% option on their 1701Q while staying registered as
+  //    plain "Non-VAT" -- so this has to be checked independently of Tax
+  //    Type, not folded into it.
+  //  - Plain "Non-VAT" with any other (or no) Tax Option -> 3% of THAT
+  //    quarter's declared Sales (blank, not zero, until that quarter's
+  //    Sales is filled in -- same "don't show a misleading zero" rule as
+  //    the other computed totals).
   // Returns `undefined` (not null/0) for every other Tax Type (VAT, Branch,
   // Non-Profit Organization, or an unrecognized free-typed value) to mean
   // "not auto-computed here" -- PT Due stays a normal, manually-typed field
   // for those, exactly as before this feature.
   function computePTTaxDue(rec, quarter){
     const tt = normalizeTaxType(rec.tax_type);
+    const opt = normalizeTaxOption(rec.tax_option);
     if(tt === 'Non-VAT (8% Flat Rate)') return 0;
+    if(tt === 'Non-VAT' && opt === '8%') return 0;
     if(tt === 'Non-VAT'){
       const sales = rec['q'+quarter+'_sales'];
       if(sales===null || sales===undefined || sales==='') return null;
@@ -3105,7 +3147,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         const lockReason = isAutoFilled
           ? 'Sourced from the Client Registry (Client ID: '+esc(r.client_id_no)+') — edit it there if it’s wrong.'
           : isPTAuto
-          ? (ptAutoVal===0 ? 'Automatically ₱0 — the 8% Flat Income Tax Rate option already covers percentage tax, so none is due.' : "Computed automatically as 3% of this quarter's Sales (Non-VAT percentage tax) — edit Sales instead.")
+          ? (ptAutoVal===0 ? 'Automatically ₱0 — the 8% Flat Income Tax Rate (Tax Type and/or this year\'s Tax Option) already covers percentage tax, so none is due.' : "Computed automatically as 3% of this quarter's Sales (Non-VAT percentage tax) — edit Sales instead.")
           : isComputed
           ? 'Computed automatically from the 4 quarters above — edit Q1-Q4 instead.'
           : 'This field is locked in Sales Summary and cannot be edited here.';
@@ -3233,7 +3275,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
               logFieldAudit('cor_sales_summary_audit', 'record_id', id, ca.key, computedLabel, ca.oldVal, ca.newVal);
             });
           }
-          if(key==='client_id_no' || key==='tax_type') renderSalesSummary(); else tr.title = `Last edited by ${stamp.updated_by} on ${fmtAuditWhen(stamp.updated_at)}`;
+          // tax_option also triggers a full re-render now -- PT Due (see
+          // computePTTaxDue) depends on it for plain Non-VAT rows, so
+          // switching the election between 8% and Graduated needs the PT
+          // Due cells to immediately lock-to-₱0 or unlock back to editable.
+          if(key==='client_id_no' || key==='tax_type' || key==='tax_option') renderSalesSummary(); else tr.title = `Last edited by ${stamp.updated_by} on ${fmtAuditWhen(stamp.updated_at)}`;
           // Keep the Tax Type / Client Status filter dropdowns in sync with
           // whatever's actually on the rows right now -- otherwise typing in
           // a status/type that's new to this table wouldn't show up as a
