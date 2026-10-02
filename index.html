@@ -4963,7 +4963,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         if(tinNarrowed.length === 1){
           matches = tinNarrowed; // uniquely narrowed by TIN among the same-named candidates (e.g. Head Office vs. Branch)
         } else {
-          unresolved.push({row:r, reason:`${matches.length} Client Registry entries are named "${nameNeedle}" -- ambiguous${tinDigits ? ' (this row\'s TIN doesn\'t uniquely match one of them either)' : ''}.`});
+          // Spell out exactly which Registry entries it's ambiguous between
+          // (Client ID + their TIN as actually stored) plus this row's own
+          // TIN, so staff can see precisely why TIN narrowing didn't work
+          // (e.g. a stray digit/space difference) without having to open
+          // the Client Registry and compare by hand.
+          const candidateList = matches.map(c=> `${c['CLIENT ID NO.']||'(no Client ID)'} TIN ${c.TIN||'(blank)'}`).join('; ');
+          unresolved.push({row:r, reason:`${matches.length} Client Registry entries are named "${nameNeedle}" -- ambiguous: ${candidateList}. This row's own TIN is ${r.tin||'(blank)'}${tinDigits ? ' -- doesn\'t exactly match either.' : '.'}`});
           return;
         }
       }
