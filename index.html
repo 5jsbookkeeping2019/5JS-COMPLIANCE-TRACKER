@@ -564,6 +564,7 @@
           <input class="search-input" id="sales-search" placeholder="Search client, TIN, trade name...">
           <select class="filter" id="sales-year-filter"><option value="">All years</option></select>
           <select class="filter" id="sales-taxtype-filter"><option value="">All tax types</option></select>
+          <select class="filter" id="sales-taxoption-filter"><option value="">All tax options</option></select>
           <select class="filter" id="sales-client-status-filter"><option value="">All client statuses</option></select>
           <select class="filter" id="sales-agent-filter"><option value="">All Sales Representatives</option></select>
           <select class="filter" id="sales-missing-filter"><option value="">Show all (no missing-field filter)</option></select>
@@ -2878,12 +2879,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const salesSearch = document.getElementById('sales-search');
   const salesYearFilter = document.getElementById('sales-year-filter');
   const salesTaxTypeFilter = document.getElementById('sales-taxtype-filter');
+  const salesTaxOptionFilter = document.getElementById('sales-taxoption-filter');
   const salesClientStatusFilter = document.getElementById('sales-client-status-filter');
   const salesAgentFilter = document.getElementById('sales-agent-filter');
   const salesMissingFilter = document.getElementById('sales-missing-filter');
   salesSearch.addEventListener('input', renderSalesSummary);
   salesYearFilter.addEventListener('change', renderSalesSummary);
   salesTaxTypeFilter.addEventListener('change', renderSalesSummary);
+  salesTaxOptionFilter.addEventListener('change', renderSalesSummary);
   salesClientStatusFilter.addEventListener('change', renderSalesSummary);
   salesAgentFilter.addEventListener('change', renderSalesSummary);
   salesMissingFilter.addEventListener('change', renderSalesSummary);
@@ -3006,6 +3009,19 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     salesTaxTypeFilter.innerHTML = '<option value="">All tax types</option>' + types.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
     if(types.includes(prevTax)) salesTaxTypeFilter.value = prevTax;
 
+    // Tax Option (the annual 8%-vs-Graduated election, see TAX_OPTION_OPTS
+    // and computePTTaxDue) -- same normalize-then-canonical-order-then-
+    // extras treatment as Tax Type above, so "8%"/"8%  "/"8 %" etc. fold
+    // together instead of each showing up as its own filter option.
+    const prevTaxOption = salesTaxOptionFilter.value;
+    const toNormalizedSet = new Set(salesSummary.map(r=>normalizeTaxOption(r.tax_option)).filter(Boolean));
+    const toKnown = TAX_OPTION_OPTS.map(([v])=>v).filter(v=>toNormalizedSet.has(v));
+    const toKnownSet = new Set(toKnown);
+    const toExtras = Array.from(toNormalizedSet).filter(v=>!toKnownSet.has(v)).sort();
+    const taxOptions = [...toKnown, ...toExtras];
+    salesTaxOptionFilter.innerHTML = '<option value="">All tax options</option>' + taxOptions.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
+    if(taxOptions.includes(prevTaxOption)) salesTaxOptionFilter.value = prevTaxOption;
+
     // Client Status (e.g. "0 FILING", "FOR CLOSURE") -- its own editable
     // column on the Sales Summary row itself (see SALES_SUMMARY_COLS). Rows
     // that already have their own client_status use that; rows that don't
@@ -3043,12 +3059,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const q = (salesSearch.value||'').toLowerCase();
     const yf = salesYearFilter.value;
     const tf = salesTaxTypeFilter.value;
+    const tof = salesTaxOptionFilter.value;
     const csf = salesClientStatusFilter.value;
     const af = salesAgentFilter.value;
     const mf = salesMissingFilter.value;
     let pool = salesSummary.filter(r=>{
       if(yf && String(r.year)!==yf) return false;
       if(tf && normalizeTaxType(r.tax_type) !== tf) return false;
+      if(tof && normalizeTaxOption(r.tax_option) !== tof) return false;
       if(csf && resolveSalesClientStatus(r) !== csf) return false;
       if(af && r.agent !== af) return false;
       if(mf && !(r[mf]===null || r[mf]===undefined || r[mf]==='')) return false;
@@ -3284,7 +3302,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           // whatever's actually on the rows right now -- otherwise typing in
           // a status/type that's new to this table wouldn't show up as a
           // filter option until some unrelated full refresh happened to run.
-          if(key==='tax_type' || key==='client_status') initSalesSummaryFilters();
+          if(key==='tax_type' || key==='tax_option' || key==='client_status') initSalesSummaryFilters();
         });
       });
     });
