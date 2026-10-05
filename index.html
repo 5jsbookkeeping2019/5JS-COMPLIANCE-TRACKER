@@ -244,6 +244,32 @@
     font-family:'IBM Plex Sans',sans-serif;font-size:13px;padding:8px 12px;border:1px solid var(--input-border);
     border-radius:var(--radius);min-width:180px;background:var(--input-bg);color:var(--ink);
   }
+  /* Checkbox-dropdown filter (e.g. Task Tracker's Client Status filter) --
+     unlike a plain <select>, this lets staff UNCHECK just the statuses they
+     don't want to see while leaving everything else shown, instead of only
+     being able to isolate one value at a time. */
+  #cor-app .chk-filter{position:relative;display:inline-block;}
+  #cor-app .chk-filter-btn{
+    font-family:'IBM Plex Sans',sans-serif;font-size:13px;padding:8px 12px;border:1px solid var(--input-border);
+    border-radius:var(--radius);min-width:180px;background:var(--input-bg);color:var(--ink);cursor:pointer;
+    text-align:left;display:flex;align-items:center;justify-content:space-between;gap:8px;
+  }
+  #cor-app .chk-filter-btn::after{content:'▾';font-size:10px;color:var(--ink-soft);}
+  #cor-app .chk-filter-btn.is-active{border-color:var(--brand-deep);color:var(--brand-deep);}
+  #cor-app .chk-filter-panel{
+    position:absolute;top:calc(100% + 4px);left:0;z-index:20;background:var(--card);
+    border:1px solid var(--input-border);border-radius:var(--radius);box-shadow:0 6px 18px rgba(0,0,0,0.14);
+    min-width:230px;max-width:320px;padding:8px;
+  }
+  #cor-app .chk-filter-actions{display:flex;gap:12px;padding:0 4px 6px;border-bottom:1px solid var(--paper-line);margin-bottom:6px;}
+  #cor-app .chk-filter-action{
+    font-family:'IBM Plex Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.4px;
+    color:var(--gold);background:none;border:none;cursor:pointer;padding:0;
+  }
+  #cor-app .chk-filter-list{max-height:260px;overflow:auto;display:flex;flex-direction:column;gap:1px;}
+  #cor-app .chk-filter-item{display:flex;align-items:center;gap:8px;padding:5px 4px;border-radius:var(--radius);cursor:pointer;font-size:12.5px;}
+  #cor-app .chk-filter-item:hover{background:var(--row-hover);}
+  #cor-app .chk-filter-item input{margin:0;cursor:pointer;}
   #cor-app table{width:100%;border-collapse:collapse;font-size:12.5px;}
   #cor-app th{
     font-family:'IBM Plex Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.5px;
@@ -464,7 +490,16 @@
             <option value="A">N/A (not applicable)</option>
           </select>
           <input class="search-input" id="tr-notes-filter" placeholder="Filter by notes (e.g. ZERO FILING)...">
-          <select class="filter" id="tr-client-status-filter"><option value="">All client statuses</option></select>
+          <div class="chk-filter" id="tr-client-status-filter-wrap">
+            <button type="button" class="chk-filter-btn" id="tr-client-status-filter-btn">All client statuses</button>
+            <div class="chk-filter-panel" id="tr-client-status-filter-panel" hidden>
+              <div class="chk-filter-actions">
+                <button type="button" class="chk-filter-action" data-act="all">Select all</button>
+                <button type="button" class="chk-filter-action" data-act="none">Clear all</button>
+              </div>
+              <div class="chk-filter-list" id="tr-client-status-filter-list"></div>
+            </div>
+          </div>
           <select class="filter" id="tr-payment-filter">
             <option value="">All (payment)</option>
             <option value="DUE_UNPAID">Has Tax Due, not yet given to liaison</option>
@@ -991,6 +1026,52 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return undefined;
   }
 
+  // Net Income auto-computes from this year's Tax Option, independently of
+  // the PT Due rules above (Net Income is an income-tax concept, PT Due is
+  // Non-VAT-only percentage tax, so Itemized/OSD apply here even for VAT
+  // clients -- unlike PT Due, which only ever applies to Non-VAT):
+  //  - "8%" / "Mixed Income - 8%" (same Non-VAT-gated condition that zeroes
+  //    PT Due above) -> Total Sales less the flat ₱250,000 deduction the 8%
+  //    election already bakes in, floored at ₱0 -- a client who hasn't yet
+  //    crossed ₱250,000 in Sales this year has no taxable net income to
+  //    show, not a negative one.
+  //  - "Itemized" / "Mixed Income - Itemized" -> Total Sales less Total
+  //    Expenses, NOT floored at ₱0 -- an itemized-deduction filer can show
+  //    a genuine net loss, that's a real accounting outcome, not a display
+  //    bug.
+  //  - "OSD" / "Mixed Income - OSD" -> Total Sales x 60% (the Optional
+  //    Standard Deduction stands in for 40% of gross sales/receipts as an
+  //    allowable deduction, so taxable net income is the other 60%).
+  //  - "BMBE", "Branch", or blank -> not auto-computed; Net Income stays a
+  //    normal, manually-typed field for those, exactly as before this
+  //    feature (say if BMBE in particular should get its own rule -- BMBE
+  //    enterprises are income-tax-exempt, which isn't modeled yet).
+  // Blank (not ₱0) until the Sales (and, for Itemized, Expenses) it needs
+  // are actually filled in -- same "don't show a misleading figure too
+  // early" rule as the other computed totals.
+  function computeNetIncomeAuto(rec){
+    const tt = normalizeTaxType(rec.tax_type);
+    const opt = normalizeTaxOption(rec.tax_option);
+    const is8Flat = tt === 'Non-VAT (8% Flat Rate)' || (tt === 'Non-VAT' && ZERO_PT_TAX_OPTIONS.has(opt));
+    if(is8Flat){
+      const totalSales = computeSalesQuarterSum(rec, 'sales');
+      if(totalSales === null) return null;
+      return Math.max(0, Math.round((totalSales - 250000) * 100) / 100);
+    }
+    if(opt === 'Itemized' || opt === 'Mixed Income - Itemized'){
+      const totalSales = computeSalesQuarterSum(rec, 'sales');
+      if(totalSales === null) return null;
+      const totalExpenses = computeSalesQuarterSum(rec, 'expenses');
+      return Math.round((totalSales - (totalExpenses===null?0:totalExpenses)) * 100) / 100;
+    }
+    if(opt === 'OSD' || opt === 'Mixed Income - OSD'){
+      const totalSales = computeSalesQuarterSum(rec, 'sales');
+      if(totalSales === null) return null;
+      return Math.round(totalSales * 0.6 * 100) / 100;
+    }
+    return undefined;
+  }
+
   const STATUS_DISPLAY = {NA:'N/A'};
   function fmtPeso(n){
     if(n===null || n===undefined || n==='') return '';
@@ -1379,12 +1460,71 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const trPeriodFilter = document.getElementById('tr-period-filter');
   const trStatusFilter = document.getElementById('tr-status-filter');
   const trNotesFilter = document.getElementById('tr-notes-filter');
-  const trClientStatusFilter = document.getElementById('tr-client-status-filter');
+  const trClientStatusFilterBtn = document.getElementById('tr-client-status-filter-btn');
+  const trClientStatusFilterPanel = document.getElementById('tr-client-status-filter-panel');
+  const trClientStatusFilterList = document.getElementById('tr-client-status-filter-list');
   const trPaymentFilter = document.getElementById('tr-payment-filter');
   const trStageFilter = document.getElementById('tr-stage-filter');
   const trSortFilter = document.getElementById('tr-sort-filter');
   [trSearch, trNotesFilter].forEach(el=>el.addEventListener('input', renderTracker));
-  [trFormFilter, trPeriodFilter, trStatusFilter, trClientStatusFilter, trPaymentFilter, trStageFilter, trSortFilter].forEach(el=>el.addEventListener('change', renderTracker));
+  [trFormFilter, trPeriodFilter, trStatusFilter, trPaymentFilter, trStageFilter, trSortFilter].forEach(el=>el.addEventListener('change', renderTracker));
+
+  // Client Status filter: a checkbox dropdown, not a single-select -- e.g.
+  // "ayaw kong makita" (don't want to see) one or two statuses like "FOR
+  // CLOSURE" while keeping everything else visible at once, which a plain
+  // dropdown can't express (picking one value hides every other value too).
+  // Tracked as the set of UNCHECKED/EXCLUDED statuses, so "nothing excluded"
+  // is the natural default ("All client statuses", same as before this
+  // feature). A blank/unset Client Status is its own toggleable bucket,
+  // keyed '' and shown as "(No status)".
+  let trClientStatusExcluded = new Set();
+  function updateClientStatusFilterBtnLabel(){
+    const total = trClientStatusFilterList.querySelectorAll('input[type="checkbox"]').length;
+    const excluded = trClientStatusExcluded.size;
+    trClientStatusFilterBtn.textContent = excluded===0 ? 'All client statuses'
+      : excluded>=total ? 'No client statuses (none shown)'
+      : `Client status: ${total-excluded} of ${total} shown`;
+    trClientStatusFilterBtn.classList.toggle('is-active', excluded>0);
+  }
+  function renderClientStatusFilterList(){
+    const distinct = Array.from(new Set(clients.map(c=> c['CLIENT?'] || '')));
+    const named = distinct.filter(s=>s).sort();
+    const statusKeys = distinct.includes('') ? [...named, ''] : named;
+    // Prune any previously-excluded status that no longer exists (e.g. the
+    // last client with that status was deleted/reassigned) so the set
+    // doesn't grow stale, same "preserve only while still valid" rule used
+    // for the other Tracker filters.
+    trClientStatusExcluded = new Set(Array.from(trClientStatusExcluded).filter(s=>statusKeys.includes(s)));
+    trClientStatusFilterList.innerHTML = statusKeys.length ? statusKeys.map(s=>{
+      const label = s==='' ? '(No status)' : s;
+      const checked = !trClientStatusExcluded.has(s);
+      return `<label class="chk-filter-item"><input type="checkbox" data-status="${esc(s)}" ${checked?'checked':''}>${esc(label)}</label>`;
+    }).join('') : '<div class="small-note" style="margin:0;">No client statuses yet.</div>';
+    updateClientStatusFilterBtnLabel();
+  }
+  trClientStatusFilterBtn.addEventListener('click', e=>{
+    e.stopPropagation();
+    trClientStatusFilterPanel.hidden = !trClientStatusFilterPanel.hidden;
+  });
+  document.addEventListener('click', e=>{
+    if(!trClientStatusFilterPanel.hidden && !e.target.closest('#tr-client-status-filter-wrap')) trClientStatusFilterPanel.hidden = true;
+  });
+  trClientStatusFilterList.addEventListener('change', e=>{
+    const cb = e.target.closest('input[type="checkbox"]');
+    if(!cb) return;
+    const s = cb.dataset.status;
+    if(cb.checked) trClientStatusExcluded.delete(s); else trClientStatusExcluded.add(s);
+    updateClientStatusFilterBtnLabel();
+    renderTracker();
+  });
+  trClientStatusFilterPanel.querySelectorAll('.chk-filter-action').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(btn.dataset.act==='all') trClientStatusExcluded.clear();
+      else trClientStatusExcluded = new Set(Array.from(trClientStatusFilterList.querySelectorAll('input[type="checkbox"]')).map(cb=>cb.dataset.status));
+      renderClientStatusFilterList();
+      renderTracker();
+    });
+  });
 
   // Rebuilding the <select> options (needed whenever the task list changes,
   // e.g. a live update from another staff member) used to always reset the
@@ -1400,13 +1540,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(forms.includes(prevForm)) trFormFilter.value = prevForm;
     if(periods.includes(prevPeriod)) trPeriodFilter.value = prevPeriod;
     // Client Status (CLIENT?) filter -- e.g. "0 FILING" or "FOR CLOSURE" --
-    // so staff can pull up just the tasks belonging to clients in one of
-    // those statuses (zero-filers, or clients winding down) instead of
-    // hunting for them one by one across every task.
-    const prevClientStatus = trClientStatusFilter.value;
-    const clientStatuses = Array.from(new Set(clients.map(c=>c['CLIENT?']).filter(Boolean))).sort();
-    trClientStatusFilter.innerHTML = '<option value="">All client statuses</option>' + clientStatuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
-    if(clientStatuses.includes(prevClientStatus)) trClientStatusFilter.value = prevClientStatus;
+    // so staff can hide just the tasks belonging to clients in statuses
+    // they don't want cluttering the list (zero-filers, clients winding
+    // down) while still seeing everyone else. See renderClientStatusFilterList.
+    renderClientStatusFilterList();
   }
 
   // Keep the Task Tracker's table filling all the way down to the bottom of
@@ -1424,7 +1561,6 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const q = (trSearch.value||'').toLowerCase();
     const nq = (trNotesFilter.value||'').toLowerCase();
     const ff = trFormFilter.value, pf = trPeriodFilter.value, sf = trStatusFilter.value;
-    const csf = trClientStatusFilter.value;
     const payf = trPaymentFilter.value;
     const stf = trStageFilter.value;
     let pool = tasks.filter(t=>{
@@ -1436,7 +1572,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       else if(sf==='Z' && t.status!=='ZERO') return false;
       else if(sf==='N' && !t.notes) return false;
       else if(sf==='A' && t.status!=='NA') return false;
-      if(csf && taskClient(t)['CLIENT?']!==csf) return false;
+      // Client Status is a checkbox dropdown now (see trClientStatusExcluded
+      // above) -- a task is hidden only if its client's status is one of
+      // the UNCHECKED ones, so multiple statuses can be hidden at once
+      // instead of only ever isolating a single value.
+      if(trClientStatusExcluded.has(taskClient(t)['CLIENT?'] || '')) return false;
       if(payf==='DUE_UNPAID' && !(t.taxDue!==null && t.taxDue>0 && !t.paymentStatus)) return false;
       else if(payf==='LIAISON' && t.paymentStatus!=='GIVEN TO LIAISON') return false;
       else if(payf==='PAID' && t.paymentStatus!=='PAID') return false;
@@ -3190,12 +3330,20 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         const ptMatch = /^q([1-4])_pt_tax_due$/.exec(key);
         const ptAutoVal = ptMatch ? computePTTaxDue(r, ptMatch[1]) : undefined;
         const isPTAuto = ptAutoVal !== undefined;
+        // net_income auto-computes from this year's Tax Option -- see
+        // computeNetIncomeAuto (8% => Sales-250k, Itemized => Sales-
+        // Expenses, OSD => Sales x 60%). `undefined` means "not applicable
+        // for this row's Tax Option (BMBE/Branch/blank)", so it stays a
+        // normal editable field for those, same convention as PT Due above.
+        const netIncomeAutoVal = key==='net_income' ? computeNetIncomeAuto(r) : undefined;
+        const isNetIncomeAuto = netIncomeAutoVal !== undefined;
         const isAutoFilled = matched && AUTO_FILLED_KEYS.includes(key);
-        const isComputed = COMPUTED_KEYS.has(key) || isPTAuto;
+        const isComputed = COMPUTED_KEYS.has(key) || isPTAuto || isNetIncomeAuto;
         const isLocked = isAutoFilled || isComputed || ALWAYS_LOCKED_KEYS.has(key);
         const computedVal = key==='total_sales' ? computeSalesQuarterSum(r,'sales')
           : key==='total_expenses' ? computeSalesQuarterSum(r,'expenses')
-          : isPTAuto ? ptAutoVal : null;
+          : isPTAuto ? ptAutoVal
+          : isNetIncomeAuto ? netIncomeAutoVal : null;
         const val = isAutoFilled ? (key==='name'? matched.NAME : key==='tin'? matched.TIN : matched['TRADE NAME'])
           : isComputed ? (computedVal!==null ? computedVal : (r[key]!=null ? r[key] : null))
           : key==='client_status' ? resolveSalesClientStatus(r)
@@ -3227,6 +3375,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           ? 'Sourced from the Client Registry (Client ID: '+esc(r.client_id_no)+') — edit it there if it’s wrong.'
           : isPTAuto
           ? (ptAutoVal===0 ? 'Automatically ₱0 — the 8% Flat Income Tax Rate (Tax Type and/or this year\'s Tax Option) already covers percentage tax, so none is due.' : "Computed automatically as 3% of this quarter's Sales (Non-VAT percentage tax) — edit Sales instead.")
+          : isNetIncomeAuto
+          ? (normalizeTaxOption(r.tax_option)==='OSD' || normalizeTaxOption(r.tax_option)==='Mixed Income - OSD'
+              ? 'Computed automatically as Total Sales × 60% under the Optional Standard Deduction (OSD) — edit Sales instead.'
+              : (normalizeTaxType(r.tax_type)==='Non-VAT (8% Flat Rate)' || ZERO_PT_TAX_OPTIONS.has(normalizeTaxOption(r.tax_option)))
+              ? 'Computed automatically as Total Sales less the ₱250,000 flat deduction under the 8% election — edit Sales instead.'
+              : 'Computed automatically as Total Sales less Total Expenses — edit Sales/Expenses instead.')
           : isComputed
           ? 'Computed automatically from the 4 quarters above — edit Q1-Q4 instead.'
           : 'This field is locked in Sales Summary and cannot be edited here.';
@@ -3293,6 +3447,20 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           // totals permanently in sync with their quarters since they can
           // no longer be typed in directly (see COMPUTED_KEYS above).
           const computedAudits = []; // [{key, oldVal, newVal}] -- any derived fields this edit recomputed
+          // Shared helper: recompute Net Income (see computeNetIncomeAuto)
+          // and stage it into rec/patch/computedAudits if it actually
+          // changed. Called from every branch below whose field feeds one
+          // of the three Net Income formulas (Sales, Expenses, Tax Type,
+          // Tax Option).
+          function applyNetIncomeAuto(){
+            const niAutoVal = computeNetIncomeAuto(rec);
+            if(niAutoVal === undefined || rec.net_income === niAutoVal) return;
+            const oldNi = rec.net_income;
+            rec.net_income = niAutoVal; patch.net_income = niAutoVal;
+            const niInput = tr.querySelector('.sales-cell[data-key="net_income"]');
+            if(niInput) niInput.value = fmtNumInput(niAutoVal);
+            computedAudits.push({key:'net_income', oldVal:oldNi, newVal:niAutoVal});
+          }
           const qSalesMatch = /^q([1-4])_sales$/.exec(key);
           if(qSalesMatch){
             const oldTotal = rec.total_sales;
@@ -3315,6 +3483,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
               if(ptInput) ptInput.value = fmtNumInput(ptAutoVal);
               if(oldPt !== ptAutoVal) computedAudits.push({key:ptKey, oldVal:oldPt, newVal:ptAutoVal});
             }
+
+            // This quarter's Sales also feeds Net Income under every
+            // auto-computed Tax Option (8%/Itemized/OSD, see
+            // computeNetIncomeAuto) -- recompute and save it too, so it
+            // doesn't go stale until some unrelated field happens to be
+            // edited.
+            applyNetIncomeAuto();
           } else if(key==='q1_expenses' || key==='q2_expenses' || key==='q3_expenses' || key==='q4_expenses'){
             const oldTotal = rec.total_expenses;
             const newTotal = computeSalesQuarterSum(rec, 'expenses');
@@ -3322,16 +3497,24 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
             const totalInput = tr.querySelector('.sales-cell[data-key="total_expenses"]');
             if(totalInput) totalInput.value = fmtNumInput(newTotal);
             computedAudits.push({key:'total_expenses', oldVal:oldTotal, newVal:newTotal});
-          } else if(key==='tax_type'){
-            // Changing Tax Type can flip whether (and how) each quarter's
-            // Percentage Tax Due auto-computes -- e.g. switching a client
-            // from VAT to Non-VAT should immediately start deriving PT Due
-            // as 3% of Sales instead of leaving whatever was last typed in.
-            // Recompute all 4 quarters now so nothing is left showing a
-            // stale value (or a stale locked/unlocked state) until some
-            // unrelated field happens to be edited. The full re-render this
-            // triggers below (see renderSalesSummary() call) is what
-            // actually flips each cell's locked/editable appearance.
+
+            // Expenses only matter to Net Income under the Itemized
+            // deduction method (see computeNetIncomeAuto), but recompute
+            // unconditionally -- it's a no-op (undefined) for any other
+            // Tax Option.
+            applyNetIncomeAuto();
+          } else if(key==='tax_type' || key==='tax_option'){
+            // Changing Tax Type OR this year's Tax Option can flip whether
+            // (and how) each quarter's Percentage Tax Due, and Net Income,
+            // auto-compute -- e.g. switching a client's Tax Option to "8%"
+            // should immediately zero out PT Due and switch Net Income to
+            // the Sales-less-250k formula, instead of leaving whatever was
+            // last typed/computed in place. Recompute everything now so
+            // nothing is left showing a stale value (or a stale locked/
+            // editable state) until some unrelated field happens to be
+            // edited. The full re-render this triggers below (see
+            // renderSalesSummary() call) is what actually flips each cell's
+            // locked/editable appearance.
             for(let qn=1; qn<=4; qn++){
               const ptKey = 'q'+qn+'_pt_tax_due';
               const ptAutoVal = computePTTaxDue(rec, qn);
@@ -3341,6 +3524,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
                 computedAudits.push({key:ptKey, oldVal:oldPt, newVal:ptAutoVal});
               }
             }
+            applyNetIncomeAuto();
           }
           const stamp = { updated_at: new Date().toISOString(), updated_by: currentUserEmail };
           Object.assign(patch, stamp);
