@@ -1472,8 +1472,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       vatQuarterInitialized = true;
     }
   }
-  // "No Longer Client" (status NO) never belongs on the VAT worksheet.
-  const vatIsNoLonger = rec => String(resolveSalesClientStatus(rec)||'').trim().toUpperCase() === 'NO';
+  // "No Longer Client" (NO) and CLOSED clients are not worked on any more, so
+  // they never belong on the VAT worksheet. (FOR CLOSURE is different: still
+  // filed, as zero -- see vatClientIsZero.)
+  const vatIsNoLonger = rec => ['NO','CLOSED'].includes(String(resolveSalesClientStatus(rec)||'').trim().toUpperCase());
   function vatRowsForYear(year){
     const map = new Map();
     let noClientId = 0, hiddenNoLonger = 0;
@@ -1539,7 +1541,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
     document.getElementById('vat-count').textContent =
       `${shown.length} of ${allRows.length} VAT client(s) · Q${q} ${year}: ${counts.READY} ready for encoding, ${counts.INCOMPLETE} incomplete, ${counts.ENCODED} encoded` +
-      (hiddenNoLonger ? ` · ${hiddenNoLonger} No Longer Client(s) hidden` : '') + (noClientId ? ` · ${noClientId} VAT Sales Summary row(s) have no Client ID and can't be linked (fix with Settings → Relink)` : '');
+      (hiddenNoLonger ? ` · ${hiddenNoLonger} No Longer / Closed client(s) hidden` : '') + (noClientId ? ` · ${noClientId} VAT Sales Summary row(s) have no Client ID and can't be linked (fix with Settings → Relink)` : '');
     const m0 = (q-1)*3;
     const monthTh = [0,1,2].map(i=> VAT_MONTH_FIELDS.map(([,label])=>`<th><div style="font-size:9.5px;color:var(--ink-soft);">${VAT_MONTH_NAMES[m0+i]}</div>${esc(label)}</th>`).join('')).join('');
     const head = `<tr><th class="frozen-col" style="left:0;width:230px;min-width:230px;">Client</th>${monthTh}
