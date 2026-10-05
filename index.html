@@ -248,6 +248,17 @@
      unlike a plain <select>, this lets staff UNCHECK just the statuses they
      don't want to see while leaving everything else shown, instead of only
      being able to isolate one value at a time. */
+  /* Sales Summary: highlight the quarter being worked on so data isn't typed into the wrong one */
+  #cor-app th.q-hl{background:#F6E7B8;color:var(--brand-deep);border-bottom:3px solid var(--gold);}
+  #cor-app td.q-hl{background:rgba(166,121,10,0.10);}
+  #cor-app td.q-hl input.sales-cell:not([readonly]){background:#FFF6D6;border-color:var(--gold);}
+  /* VAT Worksheet: relief-encoding signal badge */
+  #cor-app .vat-badge{display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.4px;padding:3px 8px;border-radius:10px;white-space:nowrap;text-transform:uppercase;}
+  #cor-app .vat-badge.incomplete{background:rgba(33,28,24,0.06);color:var(--ink-soft);}
+  #cor-app .vat-badge.ready{background:var(--gold-soft);color:var(--gold);font-weight:600;}
+  #cor-app .vat-badge.encoded{background:var(--forest-soft);color:var(--forest);font-weight:600;}
+  #cor-app select.chk-native{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;min-width:0;padding:0;border:0;}
+  #cor-app .chk-filter-group{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.4px;text-transform:uppercase;color:var(--ink-soft);padding:6px 4px 2px;}
   #cor-app .chk-filter{position:relative;display:inline-block;}
   #cor-app .chk-filter-btn{
     font-family:'IBM Plex Sans',sans-serif;font-size:13px;padding:8px 12px;border:1px solid var(--input-border);
@@ -425,6 +436,7 @@
       <button class="tab-btn" data-tab="scan"><span class="ico" data-ico="scan"></span>Scan &amp; Add (OCR)</button>
       <button class="tab-btn" data-tab="creds"><span class="ico" data-ico="creds"></span>Credentials</button>
       <button class="tab-btn" data-tab="sales"><span class="ico" data-ico="sales"></span>Sales Summary</button>
+      <button class="tab-btn" data-tab="vat"><span class="ico" data-ico="vat"></span>VAT Worksheet</button>
       <button class="tab-btn" data-tab="tax2307"><span class="ico" data-ico="tax2307"></span>2307 Register</button>
       <button class="tab-btn" data-tab="sawt"><span class="ico" data-ico="sawt"></span>SAWT / 2307 Received</button>
       <button class="tab-btn" data-tab="report"><span class="ico" data-ico="report"></span>eBIRForms Profile</button>
@@ -455,7 +467,7 @@
       <div class="registry-head">
         <div class="filter-row">
           <input class="search-input" id="cal-search" placeholder="Search client, TIN, form...">
-          <select class="filter" id="cal-status-filter">
+          <select class="filter" id="cal-status-filter" data-chk="include" data-chk-noun="status">
             <option value="ALL">All statuses</option>
             <option value="PENDING">Pending only</option>
             <option value="OVERDUE">Overdue only</option>
@@ -478,9 +490,9 @@
       <div class="registry-head">
         <div class="filter-row">
           <input class="search-input" id="tr-search" placeholder="Search client, TIN, form, period...">
-          <select class="filter" id="tr-form-filter"><option value="">All forms</option></select>
-          <select class="filter" id="tr-period-filter"><option value="">All periods</option></select>
-          <select class="filter" id="tr-status-filter">
+          <select class="filter" id="tr-form-filter" data-chk="exclude" data-chk-noun="forms"><option value="">All forms</option></select>
+          <select class="filter" id="tr-period-filter" data-chk="exclude" data-chk-noun="periods"><option value="">All periods</option></select>
+          <select class="filter" id="tr-status-filter" data-chk="include" data-chk-noun="status">
             <option value="">All statuses</option>
             <option value="P">Pending</option>
             <option value="OVERDUE">Overdue</option>
@@ -490,23 +502,14 @@
             <option value="A">N/A (not applicable)</option>
           </select>
           <input class="search-input" id="tr-notes-filter" placeholder="Filter by notes (e.g. ZERO FILING)...">
-          <div class="chk-filter" id="tr-client-status-filter-wrap">
-            <button type="button" class="chk-filter-btn" id="tr-client-status-filter-btn">All client statuses</button>
-            <div class="chk-filter-panel" id="tr-client-status-filter-panel" hidden>
-              <div class="chk-filter-actions">
-                <button type="button" class="chk-filter-action" data-act="all">Select all</button>
-                <button type="button" class="chk-filter-action" data-act="none">Clear all</button>
-              </div>
-              <div class="chk-filter-list" id="tr-client-status-filter-list"></div>
-            </div>
-          </div>
-          <select class="filter" id="tr-payment-filter">
+          <select class="filter" id="tr-client-status-filter" data-chk="exclude" data-chk-noun="client statuses"><option value="">All client statuses</option></select>
+          <select class="filter" id="tr-payment-filter" data-chk="include" data-chk-noun="payment">
             <option value="">All (payment)</option>
             <option value="DUE_UNPAID">Has Tax Due, not yet given to liaison</option>
             <option value="LIAISON">Given to Liaison</option>
             <option value="PAID">Paid</option>
           </select>
-          <select class="filter" id="tr-stage-filter">
+          <select class="filter" id="tr-stage-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="stages">
             <option value="">All stages</option>
             <option value="Ingestion">1. Ingestion</option>
             <option value="Return Prep & QA">2. Return Prep &amp; QA</option>
@@ -532,16 +535,16 @@
       <div class="registry-head">
         <div class="filter-row">
           <input class="search-input" id="search-input" placeholder="Search business name, TIN, RDO...">
-          <select class="filter" id="reg-status-filter">
+          <select class="filter" id="reg-status-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="CLIENT? statuses">
             <option value="">All CLIENT? statuses</option>
           </select>
-          <select class="filter" id="reg-regmode-filter">
+          <select class="filter" id="reg-regmode-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="registration modes">
             <option value="">All Registration Modes</option>
           </select>
-          <select class="filter" id="reg-taxtype-filter">
+          <select class="filter" id="reg-taxtype-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="tax types">
             <option value="">All Tax Types</option>
           </select>
-          <select class="filter" id="reg-classif-filter">
+          <select class="filter" id="reg-classif-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="classifications">
             <option value="">All Taxpayer Classifications</option>
           </select>
           <select class="filter" id="reg-sort-filter">
@@ -597,12 +600,18 @@
       <div class="registry-head">
         <div class="filter-row">
           <input class="search-input" id="sales-search" placeholder="Search client, TIN, trade name...">
-          <select class="filter" id="sales-year-filter"><option value="">All years</option></select>
-          <select class="filter" id="sales-taxtype-filter"><option value="">All tax types</option></select>
-          <select class="filter" id="sales-taxoption-filter"><option value="">All tax options</option></select>
-          <select class="filter" id="sales-client-status-filter"><option value="">All client statuses</option></select>
-          <select class="filter" id="sales-agent-filter"><option value="">All Sales Representatives</option></select>
-          <select class="filter" id="sales-missing-filter"><option value="">Show all (no missing-field filter)</option></select>
+          <select class="filter" id="sales-year-filter" data-chk="exclude" data-chk-noun="years"><option value="">All years</option></select>
+          <select class="filter" id="sales-taxtype-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="tax types"><option value="">All tax types</option></select>
+          <select class="filter" id="sales-taxoption-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="tax options"><option value="">All tax options</option></select>
+          <select class="filter" id="sales-client-status-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="client statuses"><option value="">All client statuses</option></select>
+          <select class="filter" id="sales-agent-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="sales reps"><option value="">All Sales Representatives</option></select>
+          <select class="filter" id="sales-missing-filter" data-chk="include" data-chk-noun="missing"><option value="">Show all (no missing-field filter)</option></select>
+          <select class="filter" id="sales-quarter-hl" title="Highlights that quarter's columns so data isn't typed into the wrong quarter" style="min-width:150px;">
+            <option value="auto">Highlight: quarter being filed</option>
+            <option value="1">Highlight: Q1</option><option value="2">Highlight: Q2</option>
+            <option value="3">Highlight: Q3</option><option value="4">Highlight: Q4</option>
+            <option value="0">No highlight</option>
+          </select>
           <button class="secondary" id="add-sales-year-btn">+ Add New Year</button>
         </div>
         <div class="toolbar-right">
@@ -613,16 +622,40 @@
       <datalist id="sales-client-id-options"></datalist>
       <div class="table-scroll" style="margin-top:10px;" id="sales-table"></div>
     </div>
+    <div class="tab-panel" id="panel-vat">
+      <div class="registry-head">
+        <div class="filter-row">
+          <input class="search-input" id="vat-search" placeholder="Search client, TIN, trade name...">
+          <select class="filter" id="vat-year-filter"></select>
+          <select class="filter" id="vat-quarter-filter">
+            <option value="1">Q1 (Jan–Mar)</option><option value="2">Q2 (Apr–Jun)</option>
+            <option value="3">Q3 (Jul–Sep)</option><option value="4">Q4 (Oct–Dec)</option>
+          </select>
+          <select class="filter" id="vat-relief-filter" data-chk="include" data-chk-noun="relief">
+            <option value="">All VAT Relief statuses</option>
+            <option value="READY">Ready for encoding</option>
+            <option value="INCOMPLETE">Incomplete (still missing sales/purchases)</option>
+            <option value="ENCODED">Encoded</option>
+          </select>
+          <button class="secondary" id="vat-sync-all-btn" title="Re-send every row's computed Sales / Expenses / VAT Due for this year to the Sales Summary and the 2550Q tasks in the Task Tracker">⟳ Sync this year to Sales Summary &amp; Tracker</button>
+        </div>
+        <div class="toolbar-right">
+          <span class="small-note" id="vat-count" style="margin:0;"></span>
+        </div>
+      </div>
+      <div class="small-note">One row per VAT client (Sales Summary rows tagged VAT for the chosen year). Type each month's <b>vatable Net Sales</b>, <b>VAT-Exempt</b>, <b>Zero-Rated</b> and <b>Net Purchase</b> (you can type a formula starting with <b>=</b>, like in Excel). <b>VAT Due = Net Sales × 12% − Net Purchase × 12% − Tax Paid + Carry-in</b> (same as your Excel). Each quarter's Sales (vatable + exempt + zero-rated), Expenses (Net Purchase + any <b>Non-VAT Exp</b> you add here) and VAT Due flow automatically into the <b>Sales Summary</b> and the <b>2550Q task's Tax Due</b> in the Task Tracker. A quarter turns <b>READY FOR ENCODING</b> (signal for whoever prepares the SLSP / VAT Relief) once all 3 months have both Net Sales and Net Purchase filled in (0 counts); type who encoded it in <b>Relief done by</b> to mark it done. <b>Carry-in</b> fills itself in (last quarter's negative VAT Due = unused credit); type a number to override, e.g. Q1's credit from last year (negative number, same as the Excel).</div>
+      <div class="table-scroll" style="margin-top:10px;" id="vat-table"></div>
+    </div>
     <div class="tab-panel" id="panel-tax2307">
       <div class="registry-head">
         <div class="filter-row">
           <input class="search-input" id="tax2307-search" placeholder="Search payor, payee, TIN...">
-          <select class="filter" id="tax2307-year-filter"><option value="">All years</option></select>
-          <select class="filter" id="tax2307-quarter-filter">
+          <select class="filter" id="tax2307-year-filter" data-chk="exclude" data-chk-noun="years"><option value="">All years</option></select>
+          <select class="filter" id="tax2307-quarter-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="quarters">
             <option value="">All quarters</option>
             <option value="Q1">Q1</option><option value="Q2">Q2</option><option value="Q3">Q3</option><option value="Q4">Q4</option>
           </select>
-          <select class="filter" id="tax2307-type-filter"><option value="">All income types</option></select>
+          <select class="filter" id="tax2307-type-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="income types"><option value="">All income types</option></select>
           <button class="secondary" id="add-2307-btn">+ Add entry</button>
         </div>
         <div class="toolbar-right">
@@ -645,15 +678,15 @@
       <div class="registry-head">
         <div class="filter-row">
           <input class="search-input" id="sawt-search" placeholder="Search client, payor, TIN...">
-          <select class="filter" id="sawt-year-filter"><option value="">All years</option></select>
-          <select class="filter" id="sawt-quarter-filter">
+          <select class="filter" id="sawt-year-filter" data-chk="exclude" data-chk-noun="years"><option value="">All years</option></select>
+          <select class="filter" id="sawt-quarter-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="quarters">
             <option value="">All quarters</option>
             <option value="Q1">Q1</option><option value="Q2">Q2</option><option value="Q3">Q3</option><option value="Q4">Q4</option>
           </select>
-          <select class="filter" id="sawt-cert-filter">
+          <select class="filter" id="sawt-cert-filter" data-chk="exclude" data-chk-noun="May Actual 2307?">
             <option value="">All (May Actual 2307?)</option>
           </select>
-          <select class="filter" id="sawt-claim-filter">
+          <select class="filter" id="sawt-claim-filter" data-chk="exclude" data-chk-noun="claim status">
             <option value="">All (Claim Status)</option>
           </select>
           <button class="secondary" id="add-sawt-btn">+ Add entry</button>
@@ -671,9 +704,9 @@
       <div class="registry-head">
         <div class="filter-row">
           <input class="search-input" id="report-search" placeholder="Search business name, TIN, RDO...">
-          <select class="filter" id="report-status-filter"><option value="">All client statuses</option></select>
-          <select class="filter" id="report-taxtype-filter"><option value="">All tax types</option></select>
-          <select class="filter" id="report-forms-filter"><option value="">All forms</option></select>
+          <select class="filter" id="report-status-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="client statuses"><option value="">All client statuses</option></select>
+          <select class="filter" id="report-taxtype-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="tax types"><option value="">All tax types</option></select>
+          <select class="filter" id="report-forms-filter" data-chk="include" data-chk-noun="forms"><option value="">All forms</option></select>
         </div>
         <div class="toolbar-right">
           <span class="small-note" id="report-count" style="margin:0;"></span>
@@ -739,6 +772,11 @@
       </div>
       <div id="sales-relink-unresolved" style="margin-top:8px;"></div>
 
+      <h3 style="margin-top:30px;">Zero Out 0 FILING / FOR CLOSURE Rows</h3>
+      <div class="small-note">Sales Summary rows whose Client Status is <b>0 FILING</b> or <b>FOR CLOSURE</b> automatically show ₱0 for every quarter's Sales, 2550Q/2551Q Tax Due and 1701Q/1702Q IT Due (locked, like the other computed cells), and zero themselves the moment a row's status is changed to one of these. This one-time tool applies the same zeros to the rows that <i>already</i> have those statuses (older rows still hold whatever was typed before). Rows that currently hold a non-zero value are listed first so nothing real is overwritten by surprise.</div>
+      <div class="table-scroll" style="margin-top:12px;max-width:900px;max-height:320px;" id="zero-status-table"></div>
+      <div class="small-note" id="zero-status-summary" style="margin-top:8px;"></div>
+      <button class="secondary" id="zero-status-apply-btn" style="margin-top:8px;" disabled>Apply zeros</button>
       <h3 style="margin-top:30px;">Branch Tag vs. Client Registry Audit</h3>
       <div class="small-note">"Branch" on a Sales Summary row's Tax Type or Tax Option is just a free label on that row — it's a completely separate thing from the Client Registry's own "Registering Office" + "Main Client ID" fields, which is what the Branch Client ID Numbering tool above actually reads to assign a 5JS-0001-B1-style Client ID. The two don't talk to each other, so it's easy for them to drift apart. This lists every Sales Summary row tagged Branch (Tax Type and/or Tax Option) whose Client Registry entry ISN'T set up to match — Registering Office isn't Branch, Main Client ID is blank, or the Client ID hasn't been renumbered yet — read-only, for manual review (fix each one in the Client Registry or Settings tools above, whichever is actually correct for that client).</div>
       <div class="table-scroll" style="margin-top:12px;max-width:900px;" id="branch-audit-table"></div>
@@ -797,6 +835,159 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     clearTimeout(t._h);
     t._h = setTimeout(()=>t.classList.remove('show'), 2600);
   }
+  // ===================== Checkbox multi-select filters =====================
+  // Every filter dropdown (<select class="filter" data-chk="exclude|include">)
+  // is turned into a checkbox dropdown so more than ONE value can be filtered
+  // at a time instead of only isolating a single one. The original <select>
+  // stays in the page, visually hidden, as the source of the option list
+  // (existing code that rebuilds its options keeps working -- a
+  // MutationObserver refreshes the checkboxes) and as the thing that fires
+  // "change" so each tab's existing re-render listener still runs.
+  //  - data-chk="exclude": every option starts CHECKED (everything shown);
+  //    unchecking a value hides rows with that value ("iuncheck lang yung
+  //    ayaw kong makita"). Used for plain category filters.
+  //  - data-chk="include": nothing checked = no filter; checking one or more
+  //    shows rows matching ANY checked option. Used for condition-style
+  //    filters (Overdue / Has note / Missing X / Ready for encoding ...).
+  // A script or test that sets the hidden select's value and fires "change"
+  // is read as "only this value" (blank / the "All" option = clear).
+  const CHK_FILTERS = new Map();
+  let chkOpenWrap = null;
+  function chkReadOptions(sel){
+    const opts = []; let allLabel = '', firstValue = '', seenFirst = false;
+    Array.from(sel.children).forEach(ch=>{
+      if(ch.tagName === 'OPTGROUP') Array.from(ch.children).forEach(o=>opts.push({value:o.value, label:o.textContent, group:ch.label}));
+      else if(ch.tagName === 'OPTION'){
+        if(!seenFirst){ seenFirst = true; allLabel = ch.textContent; firstValue = ch.value; return; }
+        opts.push({value:ch.value, label:ch.textContent, group:''});
+      }
+    });
+    // data-chk-blank: rows whose value is empty get their own "(blank)"
+    // checkbox, so they can be shown/hidden like any other value.
+    if(sel.dataset.chkBlank === '1' && sel.dataset.chk !== 'include') opts.push({value:'__BLANK__', label:'(blank)', group:''});
+    return {opts, allLabel, firstValue};
+  }
+  function makeCheckFilter(sel){
+    const mode = sel.dataset.chk === 'include' ? 'include' : 'exclude';
+    const wrap = document.createElement('div');
+    wrap.className = 'chk-filter'; wrap.dataset.for = sel.id;
+    wrap.innerHTML = '<button type="button" class="chk-filter-btn"></button><div class="chk-filter-panel" hidden><div class="chk-filter-actions"></div><div class="chk-filter-list"></div></div>';
+    sel.parentNode.insertBefore(wrap, sel.nextSibling);
+    sel.classList.add('chk-native'); sel.tabIndex = -1; sel.setAttribute('aria-hidden','true');
+    const btn = wrap.querySelector('.chk-filter-btn'), panel = wrap.querySelector('.chk-filter-panel');
+    const actions = wrap.querySelector('.chk-filter-actions'), list = wrap.querySelector('.chk-filter-list');
+    const st = {mode, unchecked:new Set(), checked:new Set(), opts:[], allLabel:'', firstValue:'', internal:false, render:null};
+    CHK_FILTERS.set(sel, st);
+    const noun = ()=>{
+      const n = sel.dataset.chkNoun || st.allLabel.replace(/^All\s+/i,'');
+      return n.charAt(0).toUpperCase() + n.slice(1);
+    };
+    const labelOf = v => { const o = st.opts.find(x=>x.value===v); return o ? o.label : v; };
+    function updateButton(){
+      const total = st.opts.length;
+      let label, active;
+      if(mode === 'exclude'){
+        const n = st.unchecked.size; active = n > 0;
+        const shown = st.opts.filter(o=>!st.unchecked.has(o.value));
+        label = !active ? st.allLabel : shown.length === 0 ? noun()+': none shown' : shown.length === 1 ? shown[0].label : `${noun()}: ${shown.length} of ${total} shown`;
+      } else {
+        const n = st.checked.size; active = n > 0;
+        label = !active ? st.allLabel : n === 1 ? labelOf(Array.from(st.checked)[0]) : `${noun()}: ${n} selected`;
+      }
+      btn.textContent = label; btn.title = label;
+      btn.classList.toggle('is-active', active);
+    }
+    function render(){
+      const r = chkReadOptions(sel);
+      st.opts = r.opts; st.allLabel = r.allLabel; st.firstValue = r.firstValue;
+      const valid = new Set(r.opts.map(o=>o.value));
+      [st.unchecked, st.checked].forEach(set=> Array.from(set).forEach(v=>{ if(!valid.has(v)) set.delete(v); }));
+      actions.innerHTML = mode === 'exclude'
+        ? '<button type="button" class="chk-filter-action" data-act="all">Select all</button><button type="button" class="chk-filter-action" data-act="none">Clear all</button>'
+        : '<button type="button" class="chk-filter-action" data-act="all">Clear selection</button>';
+      let html = '', lastGroup = '';
+      r.opts.forEach(o=>{
+        if(o.group && o.group !== lastGroup){ html += `<div class="chk-filter-group">${esc(o.group)}</div>`; }
+        lastGroup = o.group;
+        const checked = mode === 'exclude' ? !st.unchecked.has(o.value) : st.checked.has(o.value);
+        html += `<label class="chk-filter-item"><input type="checkbox" data-v="${esc(o.value)}" ${checked?'checked':''}>${esc(o.label)}</label>`;
+      });
+      list.innerHTML = html || '<div class="small-note" style="margin:0;">Nothing to filter by yet.</div>';
+      updateButton();
+    }
+    st.render = render;
+    function fire(){ st.internal = true; sel.dispatchEvent(new Event('change', {bubbles:true})); st.internal = false; }
+    btn.addEventListener('click', e=>{
+      e.stopPropagation();
+      const opening = panel.hidden;
+      if(chkOpenWrap && chkOpenWrap !== wrap) chkOpenWrap.querySelector('.chk-filter-panel').hidden = true;
+      panel.hidden = !opening;
+      chkOpenWrap = opening ? wrap : null;
+    });
+    list.addEventListener('change', e=>{
+      const cb = e.target.closest('input[type="checkbox"]'); if(!cb) return;
+      const v = cb.dataset.v;
+      if(mode === 'exclude'){ if(cb.checked) st.unchecked.delete(v); else st.unchecked.add(v); }
+      else { if(cb.checked) st.checked.add(v); else st.checked.delete(v); }
+      updateButton(); fire();
+    });
+    actions.addEventListener('click', e=>{
+      const b = e.target.closest('.chk-filter-action'); if(!b) return;
+      e.stopPropagation(); // render() below replaces this button, so the outside-click closer would wrongly see a detached target
+      if(b.dataset.act === 'all'){ st.unchecked.clear(); st.checked.clear(); }
+      else st.unchecked = new Set(st.opts.map(o=>o.value));
+      render(); fire();
+    });
+    sel.addEventListener('change', ()=>{
+      if(st.internal) return;
+      const v = sel.value;
+      if(v === '' || v === st.firstValue){ st.unchecked.clear(); st.checked.clear(); }
+      else chkSetOnly(sel, v);
+      render();
+    });
+    new MutationObserver(render).observe(sel, {childList:true, subtree:true});
+    render();
+  }
+  document.addEventListener('click', e=>{
+    if(chkOpenWrap && !e.target.closest('.chk-filter')){ chkOpenWrap.querySelector('.chk-filter-panel').hidden = true; chkOpenWrap = null; }
+  });
+  // --- helpers the tabs use instead of reading <select>.value ---
+  // Does a row whose value for this filter is `value` pass? (blank value =
+  // never an option, so only an exclude filter with EVERYTHING unchecked
+  // hides it.)
+  function chkPass(sel, value){
+    const st = CHK_FILTERS.get(sel); if(!st) return true;
+    let v = (value===null || value===undefined) ? '' : String(value);
+    if(v === '' && sel.dataset.chkBlank === '1') v = '__BLANK__';
+    if(st.mode === 'exclude'){
+      if(st.opts.length && st.unchecked.size >= st.opts.length) return false;
+      return !st.unchecked.has(v);
+    }
+    return st.checked.size === 0 || st.checked.has(v);
+  }
+  // include-mode: the checked values (empty array = no filter)
+  function chkChecked(sel){ const st = CHK_FILTERS.get(sel); return st && st.mode === 'include' ? Array.from(st.checked) : []; }
+  // Show ONLY this value (exclude: uncheck all the others; include: check just it).
+  function chkSetOnly(sel, value){
+    const st = CHK_FILTERS.get(sel); if(!st) return;
+    const r = chkReadOptions(sel);
+    if(st.mode === 'exclude'){
+      if(!r.opts.some(o=>o.value === value)) return;
+      st.unchecked = new Set(r.opts.map(o=>o.value).filter(v=>v !== value));
+    } else { st.checked = new Set([value]); }
+    st.render();
+  }
+  // The one value currently selected, or '' when it isn't exactly one
+  // (used where a single value is needed, e.g. defaults for "+ Add entry").
+  function chkSingle(sel){
+    const st = CHK_FILTERS.get(sel); if(!st) return '';
+    if(st.mode === 'include') return st.checked.size === 1 ? Array.from(st.checked)[0] : '';
+    const r = chkReadOptions(sel);
+    const shown = r.opts.filter(o=>!st.unchecked.has(o.value));
+    return (st.unchecked.size > 0 && shown.length === 1) ? shown[0].value : '';
+  }
+  document.querySelectorAll('select.filter[data-chk]').forEach(makeCheckFilter);
+
   // ---------- Supabase client ----------
   // Guarded: if the CDN script failed to load (offline, blocked, opened as a plain
   // local file instead of a hosted page), avoid a hard crash — show a clear message
@@ -809,6 +1000,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   let clients = [];
   let clientById = {};
   let tasks = [];
+  let vatWorksheet = []; // cor_vat_worksheet rows (see VAT WORKSHEET section)
+  const taxDueFormulas = {}; // task id -> {text, result}; session-only, see Tax Due formula entry in renderTracker
   let credsAccounts = {headers:['ACCOUNT','TIN','NAME','USERNAME','PASSWORD','EMAIL / mobile'], rows:[]};
   let credsOst = {headers:['GIS/AFS','SEC','USER','PASSWORD','EMAIL'], rows:[]};
   let salesSummary = [];
@@ -1072,6 +1265,409 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return undefined;
   }
 
+  // Clients whose Client Status is "0 FILING" or "FOR CLOSURE" have no sales
+  // to report: every quarter's Sales, 2550Q/2551Q Tax Due and 1701Q/1702Q
+  // IT Due on their Sales Summary row are automatically ₱0 (locked, like the
+  // other computed cells) -- see ZERO_STATUS_KEYS. The status used is the
+  // row's own Client Status (falling back to the Client Registry's when the
+  // row has none), same as the Client Status column/filter. Changing the
+  // status to anything else unlocks the cells again (they keep the zeros
+  // until typed over).
+  // The quarter the team is working on / filing RIGHT NOW is the one that
+  // just closed, and it stays "current" for the whole next calendar quarter:
+  // Apr-Jun => Q1, Jul-Sep => Q2, Oct-Dec => Q3, Jan-Mar => Q4 of the
+  // PREVIOUS year (yearOffset -1). (e.g. Q4 is only filed in January.)
+  function currentFilingQuarter(){
+    const cq = Math.floor(new Date().getMonth()/3) + 1;
+    return cq === 1 ? {q:4, yearOffset:-1} : {q:cq-1, yearOffset:0};
+  }
+  const ZERO_STATUSES = new Set(['0 FILING','FOR CLOSURE']);
+  const ZERO_STATUS_KEYS = [1,2,3,4].flatMap(q=>['q'+q+'_sales','q'+q+'_pt_tax_due'].concat(q<4?['q'+q+'_it_tax_due']:[]));
+  function isZeroStatusRow(rec){
+    return ZERO_STATUSES.has(String(resolveSalesClientStatus(rec)||'').trim().toUpperCase());
+  }
+  // Changes needed to bring a row in line: [{key, oldVal, newVal:0}] (empty
+  // if the row isn't a zero-status row or already holds all zeros).
+  function zeroStatusChanges(rec){
+    if(!isZeroStatusRow(rec)) return [];
+    return ZERO_STATUS_KEYS.filter(k=> !(rec[k]!==null && rec[k]!==undefined && rec[k]!=='' && Number(rec[k])===0)).map(k=>({key:k, oldVal:rec[k], newVal:0}));
+  }
+
+  // ===================== VAT WORKSHEET =====================
+  // Per VAT client, per year: the monthly VATABLE Net Sales / VAT-Exempt /
+  // Zero-Rated / Net Purchase (the "VAT 2026" tab of the old Sales Summary
+  // Excel), computed into each quarter's VAT Due with the same formula the
+  // Excel used -- Net Sales x 12% - Net Purchase x 12% - Tax Paid + carried-
+  // over credit -- and pushed into the Sales Summary (Sales, Expenses, and
+  // the 2550Q "Tax Due" column) and the 2550Q task's Tax Due in the Task
+  // Tracker. Needs cor_vat_worksheet_migration.sql (see that file).
+  const VAT_RATE = 0.12;
+  const VAT_MONTH_FIELDS = [['net_sales','Net Sales'],['vat_exempt','VAT-Exempt'],['zero_rated','Zero-Rated'],['net_purchase','Net Purchase']];
+  const VAT_MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function vatNum(v){ if(v===null || v===undefined || v==='') return null; const n = Number(v); return isFinite(n) ? n : null; }
+  function vatRound(n){ return Math.round(n*100)/100; }
+  function vatMonthSum(ws, q, field){
+    let any = false, sum = 0;
+    for(let m=(q-1)*3+1; m<=q*3; m++){ const n = vatNum(ws['m'+m+'_'+field]); if(n!==null){ any = true; sum += n; } }
+    return any ? vatRound(sum) : null;
+  }
+  // All 4 quarters' figures for one worksheet row. Blank (null) means "nothing
+  // typed yet", never a misleading 0.
+  //  - vatDue: null until some Net Sales or Net Purchase exists for the quarter.
+  //  - carryIn: typed value wins; otherwise Q1 = 0 and Q2-Q4 = the previous
+  //    quarter's VAT Due when that was NEGATIVE (an unused input-VAT credit),
+  //    else 0. (The Excel always added the previous quarter's due, positive
+  //    or negative, which double-counts a positive due that was already paid
+  //    -- so only an actual credit is carried forward automatically; type a
+  //    number in Carry-in to override.) The chain passes a credit through a
+  //    quarter that has no activity of its own.
+  //  - salesTotal = vatable + exempt + zero-rated sales (what Sales Summary
+  //    uses for income tax); expensesTotal = Net Purchase + Non-VAT Exp.
+  //  - relief: ENCODED once "Relief done by" is filled; else READY once all
+  //    3 months have both Net Sales and Net Purchase typed (0 counts); else
+  //    INCOMPLETE.
+  function vatYearCalc(ws){
+    const out = [];
+    let prevDueRaw = 0;
+    for(let q=1; q<=4; q++){
+      const sales = vatMonthSum(ws,q,'net_sales'), exempt = vatMonthSum(ws,q,'vat_exempt');
+      const zero = vatMonthSum(ws,q,'zero_rated'), purch = vatMonthSum(ws,q,'net_purchase');
+      const taxPaid = vatNum(ws['q'+q+'_tax_paid']), carryManual = vatNum(ws['q'+q+'_carry_in']), nonVat = vatNum(ws['q'+q+'_nonvat_expenses']);
+      const carryAuto = q===1 ? 0 : Math.min(0, prevDueRaw);
+      const carryIn = carryManual!==null ? carryManual : carryAuto;
+      const outputVat = vatRound((sales||0)*VAT_RATE), inputVat = vatRound((purch||0)*VAT_RATE);
+      const dueRaw = vatRound((sales||0)*VAT_RATE - (purch||0)*VAT_RATE - (taxPaid||0) + carryIn);
+      let complete = true;
+      for(let m=(q-1)*3+1; m<=q*3; m++){
+        if(vatNum(ws['m'+m+'_net_sales'])===null || vatNum(ws['m'+m+'_net_purchase'])===null) complete = false;
+      }
+      const doneBy = String(ws['q'+q+'_relief_done_by']||'').trim();
+      out.push({
+        q, sales, exempt, zero, purch, taxPaid, nonVat, carryIn, carryAuto, carryIsAuto: carryManual===null,
+        outputVat, inputVat,
+        vatDue: (sales!==null || purch!==null) ? dueRaw : null,
+        salesTotal: (sales===null && exempt===null && zero===null) ? null : vatRound((sales||0)+(exempt||0)+(zero||0)),
+        expensesTotal: (purch===null && nonVat===null) ? null : vatRound((purch||0)+(nonVat||0)),
+        complete, doneBy, relief: doneBy ? 'ENCODED' : (complete ? 'READY' : 'INCOMPLETE'),
+      });
+      prevDueRaw = dueRaw;
+    }
+    return out;
+  }
+  // The Sales Summary cell value a VAT worksheet drives (null = not driven:
+  // not a Sales/Expenses/PT-Due key, or the worksheet has nothing for it yet).
+  function vatSalesCellValue(calc, key){
+    const m = /^q([1-4])_(sales|expenses|pt_tax_due)$/.exec(key);
+    if(!m) return null;
+    const qc = calc[Number(m[1])-1];
+    const v = m[2]==='sales' ? qc.salesTotal : m[2]==='expenses' ? qc.expensesTotal : qc.vatDue;
+    return v===null ? null : v;
+  }
+  function vatKey(idNo, year){ return String(idNo||'').trim().toUpperCase() + '|' + Number(year); }
+  function vatWsFor(idNo, year){
+    if(!idNo) return null;
+    const k = vatKey(idNo, year);
+    return vatWorksheet.find(w=> vatKey(w.client_id_no, w.year) === k) || null;
+  }
+
+  // Pushes a worksheet row's computed quarterly Sales / Expenses / VAT Due
+  // into (1) the matching Sales Summary row (same Client ID + year) -- Q*
+  // Sales, Q* Expenses and the 2550Q/2550Q "Tax Due" column (q*_pt_tax_due),
+  // then the annual totals and Net Income -- and (2) the client's 2550Q task
+  // for each quarter in the Task Tracker (Tax Due). Only quarters/fields that
+  // actually have a computed value are written, and only if they differ, so
+  // it's safe to call repeatedly. Every change is audit-logged.
+  async function syncVatLinks(ws){
+    const calc = vatYearCalc(ws);
+    const result = {sales:0, tasks:0};
+    const row = salesSummary.find(r=> vatKey(r.client_id_no, r.year) === vatKey(ws.client_id_no, ws.year));
+    if(row && !isZeroStatusRow(row)){
+      const patch = {}, audits = [];
+      calc.forEach(qc=>{
+        [['q'+qc.q+'_sales', qc.salesTotal], ['q'+qc.q+'_expenses', qc.expensesTotal], ['q'+qc.q+'_pt_tax_due', qc.vatDue]].forEach(([k,v])=>{
+          if(v === null) return;
+          const cur = row[k];
+          if(cur !== null && cur !== undefined && cur !== '' && Number(cur) === v) return;
+          audits.push({key:k, oldVal:cur, newVal:v});
+          row[k] = v; patch[k] = v;
+        });
+      });
+      if(audits.length){
+        const ts = computeSalesQuarterSum(row,'sales'), te = computeSalesQuarterSum(row,'expenses');
+        if(row.total_sales !== ts){ audits.push({key:'total_sales', oldVal:row.total_sales, newVal:ts}); row.total_sales = ts; patch.total_sales = ts; }
+        if(row.total_expenses !== te){ audits.push({key:'total_expenses', oldVal:row.total_expenses, newVal:te}); row.total_expenses = te; patch.total_expenses = te; }
+        const ni = computeNetIncomeAuto(row);
+        if(ni !== undefined && row.net_income !== ni){ audits.push({key:'net_income', oldVal:row.net_income, newVal:ni}); row.net_income = ni; patch.net_income = ni; }
+        const stamp = {updated_at: new Date().toISOString(), updated_by: currentUserEmail};
+        Object.assign(patch, stamp); row.updated_at = stamp.updated_at; row.updated_by = stamp.updated_by;
+        const { error } = await sb.from('cor_sales_summary').update(patch).eq('id', row._id);
+        if(error){ console.error(error); toast('Warning: the Sales Summary could not be updated from the VAT Worksheet — please try again.'); }
+        else {
+          result.sales = audits.length;
+          audits.forEach(a=>{
+            const label = SALES_SUMMARY_COLS.find(c=>c[0]===a.key)[1] + ' (from VAT Worksheet)';
+            logFieldAudit('cor_sales_summary_audit', 'record_id', row._id, a.key, label, a.oldVal, a.newVal);
+          });
+        }
+      }
+    }
+    const client = findClientByIdNo(ws.client_id_no);
+    if(client){
+      for(const qc of calc){
+        if(qc.vatDue === null) continue;
+        const t = tasks.find(x=> x.clientId === client._id && x.form === '2550Q' && x.period === 'Q'+qc.q+' '+ws.year);
+        if(!t || t.taxDue === qc.vatDue) continue;
+        const oldVal = t.taxDue;
+        t.taxDue = qc.vatDue;
+        const { error } = await sb.from('cor_tasks').update({tax_due: t.taxDue}).eq('id', t.id);
+        if(error){ console.error(error); toast('Warning: a 2550Q task\'s Tax Due could not be updated — please try again.'); }
+        else { result.tasks++; logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'tax_due', 'Tax Due (from VAT Worksheet)', oldVal, t.taxDue); }
+      }
+    }
+    return result;
+  }
+
+  // ---- VAT Worksheet tab ----
+  const vatSearch = document.getElementById('vat-search');
+  const vatYearFilter = document.getElementById('vat-year-filter');
+  const vatQuarterFilter = document.getElementById('vat-quarter-filter');
+  const vatReliefFilter = document.getElementById('vat-relief-filter');
+  const vatTable = document.getElementById('vat-table');
+  let vatQuarterInitialized = false;
+  vatSearch.addEventListener('input', ()=>renderVat());
+  [vatYearFilter, vatQuarterFilter, vatReliefFilter].forEach(el=>el.addEventListener('change', ()=>renderVat()));
+
+  function initVatFilters(){
+    const years = new Set();
+    salesSummary.forEach(r=>{ if(normalizeTaxType(r.tax_type)==='VAT' && !isNaN(Number(r.year))) years.add(Number(r.year)); });
+    vatWorksheet.forEach(w=>{ if(!isNaN(Number(w.year))) years.add(Number(w.year)); });
+    const list = Array.from(years).sort((a,b)=>b-a).map(String);
+    const prev = vatYearFilter.value;
+    vatYearFilter.innerHTML = list.length ? list.map(y=>`<option value="${y}">${y}</option>`).join('') : '<option value="">No VAT rows yet</option>';
+    if(list.includes(prev)) vatYearFilter.value = prev;
+    else if(list.length){ const cy = String(new Date().getFullYear()); vatYearFilter.value = list.includes(cy) ? cy : list[0]; }
+    if(!vatQuarterInitialized){
+      // Default to the quarter being filed right now (see currentFilingQuarter).
+      const fq = currentFilingQuarter();
+      vatQuarterFilter.value = String(fq.q);
+      if(fq.yearOffset && list.includes(String(new Date().getFullYear()+fq.yearOffset))) vatYearFilter.value = String(new Date().getFullYear()+fq.yearOffset);
+      vatQuarterInitialized = true;
+    }
+  }
+  function vatRowsForYear(year){
+    const map = new Map();
+    let noClientId = 0;
+    salesSummary.forEach(r=>{
+      if(Number(r.year) !== year || normalizeTaxType(r.tax_type) !== 'VAT') return;
+      const id = String(r.client_id_no||'').trim();
+      if(!id){ noClientId++; return; }
+      const k = id.toUpperCase();
+      if(!map.has(k)) map.set(k, {key:k, idNo:id, salesRow:r, ws:null});
+    });
+    vatWorksheet.forEach(w=>{
+      if(Number(w.year) !== year) return;
+      const k = String(w.client_id_no||'').trim().toUpperCase();
+      const e = map.get(k) || {key:k, idNo:w.client_id_no, salesRow:null, ws:null};
+      e.ws = w; map.set(k, e);
+    });
+    const rows = Array.from(map.values()).map(e=>{
+      const c = findClientByIdNo(e.idNo);
+      e.name = c ? (c.NAME||'') : (e.salesRow ? (e.salesRow.name||'') : '');
+      e.tin = c ? (c.TIN||'') : (e.salesRow ? (e.salesRow.tin||'') : '');
+      e.trade = c ? (c['TRADE NAME']||'') : (e.salesRow ? (e.salesRow.trade_name||'') : '');
+      return e;
+    });
+    rows.sort((a,b)=> String(a.name).localeCompare(String(b.name)));
+    return {rows, noClientId};
+  }
+  function fmtVatMoney(n){
+    if(n===null || n===undefined) return '';
+    return Number(n).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+  const VAT_RELIEF_LABEL = {READY:'READY FOR ENCODING', INCOMPLETE:'Incomplete', ENCODED:'Encoded'};
+  function vatCalcCells(qc){
+    return {
+      sales: fmtVatMoney(qc.sales), purch: fmtVatMoney(qc.purch),
+      outputVat: qc.sales===null ? '' : fmtVatMoney(qc.outputVat), inputVat: qc.purch===null ? '' : fmtVatMoney(qc.inputVat),
+      vatDue: fmtVatMoney(qc.vatDue), salesTotal: fmtVatMoney(qc.salesTotal), expensesTotal: fmtVatMoney(qc.expensesTotal),
+    };
+  }
+  function renderVat(){
+    initVatFilters();
+    const year = Number(vatYearFilter.value);
+    const q = Number(vatQuarterFilter.value) || 1;
+    if(!year){
+      vatTable.innerHTML = '<div class="small-note" style="padding:14px;">No VAT clients yet — set a Sales Summary row\'s Tax Type to VAT (and give it a Client ID) and it will appear here.</div>';
+      document.getElementById('vat-count').textContent = '';
+      return;
+    }
+    const needle = (vatSearch.value||'').trim().toLowerCase();
+    const reliefs = chkChecked(vatReliefFilter);
+    const {rows: allRows, noClientId} = vatRowsForYear(year);
+    const counts = {READY:0, INCOMPLETE:0, ENCODED:0};
+    const shown = [];
+    allRows.forEach(e=>{
+      const calc = vatYearCalc(e.ws || {});
+      e.calc = calc;
+      counts[calc[q-1].relief]++;
+      if(needle && !(`${e.name} ${e.tin} ${e.trade} ${e.idNo}`.toLowerCase().includes(needle))) return;
+      if(reliefs.length && !reliefs.includes(calc[q-1].relief)) return;
+      shown.push(e);
+    });
+    document.getElementById('vat-count').textContent =
+      `${shown.length} of ${allRows.length} VAT client(s) · Q${q} ${year}: ${counts.READY} ready for encoding, ${counts.INCOMPLETE} incomplete, ${counts.ENCODED} encoded` +
+      (noClientId ? ` · ${noClientId} VAT Sales Summary row(s) have no Client ID and can't be linked (fix with Settings → Relink)` : '');
+    const m0 = (q-1)*3;
+    const monthTh = [0,1,2].map(i=> VAT_MONTH_FIELDS.map(([,label])=>`<th><div style="font-size:9.5px;color:var(--ink-soft);">${VAT_MONTH_NAMES[m0+i]}</div>${esc(label)}</th>`).join('')).join('');
+    const head = `<tr><th class="frozen-col" style="left:0;width:230px;min-width:230px;">Client</th>${monthTh}
+      <th>Tax Paid<div style="font-size:9.5px;color:var(--ink-soft);">prev. months</div></th><th>Carry-in<div style="font-size:9.5px;color:var(--ink-soft);">credit (−)</div></th><th>Non-VAT Exp<div style="font-size:9.5px;color:var(--ink-soft);">annual only</div></th>
+      <th>Total Net Sales</th><th>Total Net Purchase</th><th>Output VAT 12%</th><th>Input VAT 12%</th><th>VAT Due</th>
+      <th>→ Sales Summary Sales</th><th>→ Sales Summary Expenses</th><th>VAT Relief</th><th>Relief done by</th><th>Remarks</th><th></th></tr>`;
+    const numInput = (field, value, extra)=> `<input class="inline-text vat-cell mono" data-key="${field}" style="width:88px;text-align:right;" value="${esc(fmtNumInput(value))}"${extra||''}>`;
+    const body = shown.map(e=>{
+      const ws = e.ws || {};
+      const qc = e.calc[q-1];
+      const cells = vatCalcCells(qc);
+      let inputs = '';
+      for(let i=0;i<3;i++){ const m = m0+i+1; VAT_MONTH_FIELDS.forEach(([f])=>{ inputs += `<td>${numInput('m'+m+'_'+f, ws['m'+m+'_'+f])}</td>`; }); }
+      return `<tr data-key="${esc(e.key)}" data-idno="${esc(e.idNo)}">
+        <td class="frozen-col" style="left:0;width:230px;min-width:230px;"><b>${esc(e.name||'(not in Client Registry)')}</b><div style="color:var(--ink-soft);font-size:10.5px;">${esc(e.idNo)} · TIN ${esc(fmtTin(e.tin))}${e.trade?' · '+esc(e.trade):''}</div></td>
+        ${inputs}
+        <td>${numInput('q'+q+'_tax_paid', ws['q'+q+'_tax_paid'])}</td>
+        <td>${numInput('q'+q+'_carry_in', ws['q'+q+'_carry_in'], ` placeholder="auto ${esc(fmtNumInput(qc.carryAuto)||'0')}" title="Leave blank for automatic (last quarter's unused credit). Type a number to override, negative = credit."`)}</td>
+        <td>${numInput('q'+q+'_nonvat_expenses', ws['q'+q+'_nonvat_expenses'])}</td>
+        <td class="num mono" data-calc="sales">${cells.sales}</td>
+        <td class="num mono" data-calc="purch">${cells.purch}</td>
+        <td class="num mono" data-calc="outputVat">${cells.outputVat}</td>
+        <td class="num mono" data-calc="inputVat">${cells.inputVat}</td>
+        <td class="num mono" data-calc="vatDue" style="font-weight:600;">${cells.vatDue}</td>
+        <td class="num mono" data-calc="salesTotal" style="color:var(--ink-soft);">${cells.salesTotal}</td>
+        <td class="num mono" data-calc="expensesTotal" style="color:var(--ink-soft);">${cells.expensesTotal}</td>
+        <td><span class="vat-badge ${qc.relief.toLowerCase()}" data-calc="relief">${VAT_RELIEF_LABEL[qc.relief]}</span></td>
+        <td><input class="inline-text vat-cell" data-key="q${q}_relief_done_by" style="width:130px;" placeholder="e.g. DONE BY ARVI 4/23" value="${esc(ws['q'+q+'_relief_done_by']||'')}"></td>
+        <td><input class="inline-text vat-cell" data-key="q${q}_remarks" style="width:140px;" value="${esc(ws['q'+q+'_remarks']||'')}"></td>
+        <td>${e.ws ? '<button class="tiny history-vat-btn">History</button>' : ''}</td>
+      </tr>`;
+    }).join('');
+    vatTable.innerHTML = `<table><thead>${head}</thead><tbody>${body || `<tr><td colspan="26" style="text-align:center;color:var(--ink-soft);padding:24px;">No matching VAT clients.</td></tr>`}</tbody></table>`;
+  }
+
+  // Refresh just the computed cells of one row in place (no re-render), so
+  // tabbing through the inputs never loses focus mid-entry.
+  function refreshVatRowComputed(tr, ws, q){
+    const qc = vatYearCalc(ws)[q-1];
+    const cells = vatCalcCells(qc);
+    Object.keys(cells).forEach(k=>{ const el = tr.querySelector(`[data-calc="${k}"]`); if(el) el.textContent = cells[k]; });
+    const badge = tr.querySelector('[data-calc="relief"]');
+    if(badge){ badge.textContent = VAT_RELIEF_LABEL[qc.relief]; badge.className = 'vat-badge ' + qc.relief.toLowerCase(); }
+    const carry = tr.querySelector(`.vat-cell[data-key="q${q}_carry_in"]`);
+    if(carry) carry.placeholder = 'auto ' + (fmtNumInput(qc.carryAuto) || '0');
+  }
+
+  const vatInserting = {};
+  async function ensureVatWs(idNo, year){
+    const existing = vatWsFor(idNo, year);
+    if(existing) return existing;
+    const k = vatKey(idNo, year);
+    if(!vatInserting[k]){
+      vatInserting[k] = (async()=>{
+        let { data, error } = await sb.from('cor_vat_worksheet').insert({client_id_no: idNo, year, updated_by: currentUserEmail}).select().single();
+        if(error){
+          // Someone else created the same client+year at the same moment
+          // (unique constraint) -- just use theirs.
+          const again = await sb.from('cor_vat_worksheet').select('*').eq('client_id_no', idNo).eq('year', year).maybeSingle();
+          if(again.error || !again.data) throw error;
+          data = again.data;
+        }
+        // The realtime echo of this insert may already have added it.
+        return vatWsFor(idNo, year) || (vatWorksheet.push(data), data);
+      })().finally(()=>{ delete vatInserting[k]; });
+    }
+    return vatInserting[k];
+  }
+
+  vatTable.addEventListener('change', async e=>{
+    const inp = e.target.closest('.vat-cell');
+    if(!inp) return;
+    const tr = inp.closest('tr[data-key]');
+    const field = inp.dataset.key;
+    const idNo = tr.dataset.idno, year = Number(vatYearFilter.value), q = Number(vatQuarterFilter.value) || 1;
+    const isText = /_relief_done_by$|_remarks$/.test(field);
+    const raw = inp.value.trim();
+    let val, formula = null;
+    if(isText) val = raw === '' ? null : raw;
+    else if(raw[0] === '='){
+      try { val = evalTaxFormula(raw); formula = raw; }
+      catch(err){
+        toast('Formula error: '+err.message+' — nothing was changed.');
+        const cur = (vatWsFor(idNo, year) || {})[field];
+        inp.value = fmtNumInput(cur);
+        return;
+      }
+    } else {
+      val = raw === '' ? null : parseFloat(raw.replace(/,/g,''));
+      if(val !== null && isNaN(val)){ toast(`"${raw}" doesn't look like a number — saved as blank, please double-check.`); val = null; }
+    }
+    let ws;
+    try { ws = await ensureVatWs(idNo, year); }
+    catch(err){ console.error(err); toast('Could not save — the VAT Worksheet table may not be set up yet (run cor_vat_worksheet_migration.sql in Supabase).'); inp.value = ''; return; }
+    const oldVal = ws[field];
+    ws[field] = val;
+    inp.value = isText ? (val===null?'':val) : fmtNumInput(val);
+    const stamp = {updated_at: new Date().toISOString(), updated_by: currentUserEmail};
+    ws.updated_at = stamp.updated_at; ws.updated_by = stamp.updated_by;
+    const { error } = await sb.from('cor_vat_worksheet').update({[field]: val, ...stamp}).eq('id', ws.id);
+    if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); return; }
+    const label = VAT_FIELD_LABEL(field) + (formula ? ' (formula '+formula+')' : '');
+    logFieldAudit('cor_vat_worksheet_audit', 'record_id', ws.id, field, label, oldVal, val);
+    refreshVatRowComputed(tr, ws, q);
+    if(!tr.querySelector('.history-vat-btn')){ const last = tr.lastElementChild; if(last) last.innerHTML = '<button class="tiny history-vat-btn">History</button>'; }
+    const r = await syncVatLinks(ws);
+    if(r.sales || r.tasks) toast(`VAT Due updated → Sales Summary${r.tasks ? ' + 2550Q task' : ''}.`);
+  });
+  function VAT_FIELD_LABEL(field){
+    let m = /^m(\d+)_(net_sales|vat_exempt|zero_rated|net_purchase)$/.exec(field);
+    if(m) return VAT_MONTH_NAMES[Number(m[1])-1] + ' ' + VAT_MONTH_FIELDS.find(([k])=>k===m[2])[1];
+    m = /^q(\d)_(tax_paid|carry_in|nonvat_expenses|relief_done_by|remarks)$/.exec(field);
+    if(m) return 'Q'+m[1]+' ' + ({tax_paid:'Tax Paid', carry_in:'Carry-in', nonvat_expenses:'Non-VAT Expenses', relief_done_by:'VAT Relief done by', remarks:'Remarks'})[m[2]];
+    return field;
+  }
+  vatTable.addEventListener('click', e=>{
+    const btn = e.target.closest('.history-vat-btn');
+    if(!btn) return;
+    const tr = btn.closest('tr[data-key]');
+    const ws = vatWsFor(tr.dataset.idno, Number(vatYearFilter.value));
+    if(ws) openRowHistoryModal('cor_vat_worksheet_audit', 'record_id', ws.id, `VAT Worksheet — ${tr.dataset.idno} ${vatYearFilter.value}`);
+  });
+  document.getElementById('vat-sync-all-btn').addEventListener('click', async ()=>{
+    const year = Number(vatYearFilter.value);
+    const list = vatWorksheet.filter(w=>Number(w.year)===year);
+    if(!list.length){ toast('Nothing to sync yet for '+(year||'this year')+'.'); return; }
+    const btn = document.getElementById('vat-sync-all-btn');
+    btn.disabled = true;
+    let sales = 0, taskCount = 0;
+    for(const w of list){ const r = await syncVatLinks(w); sales += r.sales; taskCount += r.tasks; }
+    btn.disabled = false;
+    toast(sales || taskCount ? `Synced: ${sales} Sales Summary value(s) and ${taskCount} 2550Q task(s) updated.` : 'Everything was already in sync.');
+  });
+  function handleVatRealtime(payload){
+    if(payload.eventType === 'DELETE'){
+      vatWorksheet = vatWorksheet.filter(w=>w.id !== payload.old.id);
+    } else {
+      const idx = vatWorksheet.findIndex(w=>w.id === payload.new.id);
+      if(idx >= 0) vatWorksheet[idx] = payload.new; else vatWorksheet.push(payload.new);
+    }
+    const tab = document.querySelector('.tab-btn.active').dataset.tab;
+    if(tab === 'vat'){
+      // Don't rebuild the table under someone's cursor mid-entry (our own
+      // save echoes back through here too) -- refresh computed cells only.
+      if(vatTable.contains(document.activeElement)){
+        const q = Number(vatQuarterFilter.value) || 1;
+        vatTable.querySelectorAll('tr[data-key]').forEach(tr=>{ const w = vatWsFor(tr.dataset.idno, Number(vatYearFilter.value)); if(w) refreshVatRowComputed(tr, w, q); });
+      } else renderVat();
+    } else if(tab === 'sales') renderSalesSummary();
+  }
+
   const STATUS_DISPLAY = {NA:'N/A'};
   function fmtPeso(n){
     if(n===null || n===undefined || n==='') return '';
@@ -1090,6 +1686,107 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const num = Number(n);
     if(!isFinite(num)) return String(n);
     return num.toLocaleString('en-PH', {maximumFractionDigits:2});
+  }
+
+  // ---------- Excel/Google-Sheets-style formulas in Tax Due fields ----------
+  // Typing a value that starts with "=" (e.g. =(500000*12%)-30000-5000, or
+  // =ROUND(1234567*0.12/1.12,2)) is evaluated as arithmetic and the RESULT
+  // is what gets saved, just like entering a formula in a spreadsheet cell.
+  // Hand-written recursive-descent parser -- deliberately NOT eval()/Function,
+  // so nothing a person types can ever run as code. Supports + - * / ^,
+  // unary minus, parentheses, a postfix % (12% = 0.12), thousands commas
+  // (1,500,000), a leading peso sign, and ROUND/ABS/MAX/MIN/SUM/IF-free
+  // basics. (Function arguments are separated by ; or , -- note "1,500"
+  // inside a function call is read as the number 1500, not two arguments;
+  // use ; between arguments, e.g. =SUM(1500;200).)
+  function evalTaxFormula(src){
+    let s = String(src).trim();
+    if(s[0] !== '=') throw new Error('Formula must start with =');
+    s = s.slice(1).replace(/₱/g,'').trim();
+    if(!s) throw new Error('Formula is empty');
+    const tokens = [];
+    const re = /\s*(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|\.\d+|[A-Za-z]+|[-+*\/^%(),;])/y;
+    let pos = 0, m;
+    while(pos < s.length){
+      re.lastIndex = pos;
+      m = re.exec(s);
+      if(!m){
+        if(/^\s*$/.test(s.slice(pos))) break;
+        throw new Error('Unexpected character "'+s.slice(pos).trim()[0]+'"');
+      }
+      tokens.push(m[1]);
+      pos = re.lastIndex;
+    }
+    let i = 0;
+    const peek = ()=> tokens[i];
+    const next = ()=> tokens[i++];
+    const FUNCS = {
+      ROUND: (a)=>{ if(a.length<1||a.length>2) throw new Error('ROUND needs 1 or 2 arguments'); const d = a.length===2 ? a[1] : 0; const f = Math.pow(10, d); return Math.round(a[0]*f)/f; },
+      ABS: (a)=>{ if(a.length!==1) throw new Error('ABS needs 1 argument'); return Math.abs(a[0]); },
+      MAX: (a)=>{ if(!a.length) throw new Error('MAX needs arguments'); return Math.max(...a); },
+      MIN: (a)=>{ if(!a.length) throw new Error('MIN needs arguments'); return Math.min(...a); },
+      SUM: (a)=> a.reduce((x,y)=>x+y, 0),
+    };
+    function parseExpr(){
+      let v = parseTerm();
+      while(peek()==='+' || peek()==='-'){ const op = next(); const r = parseTerm(); v = op==='+' ? v+r : v-r; }
+      return v;
+    }
+    function parseTerm(){
+      let v = parsePower();
+      while(peek()==='*' || peek()==='/'){
+        const op = next(); const r = parsePower();
+        if(op==='/' && r===0) throw new Error('Division by zero');
+        v = op==='*' ? v*r : v/r;
+      }
+      return v;
+    }
+    function parsePower(){
+      const base = parseUnary();
+      if(peek()==='^'){ next(); return Math.pow(base, parsePower()); }
+      return base;
+    }
+    function parseUnary(){
+      if(peek()==='-'){ next(); return -parseUnary(); }
+      if(peek()==='+'){ next(); return parseUnary(); }
+      return parsePostfix();
+    }
+    function parsePostfix(){
+      let v = parsePrimary();
+      while(peek()==='%'){ next(); v = v/100; }
+      return v;
+    }
+    function parsePrimary(){
+      const t = next();
+      if(t===undefined) throw new Error('Formula ended unexpectedly');
+      if(/^[\d.]/.test(t)) return parseFloat(t.replace(/,/g,''));
+      if(t==='('){
+        const v = parseExpr();
+        if(next()!==')') throw new Error('Missing closing )');
+        return v;
+      }
+      if(/^[A-Za-z]+$/.test(t)){
+        const fn = FUNCS[t.toUpperCase()];
+        if(!fn) throw new Error('Unknown function "'+t+'"');
+        if(next()!=='(') throw new Error(t.toUpperCase()+' needs ( )');
+        const args = [];
+        if(peek()===')'){ next(); }
+        else {
+          for(;;){
+            args.push(parseExpr());
+            const sep = next();
+            if(sep===')') break;
+            if(sep!==',' && sep!==';') throw new Error('Missing ) in '+t.toUpperCase());
+          }
+        }
+        return fn(args);
+      }
+      throw new Error('Unexpected "'+t+'"');
+    }
+    const result = parseExpr();
+    if(i < tokens.length) throw new Error('Unexpected "'+tokens[i]+'"');
+    if(!isFinite(result)) throw new Error('Result is not a valid number');
+    return Math.round(result*100)/100;
   }
 
   // ---------- DB <-> app object mapping ----------
@@ -1213,6 +1910,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     registry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 20v-1.8a3.2 3.2 0 0 0-3.2-3.2H6.2A3.2 3.2 0 0 0 3 18.2V20"/><circle cx="9.5" cy="7.5" r="3.5"/><path d="M21 20v-1.5a3 3 0 0 0-2.2-2.9"/><path d="M15.2 4.2a3.5 3.5 0 0 1 0 6.6"/></svg>',
     scan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M20 8V6a2 2 0 0 0-2-2h-2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><circle cx="12" cy="12" r="3.2"/></svg>',
     creds: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M11 12l8-8"/><path d="M16 7l2.5 2.5"/><path d="M13.5 9.5l2 2"/></svg>',
+    vat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="10" y2="11"/><line x1="12" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="10" y2="15"/><line x1="12" y1="15" x2="16" y2="15"/></svg>',
     sales: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="20"/><rect x="6" y="12" width="3" height="8"/><rect x="11" y="8" width="3" height="12"/><rect x="16" y="4" width="3" height="16"/></svg>',
     tax2307: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M9 9h6"/><path d="M9 13h6"/><path d="M9 17h3"/></svg>',
     sawt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l9 6 9-6"/><rect x="3" y="5" width="18" height="14" rx="2"/></svg>',
@@ -1232,6 +1930,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     scan:{icon:'scan', title:'Scan & Add (OCR)', sub:'Upload a COR photo or PDF to auto-fill a new client record.'},
     creds:{icon:'creds', title:'Credentials', sub:'Stored account logins for client portals, encrypted at rest.'},
     sales:{icon:'sales', title:'Sales Summary', sub:'Quarterly sales figures per client for tax and VAT filings.'},
+    vat:{icon:'vat', title:'VAT Worksheet', sub:'Monthly vatable sales and purchases per VAT client, computed into VAT Due.'},
     tax2307:{icon:'tax2307', title:'2307 Register', sub:'Creditable withholding tax certificates issued to clients.'},
     sawt:{icon:'sawt', title:'SAWT / 2307 Received', sub:'Certificates received from clients’ customers, for SAWT filing.'},
     report:{icon:'report', title:'eBIRForms Profile', sub:'Just the fields eBIRForms needs, ready to copy-paste.'},
@@ -1269,10 +1968,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(tab === 'registry') renderRegistry();
     if(tab === 'creds') renderCreds();
     if(tab === 'sales') renderSalesSummary();
+    if(tab === 'vat') renderVat();
     if(tab === 'tax2307') renderEntries2307();
     if(tab === 'sawt') renderSawt();
     if(tab === 'report') renderReport();
-    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderCredsAccessLog(); }
+    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderZeroStatusTool(); renderCredsAccessLog(); }
   }
 
   // Jumps to another tab programmatically (reuses the same click handler
@@ -1342,13 +2042,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     `;
     const missingTile = document.getElementById('stat-missing-sales');
     if(missingTile) missingTile.addEventListener('click', ()=> goToTab('sales', ()=>{
-      salesYearFilter.value = String(thisYear);
-      salesMissingFilter.value = qCol;
+      chkSetOnly(salesYearFilter, String(thisYear));
+      chkSetOnly(salesMissingFilter, qCol);
       renderSalesSummary();
     }));
     const sawtTile = document.getElementById('stat-pending-sawt');
     if(sawtTile) sawtTile.addEventListener('click', ()=> goToTab('sawt', ()=>{
-      sawtCertFilter.value = 'Pending';
+      chkSetOnly(sawtCertFilter, 'Pending');
       renderSawt();
     }));
   }
@@ -1373,11 +2073,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function renderCalendar(){
     renderCalStats();
     const q = (calSearch.value||'').toLowerCase();
-    const sf = calStatusFilter.value;
+    // Status is a checkbox filter: a task shows if it matches ANY checked
+    // status; nothing checked = the default upcoming window below.
+    const sfs = chkChecked(calStatusFilter);
     let pool = tasks.filter(t=>{
-      if(sf==='PENDING' && t.status!=='PENDING') return false;
-      if(sf==='DONE' && t.status!=='DONE') return false;
-      if(sf==='OVERDUE' && !isOverdue(t)) return false;
+      if(sfs.length && !(sfs.includes('PENDING') && t.status==='PENDING') && !(sfs.includes('DONE') && t.status==='DONE') && !(sfs.includes('OVERDUE') && isOverdue(t))) return false;
       if(q){
         const c = taskClient(t);
         const hay = (c.NAME+' '+c.TIN+' '+t.form+' '+t.period).toLowerCase();
@@ -1386,7 +2086,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       return true;
     });
     // limit window unless searching/filtering explicitly
-    const windowed = !q && sf==='ALL';
+    const windowed = !q && !sfs.length;
     if(windowed){
       pool = pool.filter(t=> (t.status!=='DONE' && t.status!=='NA') ? daysUntil(t.due) <= 45 || isOverdue(t) : false);
     }
@@ -1460,71 +2160,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const trPeriodFilter = document.getElementById('tr-period-filter');
   const trStatusFilter = document.getElementById('tr-status-filter');
   const trNotesFilter = document.getElementById('tr-notes-filter');
-  const trClientStatusFilterBtn = document.getElementById('tr-client-status-filter-btn');
-  const trClientStatusFilterPanel = document.getElementById('tr-client-status-filter-panel');
-  const trClientStatusFilterList = document.getElementById('tr-client-status-filter-list');
+  const trClientStatusFilter = document.getElementById('tr-client-status-filter');
   const trPaymentFilter = document.getElementById('tr-payment-filter');
   const trStageFilter = document.getElementById('tr-stage-filter');
   const trSortFilter = document.getElementById('tr-sort-filter');
   [trSearch, trNotesFilter].forEach(el=>el.addEventListener('input', renderTracker));
-  [trFormFilter, trPeriodFilter, trStatusFilter, trPaymentFilter, trStageFilter, trSortFilter].forEach(el=>el.addEventListener('change', renderTracker));
-
-  // Client Status filter: a checkbox dropdown, not a single-select -- e.g.
-  // "ayaw kong makita" (don't want to see) one or two statuses like "FOR
-  // CLOSURE" while keeping everything else visible at once, which a plain
-  // dropdown can't express (picking one value hides every other value too).
-  // Tracked as the set of UNCHECKED/EXCLUDED statuses, so "nothing excluded"
-  // is the natural default ("All client statuses", same as before this
-  // feature). A blank/unset Client Status is its own toggleable bucket,
-  // keyed '' and shown as "(No status)".
-  let trClientStatusExcluded = new Set();
-  function updateClientStatusFilterBtnLabel(){
-    const total = trClientStatusFilterList.querySelectorAll('input[type="checkbox"]').length;
-    const excluded = trClientStatusExcluded.size;
-    trClientStatusFilterBtn.textContent = excluded===0 ? 'All client statuses'
-      : excluded>=total ? 'No client statuses (none shown)'
-      : `Client status: ${total-excluded} of ${total} shown`;
-    trClientStatusFilterBtn.classList.toggle('is-active', excluded>0);
-  }
-  function renderClientStatusFilterList(){
-    const distinct = Array.from(new Set(clients.map(c=> c['CLIENT?'] || '')));
-    const named = distinct.filter(s=>s).sort();
-    const statusKeys = distinct.includes('') ? [...named, ''] : named;
-    // Prune any previously-excluded status that no longer exists (e.g. the
-    // last client with that status was deleted/reassigned) so the set
-    // doesn't grow stale, same "preserve only while still valid" rule used
-    // for the other Tracker filters.
-    trClientStatusExcluded = new Set(Array.from(trClientStatusExcluded).filter(s=>statusKeys.includes(s)));
-    trClientStatusFilterList.innerHTML = statusKeys.length ? statusKeys.map(s=>{
-      const label = s==='' ? '(No status)' : s;
-      const checked = !trClientStatusExcluded.has(s);
-      return `<label class="chk-filter-item"><input type="checkbox" data-status="${esc(s)}" ${checked?'checked':''}>${esc(label)}</label>`;
-    }).join('') : '<div class="small-note" style="margin:0;">No client statuses yet.</div>';
-    updateClientStatusFilterBtnLabel();
-  }
-  trClientStatusFilterBtn.addEventListener('click', e=>{
-    e.stopPropagation();
-    trClientStatusFilterPanel.hidden = !trClientStatusFilterPanel.hidden;
-  });
-  document.addEventListener('click', e=>{
-    if(!trClientStatusFilterPanel.hidden && !e.target.closest('#tr-client-status-filter-wrap')) trClientStatusFilterPanel.hidden = true;
-  });
-  trClientStatusFilterList.addEventListener('change', e=>{
-    const cb = e.target.closest('input[type="checkbox"]');
-    if(!cb) return;
-    const s = cb.dataset.status;
-    if(cb.checked) trClientStatusExcluded.delete(s); else trClientStatusExcluded.add(s);
-    updateClientStatusFilterBtnLabel();
-    renderTracker();
-  });
-  trClientStatusFilterPanel.querySelectorAll('.chk-filter-action').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      if(btn.dataset.act==='all') trClientStatusExcluded.clear();
-      else trClientStatusExcluded = new Set(Array.from(trClientStatusFilterList.querySelectorAll('input[type="checkbox"]')).map(cb=>cb.dataset.status));
-      renderClientStatusFilterList();
-      renderTracker();
-    });
-  });
+  [trFormFilter, trPeriodFilter, trStatusFilter, trClientStatusFilter, trPaymentFilter, trStageFilter, trSortFilter].forEach(el=>el.addEventListener('change', renderTracker));
 
   // Rebuilding the <select> options (needed whenever the task list changes,
   // e.g. a live update from another staff member) used to always reset the
@@ -1532,18 +2173,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // Preserve the current selection across the rebuild whenever it's still
   // a valid option.
   function initTrackerFilters(){
-    const prevForm = trFormFilter.value, prevPeriod = trPeriodFilter.value;
     const forms = Array.from(new Set(tasks.map(t=>t.form))).sort();
     trFormFilter.innerHTML = '<option value="">All forms</option>' + forms.map(f=>`<option value="${esc(f)}">${esc(f)}</option>`).join('');
     const periods = Array.from(new Set(tasks.map(t=>t.period))).sort();
     trPeriodFilter.innerHTML = '<option value="">All periods</option>' + periods.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('');
-    if(forms.includes(prevForm)) trFormFilter.value = prevForm;
-    if(periods.includes(prevPeriod)) trPeriodFilter.value = prevPeriod;
     // Client Status (CLIENT?) filter -- e.g. "0 FILING" or "FOR CLOSURE" --
     // so staff can hide just the tasks belonging to clients in statuses
     // they don't want cluttering the list (zero-filers, clients winding
-    // down) while still seeing everyone else. See renderClientStatusFilterList.
-    renderClientStatusFilterList();
+    // down) while still seeing everyone else. A client with no status set
+    // gets its own "(No status)" checkbox (value __BLANK__).
+    const clientStatuses = Array.from(new Set(clients.map(c=>c['CLIENT?']).filter(Boolean))).sort();
+    trClientStatusFilter.innerHTML = '<option value="">All client statuses</option>' + clientStatuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('') +
+      (clients.some(c=>!c['CLIENT?']) ? '<option value="__BLANK__">(No status)</option>' : '');
   }
 
   // Keep the Task Tracker's table filling all the way down to the bottom of
@@ -1560,27 +2201,22 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function renderTracker(){
     const q = (trSearch.value||'').toLowerCase();
     const nq = (trNotesFilter.value||'').toLowerCase();
-    const ff = trFormFilter.value, pf = trPeriodFilter.value, sf = trStatusFilter.value;
-    const payf = trPaymentFilter.value;
-    const stf = trStageFilter.value;
+    // Every dropdown filter here is a checkbox filter (see CHK_FILTERS):
+    // Form / Period / Client Status / Stage hide the UNCHECKED values;
+    // Status and Payment are "matches ANY checked condition" (nothing
+    // checked = no filter).
+    const sfs = chkChecked(trStatusFilter), payfs = chkChecked(trPaymentFilter);
+    const statusMatch = (t, v)=> v==='OVERDUE' ? isOverdue(t) : v==='D' ? t.status==='DONE' : v==='P' ? t.status==='PENDING'
+      : v==='Z' ? t.status==='ZERO' : v==='N' ? !!t.notes : v==='A' ? t.status==='NA' : false;
+    const payMatch = (t, v)=> v==='DUE_UNPAID' ? (t.taxDue!==null && t.taxDue>0 && !t.paymentStatus)
+      : v==='LIAISON' ? t.paymentStatus==='GIVEN TO LIAISON' : v==='PAID' ? t.paymentStatus==='PAID' : false;
     let pool = tasks.filter(t=>{
-      if(ff && t.form!==ff) return false;
-      if(pf && t.period!==pf) return false;
-      if(sf==='OVERDUE' && !isOverdue(t)) return false;
-      else if(sf==='D' && t.status!=='DONE') return false;
-      else if(sf==='P' && t.status!=='PENDING') return false;
-      else if(sf==='Z' && t.status!=='ZERO') return false;
-      else if(sf==='N' && !t.notes) return false;
-      else if(sf==='A' && t.status!=='NA') return false;
-      // Client Status is a checkbox dropdown now (see trClientStatusExcluded
-      // above) -- a task is hidden only if its client's status is one of
-      // the UNCHECKED ones, so multiple statuses can be hidden at once
-      // instead of only ever isolating a single value.
-      if(trClientStatusExcluded.has(taskClient(t)['CLIENT?'] || '')) return false;
-      if(payf==='DUE_UNPAID' && !(t.taxDue!==null && t.taxDue>0 && !t.paymentStatus)) return false;
-      else if(payf==='LIAISON' && t.paymentStatus!=='GIVEN TO LIAISON') return false;
-      else if(payf==='PAID' && t.paymentStatus!=='PAID') return false;
-      if(stf && t.stage!==stf) return false;
+      if(!chkPass(trFormFilter, t.form)) return false;
+      if(!chkPass(trPeriodFilter, t.period)) return false;
+      if(sfs.length && !sfs.some(v=>statusMatch(t, v))) return false;
+      if(!chkPass(trClientStatusFilter, taskClient(t)['CLIENT?'] || '__BLANK__')) return false;
+      if(payfs.length && !payfs.some(v=>payMatch(t, v))) return false;
+      if(!chkPass(trStageFilter, t.stage)) return false;
       if(nq && !(t.notes||'').toLowerCase().includes(nq)) return false;
       if(q){
         const c = taskClient(t);
@@ -1675,15 +2311,51 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
         else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'status', 'Status', oldVal, t.status);
       });
-      tr.querySelector('.taxduef').addEventListener('change', async e=>{
+      const taxDueInput = tr.querySelector('.taxduef');
+      // Excel-style: focusing a cell that was filled by a formula shows the
+      // formula again (kept in memory for this session only -- the database
+      // only stores the computed number), and leaving it restores the result.
+      // Kept in a separate map (not on the task object) because realtime
+      // updates replace task objects wholesale, including echoes of our own
+      // saves. The entry only applies while the stored number still equals
+      // what that formula produced -- if anyone changed the value since,
+      // the stale formula is ignored.
+      const savedFormula = ()=>{
+        const f = taxDueFormulas[t.id];
+        const cur = tasks.find(x=>x.id===t.id);
+        return (f && cur && cur.taxDue === f.result) ? f.text : null;
+      };
+      taxDueInput.addEventListener('focus', ()=>{
+        const f = savedFormula();
+        if(f) taxDueInput.value = f;
+      });
+      taxDueInput.addEventListener('blur', ()=>{
+        const f = savedFormula();
+        const cur = tasks.find(x=>x.id===t.id);
+        if(f && taxDueInput.value === f) taxDueInput.value = cur && cur.taxDue!==null ? cur.taxDue : '';
+      });
+      { const f = savedFormula(); if(f) taxDueInput.title = 'Formula: '+f; }
+      taxDueInput.addEventListener('change', async e=>{
         const oldVal = t.taxDue;
         const raw = e.target.value.trim();
-        const num = raw==='' ? null : parseFloat(raw.replace(/,/g,''));
+        let num, formula = null;
+        if(raw[0] === '='){
+          try { num = evalTaxFormula(raw); formula = raw; }
+          catch(err){
+            toast('Formula error: '+err.message+' — Tax Due was not changed.');
+            e.target.value = t.taxDue!==null ? t.taxDue : '';
+            return;
+          }
+        } else {
+          num = raw==='' ? null : parseFloat(raw.replace(/,/g,''));
+        }
         t.taxDue = (num===null || isNaN(num)) ? null : num;
+        if(formula && t.taxDue!==null) taxDueFormulas[t.id] = {text: formula, result: t.taxDue}; else delete taxDueFormulas[t.id];
         e.target.value = t.taxDue!==null ? t.taxDue : '';
+        e.target.title = formula ? 'Formula: '+formula : '';
         const { error } = await sb.from('cor_tasks').update({tax_due: t.taxDue}).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
-        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'tax_due', 'Tax Due', oldVal, t.taxDue);
+        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'tax_due', formula ? 'Tax Due (formula '+formula+')' : 'Tax Due', oldVal, t.taxDue);
       });
       tr.querySelector('.donebyf').addEventListener('change', async e=>{
         const oldVal = t.doneBy;
@@ -1826,31 +2498,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function initRegistryFilters(){
     const statuses = Array.from(new Set(clients.map(c=>c['CLIENT?']).filter(Boolean))).sort();
     regStatusFilter.innerHTML = '<option value="">All CLIENT? statuses</option>' + statuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
-    const prevRegMode = regRegModeFilter.value;
     const regModes = Array.from(new Set(clients.map(c=>c['REGISTRATION MODE']).filter(Boolean))).sort();
     regRegModeFilter.innerHTML = '<option value="">All Registration Modes</option>' + regModes.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
-    if(regModes.includes(prevRegMode)) regRegModeFilter.value = prevRegMode;
-    const prevTaxType = regTaxTypeFilter.value;
     const taxTypes = Array.from(new Set(clients.map(c=>c['TAX TYPE']).filter(Boolean))).sort();
     regTaxTypeFilter.innerHTML = '<option value="">All Tax Types</option>' + taxTypes.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
-    if(taxTypes.includes(prevTaxType)) regTaxTypeFilter.value = prevTaxType;
-    const prevClassif = regClassifFilter.value;
     const classifs = Array.from(new Set(clients.map(c=>c['TAXPAYER CLASSIFICATION']).filter(Boolean))).sort();
     regClassifFilter.innerHTML = '<option value="">All Taxpayer Classifications</option>' + classifs.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
-    if(classifs.includes(prevClassif)) regClassifFilter.value = prevClassif;
   }
 
   function renderRegistry(){
     const q = (searchInput.value||'').toLowerCase();
-    const sf = regStatusFilter.value;
-    const rmf = regRegModeFilter.value;
-    const ttf = regTaxTypeFilter.value;
-    const cff = regClassifFilter.value;
     const filtered = clients.filter(c=>{
-      if(sf && c['CLIENT?']!==sf) return false;
-      if(rmf && c['REGISTRATION MODE']!==rmf) return false;
-      if(ttf && c['TAX TYPE']!==ttf) return false;
-      if(cff && c['TAXPAYER CLASSIFICATION']!==cff) return false;
+      if(!chkPass(regStatusFilter, c['CLIENT?'])) return false;
+      if(!chkPass(regRegModeFilter, c['REGISTRATION MODE'])) return false;
+      if(!chkPass(regTaxTypeFilter, c['TAX TYPE'])) return false;
+      if(!chkPass(regClassifFilter, c['TAXPAYER CLASSIFICATION'])) return false;
       if(!q) return true;
       const hay = [c.NAME, c['TRADE NAME'], c.TIN, c.RDO, c['REGISTERED ADDRESS'], c['CLIENT ID NO.'], c['WITHHOLDING TYPES']].join(' ').toLowerCase();
       return hay.includes(q);
@@ -3090,6 +3752,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   salesClientStatusFilter.addEventListener('change', renderSalesSummary);
   salesAgentFilter.addEventListener('change', renderSalesSummary);
   salesMissingFilter.addEventListener('change', renderSalesSummary);
+  // Which quarter's columns get highlighted: "auto" = the calendar quarter
+  // we're in right now; or a fixed Q1-Q4 (e.g. the quarter just ended, which
+  // is usually the one being encoded), or none. The choice is remembered on
+  // this computer.
+  const salesQuarterHl = document.getElementById('sales-quarter-hl');
+  try { const saved = localStorage.getItem('cor_sales_quarter_hl'); if(saved !== null && Array.from(salesQuarterHl.options).some(o=>o.value===saved)) salesQuarterHl.value = saved; } catch(e){}
+  salesQuarterHl.addEventListener('change', ()=>{
+    try { localStorage.setItem('cor_sales_quarter_hl', salesQuarterHl.value); } catch(e){}
+    renderSalesSummary();
+  });
+  function salesHighlightQuarter(){
+    const v = salesQuarterHl.value;
+    if(v === 'auto') return currentFilingQuarter().q;
+    return Number(v) || 0;
+  }
 
   // Only numeric, per-client fields make sense for a "who's missing this"
   // filter (text remarks are fine to leave blank on purpose; year isn't a
@@ -3189,13 +3866,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(error){ console.error(error); toast('There was an error creating the new year — please try again.'); return; }
     salesSummary = salesSummary.concat(mapSalesSummaryFromDb(data));
     initSalesSummaryFilters();
-    salesYearFilter.value = String(year);
+    chkSetOnly(salesYearFilter, String(year));
     renderSalesSummary();
     toast(`${toInsert.length} new row(s) added for ${year}.`);
   });
 
   function initSalesSummaryFilters(){
-    const prevTax = salesTaxTypeFilter.value;
     // Normalize first (folds "VAT"/"vat "/"Vat" together) so the dropdown
     // doesn't show the same tax type several times, then list in the fixed
     // TAX_TYPE_OPTS order -- with any value that isn't one of the 5 known
@@ -3207,21 +3883,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const extras = Array.from(normalizedSet).filter(v=>!knownSet.has(v)).sort();
     const types = [...known, ...extras];
     salesTaxTypeFilter.innerHTML = '<option value="">All tax types</option>' + types.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
-    if(types.includes(prevTax)) salesTaxTypeFilter.value = prevTax;
 
     // Tax Option (the annual 8% / Itemized / OSD election, see
     // TAX_OPTION_OPTS and computePTTaxDue) -- same normalize-then-
     // canonical-order-then-extras treatment as Tax Type above, so "8%"/
     // "8%  "/"8 %" etc. fold together instead of each showing up as its
     // own filter option.
-    const prevTaxOption = salesTaxOptionFilter.value;
     const toNormalizedSet = new Set(salesSummary.map(r=>normalizeTaxOption(r.tax_option)).filter(Boolean));
     const toKnown = TAX_OPTION_OPTS.map(([v])=>v).filter(v=>toNormalizedSet.has(v));
     const toKnownSet = new Set(toKnown);
     const toExtras = Array.from(toNormalizedSet).filter(v=>!toKnownSet.has(v)).sort();
     const taxOptions = [...toKnown, ...toExtras];
     salesTaxOptionFilter.innerHTML = '<option value="">All tax options</option>' + taxOptions.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
-    if(taxOptions.includes(prevTaxOption)) salesTaxOptionFilter.value = prevTaxOption;
 
     // Client Status (e.g. "0 FILING", "FOR CLOSURE") -- its own editable
     // column on the Sales Summary row itself (see SALES_SUMMARY_COLS). Rows
@@ -3230,47 +3903,39 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // to the matched Client Registry status via resolveSalesClientStatus, so
     // the filter still works for older rows -- in the same canonical order,
     // with any stray/legacy value appended afterward instead of hidden.
-    const prevClientStatus = salesClientStatusFilter.value;
     const csKnownSet = new Set(salesSummary.map(r=>resolveSalesClientStatus(r)).filter(Boolean));
     const csKnown = CLIENT_STATUS_OPTS.map(([v])=>v).filter(v=>csKnownSet.has(v));
     const csExtras = Array.from(csKnownSet).filter(v=>!CLIENT_STATUS_OPTS.some(([kv])=>kv===v)).sort();
     const clientStatuses = [...csKnown, ...csExtras];
     salesClientStatusFilter.innerHTML = '<option value="">All client statuses</option>' + clientStatuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
-    if(clientStatuses.includes(prevClientStatus)) salesClientStatusFilter.value = prevClientStatus;
 
-    const prevAgent = salesAgentFilter.value;
     const agents = Array.from(new Set(salesSummary.map(r=>r.agent).filter(Boolean))).sort();
     salesAgentFilter.innerHTML = '<option value="">All Sales Representatives</option>' + agents.map(a=>`<option value="${esc(a)}">${esc(a)}</option>`).join('');
-    if(agents.includes(prevAgent)) salesAgentFilter.value = prevAgent;
 
-    const prevYear = salesYearFilter.value;
     const years = Array.from(new Set(salesSummary.map(r=>r.year).filter(y=>y!==null && y!==undefined))).sort((a,b)=>b-a);
     const hadOptions = salesYearFilter.options.length > 1;
     salesYearFilter.innerHTML = '<option value="">All years</option>' + years.map(y=>`<option value="${y}">${y}</option>`).join('');
-    if(years.some(y=>String(y)===prevYear)){
-      salesYearFilter.value = prevYear;
-    } else if(!hadOptions && years.includes(new Date().getFullYear())){
+    if(!hadOptions && years.includes(new Date().getFullYear())){
       // first load: default to the current year so the view isn't swamped
-      // with every prior year's rows at once.
-      salesYearFilter.value = String(new Date().getFullYear());
+      // with every prior year's rows at once (checked = shown; the other
+      // years start unchecked, tick them to see more than one year).
+      chkSetOnly(salesYearFilter, String(new Date().getFullYear()));
     }
   }
 
   function renderSalesSummary(){
     const q = (salesSearch.value||'').toLowerCase();
-    const yf = salesYearFilter.value;
-    const tf = salesTaxTypeFilter.value;
-    const tof = salesTaxOptionFilter.value;
-    const csf = salesClientStatusFilter.value;
-    const af = salesAgentFilter.value;
-    const mf = salesMissingFilter.value;
+    // All checkbox filters (see CHK_FILTERS): Year / Tax Type / Tax Option /
+    // Client Status / Sales Rep hide their UNCHECKED values; "Missing" shows
+    // rows missing ANY of the checked fields (nothing checked = no filter).
+    const mfs = chkChecked(salesMissingFilter);
     let pool = salesSummary.filter(r=>{
-      if(yf && String(r.year)!==yf) return false;
-      if(tf && normalizeTaxType(r.tax_type) !== tf) return false;
-      if(tof && normalizeTaxOption(r.tax_option) !== tof) return false;
-      if(csf && resolveSalesClientStatus(r) !== csf) return false;
-      if(af && r.agent !== af) return false;
-      if(mf && !(r[mf]===null || r[mf]===undefined || r[mf]==='')) return false;
+      if(!chkPass(salesYearFilter, r.year)) return false;
+      if(!chkPass(salesTaxTypeFilter, normalizeTaxType(r.tax_type))) return false;
+      if(!chkPass(salesTaxOptionFilter, normalizeTaxOption(r.tax_option))) return false;
+      if(!chkPass(salesClientStatusFilter, resolveSalesClientStatus(r))) return false;
+      if(!chkPass(salesAgentFilter, r.agent)) return false;
+      if(mfs.length && !mfs.some(mf=> r[mf]===null || r[mf]===undefined || r[mf]==='')) return false;
       if(q){
         const hay = (r.name+' '+r.tin+' '+(r.trade_name||'')+' '+(r.client_id_no||'')).toLowerCase();
         if(!hay.includes(q)) return false;
@@ -3289,10 +3954,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       document.getElementById('sales-table').innerHTML = `<div class="small-note">${salesSummary.length? 'No matches for this search/filter.' : 'No data yet — run sales_summary_schema.sql and sales_summary_seed.sql in Supabase first.'}</div>`;
       return;
     }
+    const hlQ = salesHighlightQuarter();
+    const qHlClass = key=>{ const m = /^q([1-4])_/.exec(key); return (m && Number(m[1])===hlQ) ? ' q-hl' : ''; };
     const headRow = SALES_SUMMARY_COLS.map(([key,label])=>{
       const frozen = SALES_FROZEN_KEYS.includes(key);
       const style = frozen ? `left:${SALES_FROZEN_LEFT[key]}px;width:${SALES_FROZEN_WIDTHS[key]}px;` : '';
-      return `<th class="${frozen?'frozen-col':''}" style="${style}">${esc(label)}</th>`;
+      return `<th class="${frozen?'frozen-col':''}${qHlClass(key)}" style="${style}">${esc(label)}</th>`;
     }).join('') + '<th></th><th></th>';
     // When a row's Client ID resolves to a real Registry entry, the Name/TIN/
     // Trade Name cells are shown read-only and sourced live from the
@@ -3322,6 +3989,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const COMPUTED_KEYS = new Set(['total_sales','total_expenses']);
     const rows = pool.map(r=>{
       const matched = r.client_id_no ? findClientByIdNo(r.client_id_no) : null;
+      const rowIsZeroStatus = isZeroStatusRow(r);
+      const vatWsRow = (normalizeTaxType(r.tax_type)==='VAT' && r.client_id_no) ? vatWsFor(r.client_id_no, r.year) : null;
+      const vatQCalc = vatWsRow ? vatYearCalc(vatWsRow) : null;
       const cells = SALES_SUMMARY_COLS.map(([key,,kind,opts])=>{
         // q1_pt_tax_due .. q4_pt_tax_due auto-compute only for Non-VAT /
         // Non-VAT (8% Flat Rate) clients -- see computePTTaxDue. `undefined`
@@ -3337,10 +4007,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         // normal editable field for those, same convention as PT Due above.
         const netIncomeAutoVal = key==='net_income' ? computeNetIncomeAuto(r) : undefined;
         const isNetIncomeAuto = netIncomeAutoVal !== undefined;
+        // 0 FILING / FOR CLOSURE rows: Sales and both Tax Due columns are
+        // always ₱0 for every quarter (see ZERO_STATUS_KEYS) -- wins over
+        // the Non-VAT 3% / VAT Worksheet auto-computations below.
+        const isZeroAuto = rowIsZeroStatus && ZERO_STATUS_KEYS.includes(key);
+        // VAT clients: once the VAT Worksheet has figures for a quarter, that
+        // quarter's Sales / Expenses / 2550Q Tax Due come from the worksheet
+        // (locked here -- edit them in the VAT Worksheet tab instead).
+        const vatAutoVal = (!isZeroAuto && vatQCalc) ? vatSalesCellValue(vatQCalc, key) : null;
+        const isVatAuto = vatAutoVal !== null;
         const isAutoFilled = matched && AUTO_FILLED_KEYS.includes(key);
-        const isComputed = COMPUTED_KEYS.has(key) || isPTAuto || isNetIncomeAuto;
+        const isComputed = COMPUTED_KEYS.has(key) || isPTAuto || isNetIncomeAuto || isZeroAuto || isVatAuto;
         const isLocked = isAutoFilled || isComputed || ALWAYS_LOCKED_KEYS.has(key);
-        const computedVal = key==='total_sales' ? computeSalesQuarterSum(r,'sales')
+        const computedVal = isZeroAuto ? 0
+          : isVatAuto ? vatAutoVal
+          : key==='total_sales' ? computeSalesQuarterSum(r,'sales')
           : key==='total_expenses' ? computeSalesQuarterSum(r,'expenses')
           : isPTAuto ? ptAutoVal
           : isNetIncomeAuto ? netIncomeAutoVal : null;
@@ -3359,7 +4040,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
             // Registry.
             const match = (opts||[]).find(o=>o[0]===(val||''));
             const label = match ? match[1] : (val || '');
-            return `<td class="${frozen?'frozen-col':''}" style="${tdStyle}"><input class="inline-text sales-cell" data-key="${esc(key)}" readonly title="Only editable in the Client Registry — edit it there if it’s wrong." style="width:${width}px;background:var(--paper-line);color:var(--ink-soft);" value="${esc(label)}"></td>`;
+            return `<td class="${frozen?'frozen-col':''}${qHlClass(key)}" style="${tdStyle}"><input class="inline-text sales-cell" data-key="${esc(key)}" readonly title="Only editable in the Client Registry — edit it there if it’s wrong." style="width:${width}px;background:var(--paper-line);color:var(--ink-soft);" value="${esc(label)}"></td>`;
           }
           // Reuses the same "never destroy data silently" fallback as the
           // Client Registry's select fields: if the row's existing value
@@ -3368,11 +4049,15 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           // Settings), it's still shown/selected instead of the <select>
           // silently reverting to blank and looking like the data was lost.
           const optsHtml = selectOptionsHtml(opts, val);
-          return `<td class="${frozen?'frozen-col':''}" style="${tdStyle}"><select class="inline-text sales-cell" data-key="${esc(key)}" style="width:${width}px;">${optsHtml}</select></td>`;
+          return `<td class="${frozen?'frozen-col':''}${qHlClass(key)}" style="${tdStyle}"><select class="inline-text sales-cell" data-key="${esc(key)}" style="width:${width}px;">${optsHtml}</select></td>`;
         }
         const listAttr = key==='client_id_no' ? ' list="sales-client-id-options"' : '';
         const lockReason = isAutoFilled
           ? 'Sourced from the Client Registry (Client ID: '+esc(r.client_id_no)+') — edit it there if it’s wrong.'
+          : isZeroAuto
+          ? 'Automatically ₱0 — this client’s status is '+esc(String(resolveSalesClientStatus(r)).toUpperCase())+', so no sales or tax is due. Change the Client Status to edit it.'
+          : isVatAuto
+          ? 'Comes from the VAT Worksheet tab (Net Sales + VAT-Exempt + Zero-Rated / Net Purchase + Non-VAT Exp / VAT Due) — edit it there.'
           : isPTAuto
           ? (ptAutoVal===0 ? 'Automatically ₱0 — the 8% Flat Income Tax Rate (Tax Type and/or this year\'s Tax Option) already covers percentage tax, so none is due.' : "Computed automatically as 3% of this quarter's Sales (Non-VAT percentage tax) — edit Sales instead.")
           : isNetIncomeAuto
@@ -3392,7 +4077,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         // "Year" is also kind 'num' (for right-aligned styling) but isn't a
         // money amount, so it's left as a plain 4-digit number.
         const displayVal = (kind==='num' && key!=='year') ? fmtNumInput(val) : (val!==null && val!==undefined ? val : '');
-        return `<td class="${frozen?'frozen-col':''}" style="${tdStyle}"><input class="inline-text sales-cell${kind==='num'?' mono':''}" data-key="${esc(key)}"${listAttr}${roAttrs} style="width:${width}px;${roStyle}" value="${esc(displayVal)}"></td>`;
+        return `<td class="${frozen?'frozen-col':''}${qHlClass(key)}" style="${tdStyle}"><input class="inline-text sales-cell${kind==='num'?' mono':''}" data-key="${esc(key)}"${listAttr}${roAttrs} style="width:${width}px;${roStyle}" value="${esc(displayVal)}"></td>`;
       }).join('');
       const editedTitle = r.updated_by ? `Last edited by ${r.updated_by} on ${fmtAuditWhen(r.updated_at)}` : '';
       // Deleting a Sales Summary row is admin-only, same restriction as
@@ -3414,6 +4099,17 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           const colDef = SALES_SUMMARY_COLS.find(c=>c[0]===key);
           const oldVal = rec[key];
           let val = e.target.value.trim();
+          let formulaUsed = null;
+          if(colDef[2]==='num' && /_tax_due$/.test(key) && val[0]==='='){
+            // Excel-style formula in a Tax Due cell (PT/IT/1701 Due) -- see
+            // evalTaxFormula. The computed RESULT is what's saved.
+            try { const result = evalTaxFormula(val); formulaUsed = val; val = String(result); }
+            catch(err){
+              toast('Formula error: '+err.message+' — '+colDef[1]+' was not changed.');
+              e.target.value = fmtNumInput(oldVal);
+              return;
+            }
+          }
           if(colDef[2]==='num'){
             const rawTyped = val;
             val = val==='' ? null : parseFloat(val.replace(/,/g,''));
@@ -3503,6 +4199,17 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
             // unconditionally -- it's a no-op (undefined) for any other
             // Tax Option.
             applyNetIncomeAuto();
+          } else if(key==='client_status' || key==='client_id_no'){
+            // Switching a row to 0 FILING / FOR CLOSURE (or linking it to a
+            // client who is) zeroes every quarter's Sales / Tax Due / IT Due
+            // right away -- see ZERO_STATUS_KEYS -- and re-saves the totals.
+            const zc = zeroStatusChanges(rec);
+            if(zc.length){
+              zc.forEach(c=>{ rec[c.key] = 0; patch[c.key] = 0; computedAudits.push(c); });
+              const ts = computeSalesQuarterSum(rec, 'sales');
+              if(rec.total_sales !== ts){ computedAudits.push({key:'total_sales', oldVal:rec.total_sales, newVal:ts}); rec.total_sales = ts; patch.total_sales = ts; }
+              applyNetIncomeAuto();
+            }
           } else if(key==='tax_type' || key==='tax_option'){
             // Changing Tax Type OR this year's Tax Option can flip whether
             // (and how) each quarter's Percentage Tax Due, and Net Income,
@@ -3532,7 +4239,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           const { error } = await sb.from('cor_sales_summary').update(patch).eq('id', id);
           if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
           else {
-            logFieldAudit('cor_sales_summary_audit', 'record_id', id, key, colDef[1], oldVal, val);
+            logFieldAudit('cor_sales_summary_audit', 'record_id', id, key, formulaUsed ? colDef[1]+' (formula '+formulaUsed+')' : colDef[1], oldVal, val);
             computedAudits.forEach(ca=>{
               const computedLabel = SALES_SUMMARY_COLS.find(c=>c[0]===ca.key)[1];
               logFieldAudit('cor_sales_summary_audit', 'record_id', id, ca.key, computedLabel, ca.oldVal, ca.newVal);
@@ -3542,7 +4249,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           // computePTTaxDue) depends on it for plain Non-VAT rows, so
           // switching the election between 8%, Itemized, and OSD needs the
           // PT Due cells to immediately lock-to-₱0 or unlock back to editable.
-          if(key==='client_id_no' || key==='tax_type' || key==='tax_option') renderSalesSummary(); else tr.title = `Last edited by ${stamp.updated_by} on ${fmtAuditWhen(stamp.updated_at)}`;
+          if(key==='client_id_no' || key==='tax_type' || key==='tax_option' || key==='client_status') renderSalesSummary(); else tr.title = `Last edited by ${stamp.updated_by} on ${fmtAuditWhen(stamp.updated_at)}`;
           // Keep the Tax Type / Client Status filter dropdowns in sync with
           // whatever's actually on the rows right now -- otherwise typing in
           // a status/type that's new to this table wouldn't show up as a
@@ -3692,22 +4399,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   entry2307TypeFilter.addEventListener('change', renderEntries2307);
 
   function initEntries2307Filters(){
-    const prevYear = entry2307YearFilter.value;
     const years = Array.from(new Set(entries2307.map(r=>r.period_year).filter(y=>y!==null && y!==undefined))).sort((a,b)=>b-a);
     entry2307YearFilter.innerHTML = '<option value="">All years</option>' + years.map(y=>`<option value="${y}">${y}</option>`).join('');
-    if(years.some(y=>String(y)===prevYear)) entry2307YearFilter.value = prevYear;
 
-    const prevType = entry2307TypeFilter.value;
     const types = Array.from(new Set(entries2307.map(r=>r.income_type).filter(Boolean))).sort();
     entry2307TypeFilter.innerHTML = '<option value="">All income types</option>' + types.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
-    if(types.includes(prevType)) entry2307TypeFilter.value = prevType;
   }
 
   add2307Btn.addEventListener('click', async ()=>{
     add2307Btn.disabled = true;
     const defaults = {
-      period_year: entry2307YearFilter.value ? parseInt(entry2307YearFilter.value,10) : new Date().getFullYear(),
-      period_quarter: entry2307QuarterFilter.value || null,
+      period_year: chkSingle(entry2307YearFilter) ? parseInt(chkSingle(entry2307YearFilter),10) : new Date().getFullYear(),
+      period_quarter: chkSingle(entry2307QuarterFilter) || null,
     };
     const { data, error } = await sb.from('cor_2307_entries').insert(defaults).select().single();
     add2307Btn.disabled = false;
@@ -3727,13 +4430,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
   function renderEntries2307(){
     const q = (entry2307Search.value||'').toLowerCase();
-    const yf = entry2307YearFilter.value;
-    const qf = entry2307QuarterFilter.value;
-    const tf = entry2307TypeFilter.value;
     let pool = entries2307.filter(r=>{
-      if(yf && String(r.period_year)!==yf) return false;
-      if(qf && r.period_quarter!==qf) return false;
-      if(tf && r.income_type!==tf) return false;
+      if(!chkPass(entry2307YearFilter, r.period_year)) return false;
+      if(!chkPass(entry2307QuarterFilter, r.period_quarter)) return false;
+      if(!chkPass(entry2307TypeFilter, r.income_type)) return false;
       if(q){
         const hay = [r.payor_name, r.payor_tin, r.payee_name, r.payee_tin].filter(Boolean).join(' ').toLowerCase();
         if(!hay.includes(q)) return false;
@@ -4376,17 +5076,15 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     '<option value="__BLANK__">(still blank)</option>';
 
   function initSawtFilters(){
-    const prevYear = sawtYearFilter.value;
     const years = Array.from(new Set(sawtEntries.map(r=>r.period_year).filter(y=>y!==null && y!==undefined))).sort((a,b)=>b-a);
     sawtYearFilter.innerHTML = '<option value="">All years</option>' + years.map(y=>`<option value="${y}">${y}</option>`).join('');
-    if(years.some(y=>String(y)===prevYear)) sawtYearFilter.value = prevYear;
   }
 
   addSawtBtn.addEventListener('click', async ()=>{
     addSawtBtn.disabled = true;
     const defaults = {
-      period_year: sawtYearFilter.value ? parseInt(sawtYearFilter.value,10) : new Date().getFullYear(),
-      period_quarter: sawtQuarterFilter.value || null,
+      period_year: chkSingle(sawtYearFilter) ? parseInt(chkSingle(sawtYearFilter),10) : new Date().getFullYear(),
+      period_quarter: chkSingle(sawtQuarterFilter) || null,
     };
     const { data, error } = await sb.from('cor_2307_received').insert(defaults).select().single();
     addSawtBtn.disabled = false;
@@ -4414,21 +5112,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
   function renderSawt(){
     const q = (sawtSearch.value||'').toLowerCase();
-    const yf = sawtYearFilter.value;
-    const qf = sawtQuarterFilter.value;
-    const cf = sawtCertFilter.value;
-    const clf = sawtClaimFilter.value;
     let pool = sawtEntries.filter(r=>{
-      if(yf && String(r.period_year)!==yf) return false;
-      if(qf && r.period_quarter!==qf) return false;
-      if(cf){
-        if(cf==='__BLANK__'){ if(r.has_certificate) return false; }
-        else if(r.has_certificate!==cf) return false;
-      }
-      if(clf){
-        if(clf==='__BLANK__'){ if(r.claim_status) return false; }
-        else if(r.claim_status!==clf) return false;
-      }
+      if(!chkPass(sawtYearFilter, r.period_year)) return false;
+      if(!chkPass(sawtQuarterFilter, r.period_quarter)) return false;
+      if(!chkPass(sawtCertFilter, r.has_certificate || '__BLANK__')) return false;
+      if(!chkPass(sawtClaimFilter, r.claim_status || '__BLANK__')) return false;
       if(q){
         const hay = [r.client_name, r.client_tin, r.payor_name, r.payor_tin].filter(Boolean).join(' ').toLowerCase();
         if(!hay.includes(q)) return false;
@@ -4557,16 +5245,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       ).join('');
       reportFormsFilter.dataset.built = '1';
     }
-    const prevStatus = reportStatusFilter.value;
     const statuses = Array.from(new Set(clients.map(c=>c['CLIENT?']).filter(Boolean))).sort();
     reportStatusFilter.innerHTML = '<option value="">All client statuses</option>' + statuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
-    if(statuses.includes(prevStatus)) reportStatusFilter.value = prevStatus;
-    const prevTaxType = reportTaxTypeFilter.value;
     const taxTypes = Array.from(new Set(clients.map(c=>c['TAX TYPE']).filter(Boolean))).sort();
     reportTaxTypeFilter.innerHTML = '<option value="">All tax types</option>' + taxTypes.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
-    if(taxTypes.includes(prevTaxType)) reportTaxTypeFilter.value = prevTaxType;
-    const prevForms = reportFormsFilter ? reportFormsFilter.value : '';
-    if(reportFormsFilter && prevForms) reportFormsFilter.value = prevForms;
   }
 
   // Copies text to the clipboard, with a fallback for contexts where the
@@ -4591,13 +5273,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
   function renderReport(){
     const q = (reportSearch.value||'').toLowerCase();
-    const sf = reportStatusFilter.value;
-    const tf = reportTaxTypeFilter.value;
-    const ff = reportFormsFilter ? reportFormsFilter.value : '';
+    // Forms is a "has ANY of the checked forms" filter (nothing checked = no filter).
+    const ffs = reportFormsFilter ? chkChecked(reportFormsFilter).map(f=>f.toUpperCase()) : [];
     const filtered = clients.filter(c=>{
-      if(sf && c['CLIENT?']!==sf) return false;
-      if(tf && c['TAX TYPE']!==tf) return false;
-      if(ff && !parseFormsCsv(c.FORMS).map(f=>f.toUpperCase()).includes(ff.toUpperCase())) return false;
+      if(!chkPass(reportStatusFilter, c['CLIENT?'])) return false;
+      if(!chkPass(reportTaxTypeFilter, c['TAX TYPE'])) return false;
+      if(ffs.length){ const have = parseFormsCsv(c.FORMS).map(f=>f.toUpperCase()); if(!ffs.some(f=>have.includes(f))) return false; }
       if(!q) return true;
       const hay = [c.NAME, c['TRADE NAME'], c.TIN, c.RDO, c['CLIENT ID NO.']].join(' ').toLowerCase();
       return hay.includes(q);
@@ -5082,7 +5763,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         }
       }
       initRegistryFilters(); initReportFilters(); initSalesSummaryFilters(); initEntries2307Filters(); initReassignTool(); initTtReassignTool(); initToReassignTool();
-      renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable();
+      renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderZeroStatusTool();
       const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
       if(activeTab==='registry') renderRegistry();
       if(activeTab==='sales') renderSalesSummary();
@@ -5248,6 +5929,57 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
        4. Both are set, but the Client ID hasn't actually been renumbered
           to "<Main Client ID>-B<n>" yet (run Branch Client ID Numbering
           above to fix this one). */
+
+  // ---- Zero Out 0 FILING / FOR CLOSURE rows (Settings) ----
+  function renderZeroStatusTool(){
+    const area = document.getElementById('zero-status-table');
+    const summary = document.getElementById('zero-status-summary');
+    const btn = document.getElementById('zero-status-apply-btn');
+    if(!area) return;
+    const plans = salesSummary.map(r=>({row:r, changes:zeroStatusChanges(r)})).filter(p=>p.changes.length);
+    const hasReal = p=> p.changes.some(c=> c.oldVal!==null && c.oldVal!==undefined && c.oldVal!=='' && Number(c.oldVal)!==0);
+    plans.sort((a,b)=> (hasReal(b)?1:0)-(hasReal(a)?1:0));
+    const realCount = plans.filter(hasReal).length;
+    if(!plans.length){
+      area.innerHTML = '<div class="small-note">Every 0 FILING / FOR CLOSURE row is already all zeros — nothing to apply.</div>';
+      summary.textContent = ''; btn.disabled = true; return;
+    }
+    const fmt = v=> (v===null||v===undefined||v==='') ? '(blank)' : fmtNumInput(v);
+    const rows = plans.slice(0,300).map(p=>{
+      const real = p.changes.filter(c=> c.oldVal!==null && c.oldVal!==undefined && c.oldVal!=='' && Number(c.oldVal)!==0);
+      const detail = real.length ? real.map(c=>`${SALES_SUMMARY_COLS.find(k=>k[0]===c.key)[1]}: ${fmt(c.oldVal)} → 0`).join('; ') : 'blank → 0';
+      return `<tr><td class="mono">${esc(p.row.client_id_no||'(blank)')}</td><td>${esc(p.row.name||'')}</td><td>${esc(p.row.year||'')}</td><td>${esc(resolveSalesClientStatus(p.row))}</td><td style="${real.length?'color:var(--critical);':''}">${esc(detail)}</td></tr>`;
+    }).join('');
+    area.innerHTML = `<table><thead><tr><th>Client ID</th><th>Client</th><th>Year</th><th>Status</th><th>What changes</th></tr></thead><tbody>${rows}</tbody></table>`;
+    summary.textContent = `${plans.length} row(s) will be set to zeros` + (realCount ? ` — ${realCount} of them currently hold non-zero values that will be replaced (listed first, in red).` : ' — none currently hold non-zero values.') + (plans.length>300 ? ' Showing the first 300.' : '');
+    btn.disabled = false;
+  }
+  document.getElementById('zero-status-apply-btn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('zero-status-apply-btn');
+    const plans = salesSummary.map(r=>({row:r, changes:zeroStatusChanges(r)})).filter(p=>p.changes.length);
+    if(!plans.length) return;
+    if(!confirm(`Set every quarter's Sales, Tax Due and IT Due to ₱0 on ${plans.length} Sales Summary row(s) whose status is 0 FILING / FOR CLOSURE? Each change is saved to the row's history.`)) return;
+    btn.disabled = true;
+    let done = 0, failed = 0;
+    for(const p of plans){
+      const r = p.row, patch = {}, audits = p.changes.slice();
+      p.changes.forEach(c=>{ r[c.key] = 0; patch[c.key] = 0; });
+      const ts = computeSalesQuarterSum(r,'sales');
+      if(r.total_sales !== ts){ audits.push({key:'total_sales', oldVal:r.total_sales, newVal:ts}); r.total_sales = ts; patch.total_sales = ts; }
+      const ni = computeNetIncomeAuto(r);
+      if(ni !== undefined && r.net_income !== ni){ audits.push({key:'net_income', oldVal:r.net_income, newVal:ni}); r.net_income = ni; patch.net_income = ni; }
+      const stamp = {updated_at:new Date().toISOString(), updated_by:currentUserEmail};
+      Object.assign(patch, stamp); r.updated_at = stamp.updated_at; r.updated_by = stamp.updated_by;
+      const { error } = await sb.from('cor_sales_summary').update(patch).eq('id', r._id);
+      if(error){ console.error(error); failed++; continue; }
+      done++;
+      audits.forEach(a=> logFieldAudit('cor_sales_summary_audit','record_id', r._id, a.key, SALES_SUMMARY_COLS.find(c=>c[0]===a.key)[1]+' (auto-zero: 0 FILING / FOR CLOSURE)', a.oldVal, a.newVal));
+    }
+    toast(failed ? `${done} row(s) zeroed, ${failed} failed — please run it again.` : `${done} row(s) set to zeros.`);
+    renderZeroStatusTool();
+    renderSalesSummary();
+  });
+
   function auditBranchTags(){
     const issues = [];
     salesSummary.forEach(r=>{
@@ -5468,7 +6200,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
 
   async function loadAllData(){
-    const [clientsData, tasksData, accData, ostData, salesData, entries2307Data, sawtData, salesRepsData] = await Promise.all([
+    const [clientsData, tasksData, accData, ostData, salesData, entries2307Data, sawtData, salesRepsData, vatData] = await Promise.all([
       fetchAllRows('cor_clients'),
       fetchAllRows('cor_tasks'),
       fetchAllRows('cor_credentials_accounts'),
@@ -5480,6 +6212,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       fetchAllRows('cor_2307_entries').catch(err=>{ console.error(err); return []; }),
       fetchAllRows('cor_2307_received').catch(err=>{ console.error(err); return []; }),
       fetchAllRows('cor_sales_reps').catch(err=>{ console.error(err); return []; }),
+      // Newer optional table (cor_vat_worksheet_migration.sql) -- same rule.
+      fetchAllRows('cor_vat_worksheet').catch(err=>{ console.error(err); return []; }),
     ]);
     clients = clientsData.map(mapClientFromDb);
     clientById = {};
@@ -5491,6 +6225,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     entries2307 = mapEntry2307FromDb(entries2307Data);
     sawtEntries = mapSawtFromDb(sawtData);
     salesReps = mapSalesRepsFromDb(salesRepsData);
+    vatWorksheet = vatData;
     refreshSalesRepOpts();
     initRegistryFilters();
     initTrackerFilters();
@@ -5503,7 +6238,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     initToReassignTool();
     renderBranchRenumberTable();
     renderSalesRelinkTable();
-    renderBranchAuditTable();
+    renderBranchAuditTable(); renderZeroStatusTool();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
@@ -5515,6 +6250,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       sb.channel('cor_sales_summary_live').on('postgres_changes', {event:'*', schema:'public', table:'cor_sales_summary'}, handleSalesSummaryRealtime).subscribe(),
       sb.channel('cor_2307_entries_live').on('postgres_changes', {event:'*', schema:'public', table:'cor_2307_entries'}, handleEntry2307Realtime).subscribe(),
       sb.channel('cor_2307_received_live').on('postgres_changes', {event:'*', schema:'public', table:'cor_2307_received'}, handleSawtRealtime).subscribe(),
+      sb.channel('cor_vat_worksheet_live').on('postgres_changes', {event:'*', schema:'public', table:'cor_vat_worksheet'}, handleVatRealtime).subscribe(),
     ];
   }
   // Same live-sync pattern as tasks/clients above, extended to the three
@@ -5530,7 +6266,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const idx = salesSummary.findIndex(r=>r._id===mapped._id);
       if(idx>=0) salesSummary[idx] = mapped; else salesSummary.push(mapped);
     }
-    initSalesSummaryFilters(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable();
+    initSalesSummaryFilters(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderZeroStatusTool();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
   function handleEntry2307Realtime(payload){
@@ -5576,7 +6312,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(idx>=0) clients[idx] = mapped; else clients.push(mapped);
       clientById[mapped._id] = mapped;
     }
-    initRegistryFilters(); initReportFilters(); initTrackerFilters(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable();
+    initRegistryFilters(); initReportFilters(); initTrackerFilters(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderZeroStatusTool();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
