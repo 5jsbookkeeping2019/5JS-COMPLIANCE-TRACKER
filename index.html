@@ -1326,7 +1326,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   //  - relief: ENCODED once "Relief done by" is filled; else READY once all
   //    3 months have both Net Sales and Net Purchase typed (0 counts); else
   //    INCOMPLETE.
-  function vatYearCalc(ws){
+  function vatYearCalc(ws, zeroClient){
     const out = [];
     let prevDueRaw = 0;
     for(let q=1; q<=4; q++){
@@ -1363,6 +1363,24 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const v = m[2]==='sales' ? qc.salesTotal : m[2]==='expenses' ? qc.expensesTotal : qc.vatDue;
     return v===null ? null : v;
   }
+  // 0 FILING / FOR CLOSURE VAT clients: every figure on the worksheet is
+  // ₱0 automatically (read-only) -- same rule as the Sales Summary. Only
+  // "Relief done by" and Remarks stay typeable. Nothing is deleted: the
+  // stored values are just overridden while the status is a zero status.
+  function vatClientIsZero(idNo, year){
+    if(!idNo) return false;
+    const k = vatKey(idNo, year);
+    const row = salesSummary.find(r=> vatKey(r.client_id_no, r.year) === k);
+    return row ? isZeroStatusRow(row) : ZERO_STATUSES.has(String(resolveSalesClientStatus({client_id_no:idNo})||'').trim().toUpperCase());
+  }
+  function vatEffectiveWs(idNo, year, ws){
+    ws = ws || {};
+    if(!vatClientIsZero(idNo, year)) return ws;
+    const z = Object.assign({}, ws);
+    for(let m=1;m<=12;m++) VAT_MONTH_FIELDS.forEach(([f])=>{ z['m'+m+'_'+f] = 0; });
+    for(let q=1;q<=4;q++){ z['q'+q+'_tax_paid'] = 0; z['q'+q+'_carry_in'] = 0; z['q'+q+'_nonvat_expenses'] = 0; }
+    return z;
+  }
   function vatKey(idNo, year){ return String(idNo||'').trim().toUpperCase() + '|' + Number(year); }
   function vatWsFor(idNo, year){
     if(!idNo) return null;
@@ -1378,7 +1396,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // actually have a computed value are written, and only if they differ, so
   // it's safe to call repeatedly. Every change is audit-logged.
   async function syncVatLinks(ws){
-    const calc = vatYearCalc(ws);
+    const calc = vatYearCalc(vatEffectiveWs(ws.client_id_no, ws.year, ws), vatClientIsZero(ws.client_id_no, ws.year));
     const result = {sales:0, tasks:0};
     const row = salesSummary.find(r=> vatKey(r.client_id_no, r.year) === vatKey(ws.client_id_no, ws.year));
     if(row && !isZeroStatusRow(row)){
@@ -1454,11 +1472,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       vatQuarterInitialized = true;
     }
   }
+  // "No Longer Client" (status NO) never belongs on the VAT worksheet.
+  const vatIsNoLonger = rec => String(resolveSalesClientStatus(rec)||'').trim().toUpperCase() === 'NO';
   function vatRowsForYear(year){
     const map = new Map();
-    let noClientId = 0;
+    let noClientId = 0, hiddenNoLonger = 0;
     salesSummary.forEach(r=>{
       if(Number(r.year) !== year || normalizeTaxType(r.tax_type) !== 'VAT') return;
+      if(vatIsNoLonger(r)){ hiddenNoLonger++; return; }
       const id = String(r.client_id_no||'').trim();
       if(!id){ noClientId++; return; }
       const k = id.toUpperCase();
@@ -1467,6 +1488,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     vatWorksheet.forEach(w=>{
       if(Number(w.year) !== year) return;
       const k = String(w.client_id_no||'').trim().toUpperCase();
+      if(!map.has(k) && vatIsNoLonger({client_id_no:w.client_id_no})){ hiddenNoLonger++; return; }
       const e = map.get(k) || {key:k, idNo:w.client_id_no, salesRow:null, ws:null};
       e.ws = w; map.set(k, e);
     });
@@ -1478,7 +1500,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       return e;
     });
     rows.sort((a,b)=> String(a.name).localeCompare(String(b.name)));
-    return {rows, noClientId};
+    return {rows, noClientId, hiddenNoLonger};
   }
   function fmtVatMoney(n){
     if(n===null || n===undefined) return '';
@@ -1503,11 +1525,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
     const needle = (vatSearch.value||'').trim().toLowerCase();
     const reliefs = chkChecked(vatReliefFilter);
-    const {rows: allRows, noClientId} = vatRowsForYear(year);
+    const {rows: allRows, noClientId, hiddenNoLonger} = vatRowsForYear(year);
     const counts = {READY:0, INCOMPLETE:0, ENCODED:0};
     const shown = [];
     allRows.forEach(e=>{
-      const calc = vatYearCalc(e.ws || {});
+      e.zero = vatClientIsZero(e.idNo, year);
+      const calc = vatYearCalc(vatEffectiveWs(e.idNo, year, e.ws), e.zero);
       e.calc = calc;
       counts[calc[q-1].relief]++;
       if(needle && !(`${e.name} ${e.tin} ${e.trade} ${e.idNo}`.toLowerCase().includes(needle))) return;
@@ -1516,22 +1539,25 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
     document.getElementById('vat-count').textContent =
       `${shown.length} of ${allRows.length} VAT client(s) · Q${q} ${year}: ${counts.READY} ready for encoding, ${counts.INCOMPLETE} incomplete, ${counts.ENCODED} encoded` +
-      (noClientId ? ` · ${noClientId} VAT Sales Summary row(s) have no Client ID and can't be linked (fix with Settings → Relink)` : '');
+      (hiddenNoLonger ? ` · ${hiddenNoLonger} No Longer Client(s) hidden` : '') + (noClientId ? ` · ${noClientId} VAT Sales Summary row(s) have no Client ID and can't be linked (fix with Settings → Relink)` : '');
     const m0 = (q-1)*3;
     const monthTh = [0,1,2].map(i=> VAT_MONTH_FIELDS.map(([,label])=>`<th><div style="font-size:9.5px;color:var(--ink-soft);">${VAT_MONTH_NAMES[m0+i]}</div>${esc(label)}</th>`).join('')).join('');
     const head = `<tr><th class="frozen-col" style="left:0;width:230px;min-width:230px;">Client</th>${monthTh}
       <th>Tax Paid<div style="font-size:9.5px;color:var(--ink-soft);">prev. months</div></th><th>Carry-in<div style="font-size:9.5px;color:var(--ink-soft);">credit (−)</div></th><th>Non-VAT Exp<div style="font-size:9.5px;color:var(--ink-soft);">annual only</div></th>
       <th>Total Net Sales</th><th>Total Net Purchase</th><th>Output VAT 12%</th><th>Input VAT 12%</th><th>VAT Due</th>
       <th>→ Sales Summary Sales</th><th>→ Sales Summary Expenses</th><th>VAT Relief</th><th>Relief done by</th><th>Remarks</th><th></th></tr>`;
-    const numInput = (field, value, extra)=> `<input class="inline-text vat-cell mono" data-key="${field}" style="width:88px;text-align:right;" value="${esc(fmtNumInput(value))}"${extra||''}>`;
     const body = shown.map(e=>{
-      const ws = e.ws || {};
+      const ws = vatEffectiveWs(e.idNo, year, e.ws);
+      const zeroTitle = ' readonly title="Automatically ₱0 — this client\'s status is 0 FILING / FOR CLOSURE. Change the Client Status to edit it." style="width:88px;text-align:right;background:var(--paper-line);color:var(--ink-soft);"';
+      const numInput = (field, value, extra)=> e.zero
+        ? `<input class="inline-text vat-cell mono" data-key="${field}" value="${esc(fmtNumInput(value))}"${zeroTitle}>`
+        : `<input class="inline-text vat-cell mono" data-key="${field}" style="width:88px;text-align:right;" value="${esc(fmtNumInput(value))}"${extra||''}>`;
       const qc = e.calc[q-1];
       const cells = vatCalcCells(qc);
       let inputs = '';
       for(let i=0;i<3;i++){ const m = m0+i+1; VAT_MONTH_FIELDS.forEach(([f])=>{ inputs += `<td>${numInput('m'+m+'_'+f, ws['m'+m+'_'+f])}</td>`; }); }
       return `<tr data-key="${esc(e.key)}" data-idno="${esc(e.idNo)}">
-        <td class="frozen-col" style="left:0;width:230px;min-width:230px;"><b>${esc(e.name||'(not in Client Registry)')}</b><div style="color:var(--ink-soft);font-size:10.5px;">${esc(e.idNo)} · TIN ${esc(fmtTin(e.tin))}${e.trade?' · '+esc(e.trade):''}</div></td>
+        <td class="frozen-col" style="left:0;width:230px;min-width:230px;"><b>${esc(e.name||'(not in Client Registry)')}</b><div style="color:var(--ink-soft);font-size:10.5px;">${esc(e.idNo)} · TIN ${esc(fmtTin(e.tin))}${e.trade?' · '+esc(e.trade):''}${e.zero?' · <b style="color:var(--gold);">'+esc(String(resolveSalesClientStatus(e.salesRow||{client_id_no:e.idNo})).toUpperCase())+' — all ₱0</b>':''}</div></td>
         ${inputs}
         <td>${numInput('q'+q+'_tax_paid', ws['q'+q+'_tax_paid'])}</td>
         <td>${numInput('q'+q+'_carry_in', ws['q'+q+'_carry_in'], ` placeholder="auto ${esc(fmtNumInput(qc.carryAuto)||'0')}" title="Leave blank for automatic (last quarter's unused credit). Type a number to override, negative = credit."`)}</td>
@@ -1555,7 +1581,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // Refresh just the computed cells of one row in place (no re-render), so
   // tabbing through the inputs never loses focus mid-entry.
   function refreshVatRowComputed(tr, ws, q){
-    const qc = vatYearCalc(ws)[q-1];
+    const qc = vatYearCalc(vatEffectiveWs(tr.dataset.idno, Number(vatYearFilter.value), ws), vatClientIsZero(tr.dataset.idno, Number(vatYearFilter.value)))[q-1];
     const cells = vatCalcCells(qc);
     Object.keys(cells).forEach(k=>{ const el = tr.querySelector(`[data-calc="${k}"]`); if(el) el.textContent = cells[k]; });
     const badge = tr.querySelector('[data-calc="relief"]');
