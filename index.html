@@ -44,6 +44,22 @@
     --card-shadow:0 1px 3px rgba(20,15,10,0.06);
     --card-shadow-hover:0 6px 18px rgba(20,15,10,0.10);
   }
+  /* Dark mode (Settings -> Appearance). Same tokens, dark values. */
+  :root[data-theme="dark"]{
+    --paper:#15191B; --paper-line:#252B2E;
+    --ink:#E9E5DD; --ink-soft:#A8A093;
+    --brand:#E2483A; --brand-deep:#F28A7E; --stamp-soft:rgba(226,72,58,0.2);
+    --gold:#DDA843; --gold-soft:rgba(221,168,67,0.18);
+    --forest:#4DB26E; --forest-soft:rgba(77,178,110,0.2);
+    --good:#4DB26E; --warning:#E0A82E; --critical:#F0685A;
+    --card:#1F2528; --input-bg:#181D1F; --input-border:#3A4448; --row-hover:#272F33;
+    --card-shadow:0 1px 3px rgba(0,0,0,0.5); --card-shadow-hover:0 6px 18px rgba(0,0,0,0.55);
+  }
+  :root[data-theme="dark"] #cor-app{color-scheme:dark;}
+  :root[data-theme="dark"] #cor-app th.q-hl{background:#4A3F1C;color:#F5D98B;}
+  :root[data-theme="dark"] #cor-app td.q-hl input.sales-cell:not([readonly]){background:#3A3318;}
+  :root[data-theme="dark"] #cor-app .status-NOTE{color:#7FB4EC;}
+  :root[data-lines="off"] #cor-app{background-image:none;}
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;background:var(--paper);}
   #cor-app{
@@ -768,7 +784,22 @@
 
     <!-- SETTINGS TAB -->
     <div class="tab-panel" id="panel-settings">
-      <h3 style="margin-top:0;">Sales Representative Options</h3>
+      <h3 style="margin-top:0;">Appearance</h3>
+      <div class="small-note">Choose Light or Dark mode and the page background. Saved on this computer / browser only — it doesn't change what other staff see.</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-top:12px;">
+        <label style="font-size:12.5px;">Mode
+          <select class="filter" id="theme-mode-select" style="margin-left:6px;min-width:190px;">
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+            <option value="auto">Same as my device</option>
+          </select></label>
+        <label style="font-size:12.5px;">Background
+          <select class="filter" id="theme-bg-select" style="margin-left:6px;min-width:190px;"></select></label>
+        <label style="font-size:12.5px;display:inline-flex;align-items:center;gap:6px;"><input type="checkbox" id="theme-lines-check"> Ruled lines on the page background</label>
+        <button class="secondary" id="theme-reset-btn" type="button">Reset to default</button>
+      </div>
+
+      <h3 style="margin-top:30px;">Sales Representative Options</h3>
       <div class="small-note">Managed list of names that appear in the "Sales Representative" dropdown in Client Registry and the "Sales Representative" column of Sales Summary — so spelling/names stay consistent wherever it's used. Deleting a name here does not change rows already assigned to that name — it just becomes a value that can no longer be picked going forward.</div>
       <div style="display:flex;gap:8px;margin-top:12px;max-width:420px;">
         <input class="search-input" id="sales-rep-new-input" placeholder="New Sales Representative name...">
@@ -2716,6 +2747,45 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   });
 
   // ---------- Tabs ----------
+  // Appearance: Light / Dark / follow the device, plus a choice of page background (saved per browser).
+  (function(){
+    const BGS = {
+      light:[['cream','Cream (default)',null,null],['white','White','#FFFFFF','#EDEDED'],['gray','Soft gray','#ECEEF0','#DCE0E3'],['blue','Soft blue','#EAF1F8','#D5E2EF'],['green','Soft green','#EAF3EC','#D5E6D9'],['rose','Soft rose','#F8EDEE','#EBD6D8']],
+      dark:[['charcoal','Charcoal (default)',null,null],['black','Black','#0B0D0E','#1B2023'],['slate','Slate blue','#141B26','#232E3D'],['forest','Dark green','#111C18','#213129'],['plum','Dark plum','#1A141D','#2C2231']],
+    };
+    const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    const get = (k,d)=>{ try{ const v = localStorage.getItem(k); return v===null ? d : v; }catch(e){ return d; } };
+    const put = (k,v)=>{ try{ localStorage.setItem(k,v); }catch(e){} };
+    const modeSel = document.getElementById('theme-mode-select'), bgSel = document.getElementById('theme-bg-select');
+    const linesChk = document.getElementById('theme-lines-check'), resetBtn = document.getElementById('theme-reset-btn');
+    const root = document.documentElement;
+    function effective(mode){ return mode==='dark' || (mode==='auto' && mq && mq.matches) ? 'dark' : 'light'; }
+    function fillBg(eff){
+      if(!bgSel) return;
+      const cur = get('cor_theme_bg_'+eff, BGS[eff][0][0]);
+      bgSel.innerHTML = BGS[eff].map(([k,l])=>`<option value="${k}">${l}</option>`).join('');
+      bgSel.value = BGS[eff].some(b=>b[0]===cur) ? cur : BGS[eff][0][0];
+    }
+    function apply(){
+      const mode = get('cor_theme_mode','light'), eff = effective(mode);
+      root.setAttribute('data-theme', eff);
+      const key = get('cor_theme_bg_'+eff, BGS[eff][0][0]);
+      const bg = BGS[eff].find(b=>b[0]===key) || BGS[eff][0];
+      if(bg[2]){ root.style.setProperty('--paper', bg[2]); root.style.setProperty('--paper-line', bg[3]); }
+      else { root.style.removeProperty('--paper'); root.style.removeProperty('--paper-line'); }
+      if(get('cor_theme_lines','1')==='0') root.setAttribute('data-lines','off'); else root.removeAttribute('data-lines');
+      if(modeSel) modeSel.value = mode;
+      if(linesChk) linesChk.checked = get('cor_theme_lines','1')!=='0';
+      fillBg(eff);
+    }
+    if(modeSel) modeSel.addEventListener('change', ()=>{ put('cor_theme_mode', modeSel.value); apply(); });
+    if(bgSel) bgSel.addEventListener('change', ()=>{ put('cor_theme_bg_'+effective(get('cor_theme_mode','light')), bgSel.value); apply(); });
+    if(linesChk) linesChk.addEventListener('change', ()=>{ put('cor_theme_lines', linesChk.checked ? '1' : '0'); apply(); });
+    if(resetBtn) resetBtn.addEventListener('click', ()=>{ ['cor_theme_mode','cor_theme_bg_light','cor_theme_bg_dark','cor_theme_lines'].forEach(k=>{ try{ localStorage.removeItem(k); }catch(e){} }); apply(); });
+    if(mq && mq.addEventListener) mq.addEventListener('change', ()=>{ if(get('cor_theme_mode','light')==='auto') apply(); });
+    apply();
+  })();
+
   // Hide / show the left menu (remembered per browser).
   (function(){
     const wrap = document.getElementById('app-wrap'), btn = document.getElementById('menu-toggle-btn');
