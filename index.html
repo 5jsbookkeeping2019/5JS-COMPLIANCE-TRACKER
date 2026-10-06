@@ -613,6 +613,7 @@
             <option value="0">No highlight</option>
           </select>
           <button class="secondary" id="add-sales-year-btn">+ Add New Year</button>
+          <button class="secondary" id="sales-sync-tasks-btn" title="Fills the Tax Due of the matching 2551Q / 2550Q / 1701Q / 1702Q tasks in the Task Tracker from this tab. Only EMPTY task Tax Due cells are filled; figures already typed in the Task Tracker are never overwritten.">Sync Tax Due → Task Tracker</button>
         </div>
         <div class="toolbar-right">
           <span class="small-note" id="sales-count" style="margin:0;"></span>
@@ -620,6 +621,16 @@
       </div>
       <div class="small-note">Combined VAT and Non-VAT (NVAT) clients, per quarter — from the Sales Summary file. Edit any cell directly (same as Task Tracker) — saved automatically to the live database. Use the "Show all" dropdown to find who's still missing a value for a particular field (e.g. Q3 Sales) — this excludes actual "0" values (confirmed zero filing), blank only. There's no manual "Add client" here — the Client Registry is the source: every new client added there automatically gets its own row here (Client ID/Name/TIN/Trade Name already filled in), so the two always stay linked. When a new year starts, use "+ Add New Year" to build a fresh set of rows for every Active/0 Filing/For Closure/Annual Client that doesn't have an End of Service Date yet (i.e. still existing and not yet tagged as service-ended) — no need to do it one by one or wait for a new SQL script.</div>
       <datalist id="sales-client-id-options"></datalist>
+      <!-- Suggestions (free text still allowed) for the per-quarter PT/IT Remarks and Payment cells:
+           has the client paid 5Js, and where is the tax due in the payment process. -->
+      <datalist id="sales-payment-remark-options">
+        <option value="PAID - CLIENT PAID 5JS"></option>
+        <option value="CLIENT NOT YET PAID"></option>
+        <option value="PARTIAL PAYMENT"></option>
+        <option value="FOR PAYMENT IN BANK"></option>
+        <option value="TAX PAID IN BANK"></option>
+        <option value="GIVEN TO LIAISON"></option>
+      </datalist>
       <div class="table-scroll" style="margin-top:10px;" id="sales-table"></div>
     </div>
     <div class="tab-panel" id="panel-vat">
@@ -1354,14 +1365,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
     return out;
   }
-  // The Sales Summary cell value a VAT worksheet drives (null = not driven:
-  // not a Sales/Expenses/PT-Due key, or the worksheet has nothing for it yet).
+  // The Sales Summary cell value a VAT worksheet drives.
+  //   undefined = not driven (not a Sales/Expenses/Tax Due key, or the
+  //               worksheet has nothing for that quarter yet)
+  //   ''        = Tax Due that is driven but still WAITING: it only appears
+  //               once the quarter is complete on the VAT tab (all 3 months
+  //               have Net Sales and Net Purchase typed), so a half-filled
+  //               worksheet never shows a misleading partial VAT Due
+  //   number    = the value
   function vatSalesCellValue(calc, key){
     const m = /^q([1-4])_(sales|expenses|pt_tax_due)$/.exec(key);
-    if(!m) return null;
+    if(!m) return undefined;
     const qc = calc[Number(m[1])-1];
-    const v = m[2]==='sales' ? qc.salesTotal : m[2]==='expenses' ? qc.expensesTotal : qc.vatDue;
-    return v===null ? null : v;
+    if(m[2]==='pt_tax_due') return qc.vatDue===null ? undefined : (qc.complete ? qc.vatDue : '');
+    const v = m[2]==='sales' ? qc.salesTotal : qc.expensesTotal;
+    return v===null ? undefined : v;
   }
   // 0 FILING / FOR CLOSURE VAT clients: every figure on the worksheet is
   // ₱0 automatically (read-only) -- same rule as the Sales Summary. Only
@@ -1398,13 +1416,19 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   async function syncVatLinks(ws){
     const calc = vatYearCalc(vatEffectiveWs(ws.client_id_no, ws.year, ws), vatClientIsZero(ws.client_id_no, ws.year));
     const result = {sales:0, tasks:0};
+    const cleared = {};   // quarter -> the half-finished Tax Due taken back off the Sales Summary row
     const row = salesSummary.find(r=> vatKey(r.client_id_no, r.year) === vatKey(ws.client_id_no, ws.year));
     if(row && !isZeroStatusRow(row)){
       const patch = {}, audits = [];
       calc.forEach(qc=>{
-        [['q'+qc.q+'_sales', qc.salesTotal], ['q'+qc.q+'_expenses', qc.expensesTotal], ['q'+qc.q+'_pt_tax_due', qc.vatDue]].forEach(([k,v])=>{
+        [['q'+qc.q+'_sales', qc.salesTotal], ['q'+qc.q+'_expenses', qc.expensesTotal], ['q'+qc.q+'_pt_tax_due', qc.vatDue===null ? null : (qc.complete ? qc.vatDue : 'WAIT')]].forEach(([k,v])=>{
           if(v === null) return;
           const cur = row[k];
+          if(v === 'WAIT'){   // not complete on the VAT tab yet: the Tax Due must not show
+            if(cur === null || cur === undefined || cur === '') return;
+            audits.push({key:k, oldVal:cur, newVal:null}); cleared[qc.q] = Number(cur);
+            row[k] = null; patch[k] = null; return;
+          }
           if(cur !== null && cur !== undefined && cur !== '' && Number(cur) === v) return;
           audits.push({key:k, oldVal:cur, newVal:v});
           row[k] = v; patch[k] = v;
@@ -1434,15 +1458,86 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       for(const qc of calc){
         if(qc.vatDue === null) continue;
         const t = tasks.find(x=> x.clientId === client._id && x.form === '2550Q' && x.period === 'Q'+qc.q+' '+ws.year);
-        if(!t || t.taxDue === qc.vatDue) continue;
+        if(!t) continue;
+        let target = qc.vatDue;
+        if(!qc.complete){
+          // Half-finished on the VAT tab: take back a Tax Due we synced earlier, but never wipe a different figure someone typed in the Task Tracker.
+          if(cleared[qc.q] === undefined || t.taxDue === null || t.taxDue === undefined || Number(t.taxDue) !== cleared[qc.q]) continue;
+          target = null;
+        }
+        if(t.taxDue === target) continue;
         const oldVal = t.taxDue;
-        t.taxDue = qc.vatDue;
+        t.taxDue = target;
         const { error } = await sb.from('cor_tasks').update({tax_due: t.taxDue}).eq('id', t.id);
-        if(error){ console.error(error); toast('Warning: a 2550Q task\'s Tax Due could not be updated — please try again.'); }
+        if(error){ console.error(error); t.taxDue = oldVal; toast('Warning: a 2550Q task\'s Tax Due could not be updated — please try again.'); }
         else { result.tasks++; logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'tax_due', 'Tax Due (from VAT Worksheet)', oldVal, t.taxDue); }
       }
     }
     return result;
+  }
+
+
+  // ---- Sales Summary Tax Due  ->  Task Tracker Tax Due ----
+  // What each quarter's Tax Due on a Sales Summary row currently IS, as a
+  // {key: value} map (Non-VAT percentage tax is auto-computed and zero-status
+  // rows are always 0, so it reads the effective value, not just the stored
+  // one). VAT quarters driven by the VAT Worksheet are left out -- the
+  // worksheet pushes those to the 2550Q task itself (syncVatLinks).
+  function salesTaxDueMap(rec){
+    const out = {};
+    const zero = isZeroStatusRow(rec);
+    const vws = (normalizeTaxType(rec.tax_type)==='VAT' && rec.client_id_no) ? vatWsFor(rec.client_id_no, rec.year) : null;
+    const vcalc = vws ? vatYearCalc(vws) : null;
+    for(let q=1;q<=4;q++){
+      const ptKey = 'q'+q+'_pt_tax_due', itKey = 'q'+q+'_it_tax_due';
+      const hasSales = rec['q'+q+'_sales'] !== null && rec['q'+q+'_sales'] !== undefined && rec['q'+q+'_sales'] !== '';
+      if(!(vcalc && vatSalesCellValue(vcalc, ptKey) !== undefined)){
+        let v = zero ? 0 : computePTTaxDue(rec, q);
+        if(v === undefined) v = (rec[ptKey]===null || rec[ptKey]===undefined || rec[ptKey]==='') ? null : Number(rec[ptKey]);
+        if(v !== null && !isNaN(v) && (v !== 0 || zero || hasSales || Number(rec[ptKey])===0)) out[ptKey] = v;
+      }
+      if(q<=3){
+        const v = zero ? 0 : ((rec[itKey]===null || rec[itKey]===undefined || rec[itKey]==='') ? null : Number(rec[itKey]));
+        if(v !== null && !isNaN(v)) out[itKey] = v;
+      }
+    }
+    return out;
+  }
+  const SALES_TAXDUE_FORMS = {pt:['2551Q','2550Q'], it:['1701Q','1702Q']};
+  // Tasks that should pick up a Sales Summary row's Tax Due. A task's Tax
+  // Due is only touched when it is EMPTY, or when it still equals the value
+  // the Sales Summary had before this edit (so it keeps following) -- a
+  // different figure someone typed in the Task Tracker is never overwritten.
+  function planSalesTaxDueToTasks(rec, prevMap){
+    const client = findClientByIdNo(rec.client_id_no);
+    if(!client) return [];
+    const cur = salesTaxDueMap(rec), plan = [];
+    Object.keys(cur).forEach(key=>{
+      const m = /^q([1-4])_(pt|it)_tax_due$/.exec(key);
+      const period = 'Q'+m[1]+' '+rec.year, v = cur[key];
+      tasks.forEach(t=>{
+        if(t.clientId !== client._id || t.period !== period || !SALES_TAXDUE_FORMS[m[2]].includes(t.form)) return;
+        const tv = (t.taxDue===null || t.taxDue===undefined || t.taxDue==='') ? null : Number(t.taxDue);
+        if(tv === v) return;
+        const pv = prevMap && prevMap[key] !== undefined ? prevMap[key] : undefined;
+        if(tv === null || (pv !== undefined && tv === pv)) plan.push({t, v});
+      });
+    });
+    return plan;
+  }
+  async function syncSalesTaxDueToTasks(rec, prevMap){
+    const plan = planSalesTaxDueToTasks(rec, prevMap);
+    let n = 0;
+    for(const {t, v} of plan){
+      const oldVal = t.taxDue;
+      t.taxDue = v;
+      const { error } = await sb.from('cor_tasks').update({tax_due: v}).eq('id', t.id);
+      if(error){ console.error(error); t.taxDue = oldVal; toast('Warning: a task\'s Tax Due could not be updated from the Sales Summary — please try again.'); continue; }
+      n++;
+      logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'tax_due', 'Tax Due (from Sales Summary)', oldVal, v);
+    }
+    if(n && document.querySelector('.tab-btn.active').dataset.tab === 'tracker') renderTracker();
+    return n;
   }
 
   // ---- VAT Worksheet tab ----
@@ -1459,6 +1554,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const years = new Set();
     salesSummary.forEach(r=>{ if(normalizeTaxType(r.tax_type)==='VAT' && !isNaN(Number(r.year))) years.add(Number(r.year)); });
     vatWorksheet.forEach(w=>{ if(!isNaN(Number(w.year))) years.add(Number(w.year)); });
+    if(clients.some(c=>normalizeTaxType(c['TAX TYPE'])==='VAT')) years.add(new Date().getFullYear());
     const list = Array.from(years).sort((a,b)=>b-a).map(String);
     const prev = vatYearFilter.value;
     vatYearFilter.innerHTML = list.length ? list.map(y=>`<option value="${y}">${y}</option>`).join('') : '<option value="">No VAT rows yet</option>';
@@ -1478,19 +1574,37 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const vatIsNoLonger = rec => ['NO','CLOSED'].includes(String(resolveSalesClientStatus(rec)||'').trim().toUpperCase());
   function vatRowsForYear(year){
     const map = new Map();
-    let noClientId = 0, hiddenNoLonger = 0;
+    let noClientId = 0; const hiddenKeys = new Set();
     salesSummary.forEach(r=>{
       if(Number(r.year) !== year || normalizeTaxType(r.tax_type) !== 'VAT') return;
-      if(vatIsNoLonger(r)){ hiddenNoLonger++; return; }
+      if(vatIsNoLonger(r)){ hiddenKeys.add(String(r.client_id_no||'').trim().toUpperCase()); return; }
       const id = String(r.client_id_no||'').trim();
       if(!id){ noClientId++; return; }
       const k = id.toUpperCase();
       if(!map.has(k)) map.set(k, {key:k, idNo:id, salesRow:r, ws:null});
     });
+    // Active VAT clients straight from the Client Registry, even when they
+    // have no Sales Summary row for this year yet (or that row's Tax Type is
+    // blank). A Sales Summary row that explicitly says another Tax Type for
+    // this year still wins -- it's an intentional override.
+    const otherType = new Set();
+    salesSummary.forEach(r=>{
+      if(Number(r.year) !== year) return;
+      const t = normalizeTaxType(r.tax_type);
+      if(t && t !== 'VAT') otherType.add(String(r.client_id_no||'').trim().toUpperCase());
+    });
+    clients.forEach(c=>{
+      const id = String(c['CLIENT ID NO.']||'').trim();
+      if(!id || normalizeTaxType(c['TAX TYPE']) !== 'VAT') return;
+      const k = id.toUpperCase();
+      if(map.has(k) || otherType.has(k)) return;
+      if(vatIsNoLonger({client_id_no:id})){ hiddenKeys.add(k); return; }
+      map.set(k, {key:k, idNo:id, salesRow:null, ws:null});
+    });
     vatWorksheet.forEach(w=>{
       if(Number(w.year) !== year) return;
       const k = String(w.client_id_no||'').trim().toUpperCase();
-      if(!map.has(k) && vatIsNoLonger({client_id_no:w.client_id_no})){ hiddenNoLonger++; return; }
+      if(!map.has(k) && vatIsNoLonger({client_id_no:w.client_id_no})){ hiddenKeys.add(k); return; }
       const e = map.get(k) || {key:k, idNo:w.client_id_no, salesRow:null, ws:null};
       e.ws = w; map.set(k, e);
     });
@@ -1502,7 +1616,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       return e;
     });
     rows.sort((a,b)=> String(a.name).localeCompare(String(b.name)));
-    return {rows, noClientId, hiddenNoLonger};
+    return {rows, noClientId, hiddenNoLonger: hiddenKeys.size};
   }
   function fmtVatMoney(n){
     if(n===null || n===undefined) return '';
@@ -3790,6 +3904,17 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     try { localStorage.setItem('cor_sales_quarter_hl', salesQuarterHl.value); } catch(e){}
     renderSalesSummary();
   });
+  document.getElementById('sales-sync-tasks-btn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('sales-sync-tasks-btn');
+    const total = salesSummary.reduce((n,r)=> n + planSalesTaxDueToTasks(r, null).length, 0);
+    if(!total){ toast('Task Tracker already has every Tax Due from the Sales Summary (nothing empty to fill).'); return; }
+    if(!confirm(`Fill the Tax Due of ${total} Task Tracker task(s) from the Sales Summary? Only empty Tax Due cells are filled — anything already typed in the Task Tracker is left alone.`)) return;
+    btn.disabled = true;
+    let n = 0;
+    for(const r of salesSummary) n += await syncSalesTaxDueToTasks(r, null);
+    btn.disabled = false;
+    toast(`Tax Due filled on ${n} Task Tracker task(s).`);
+  });
   function salesHighlightQuarter(){
     const v = salesQuarterHl.value;
     if(v === 'auto') return currentFilingQuarter().q;
@@ -4042,8 +4167,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         // VAT clients: once the VAT Worksheet has figures for a quarter, that
         // quarter's Sales / Expenses / 2550Q Tax Due come from the worksheet
         // (locked here -- edit them in the VAT Worksheet tab instead).
-        const vatAutoVal = (!isZeroAuto && vatQCalc) ? vatSalesCellValue(vatQCalc, key) : null;
-        const isVatAuto = vatAutoVal !== null;
+        const vatAutoVal = (!isZeroAuto && vatQCalc) ? vatSalesCellValue(vatQCalc, key) : undefined;
+        const isVatAuto = vatAutoVal !== undefined;
         const isAutoFilled = matched && AUTO_FILLED_KEYS.includes(key);
         const isComputed = COMPUTED_KEYS.has(key) || isPTAuto || isNetIncomeAuto || isZeroAuto || isVatAuto;
         const isLocked = isAutoFilled || isComputed || ALWAYS_LOCKED_KEYS.has(key);
@@ -4079,13 +4204,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           const optsHtml = selectOptionsHtml(opts, val);
           return `<td class="${frozen?'frozen-col':''}${qHlClass(key)}" style="${tdStyle}"><select class="inline-text sales-cell" data-key="${esc(key)}" style="width:${width}px;">${optsHtml}</select></td>`;
         }
-        const listAttr = key==='client_id_no' ? ' list="sales-client-id-options"' : '';
+        const listAttr = key==='client_id_no' ? ' list="sales-client-id-options"'
+          : /^q[1-4]_(pt|it)_(remarks|payment_remarks)$/.test(key) ? ' list="sales-payment-remark-options"' : '';
         const lockReason = isAutoFilled
           ? 'Sourced from the Client Registry (Client ID: '+esc(r.client_id_no)+') — edit it there if it’s wrong.'
           : isZeroAuto
           ? 'Automatically ₱0 — this client’s status is '+esc(String(resolveSalesClientStatus(r)).toUpperCase())+', so no sales or tax is due. Change the Client Status to edit it.'
           : isVatAuto
-          ? 'Comes from the VAT Worksheet tab (Net Sales + VAT-Exempt + Zero-Rated / Net Purchase + Non-VAT Exp / VAT Due) — edit it there.'
+          ? (vatAutoVal === '' ? 'Tax Due appears here once this quarter is complete in the VAT Worksheet tab (Net Sales and Net Purchase for all 3 months).' : 'Comes from the VAT Worksheet tab (Net Sales + VAT-Exempt + Zero-Rated / Net Purchase + Non-VAT Exp / VAT Due) — edit it there.')
           : isPTAuto
           ? (ptAutoVal===0 ? 'Automatically ₱0 — the 8% Flat Income Tax Rate (Tax Type and/or this year\'s Tax Option) already covers percentage tax, so none is due.' : "Computed automatically as 3% of this quarter's Sales (Non-VAT percentage tax) — edit Sales instead.")
           : isNetIncomeAuto
@@ -4150,6 +4276,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           } else {
             val = val==='' ? null : val;
           }
+          const taxDuePrev = salesTaxDueMap(rec);
           rec[key] = val;
           e.target.value = (colDef[2]==='num' && key!=='year') ? fmtNumInput(val) : (val!==null && val!==undefined ? val : '');
           const patch = {[key]: val};
@@ -4272,6 +4399,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
               const computedLabel = SALES_SUMMARY_COLS.find(c=>c[0]===ca.key)[1];
               logFieldAudit('cor_sales_summary_audit', 'record_id', id, ca.key, computedLabel, ca.oldVal, ca.newVal);
             });
+            // Non-VAT / any Sales Summary Tax Due -> the matching tasks in the Task Tracker
+            syncSalesTaxDueToTasks(rec, taxDuePrev).then(n=>{ if(n) toast(`Tax Due → Task Tracker (${n} task${n>1?'s':''}).`); });
           }
           // tax_option also triggers a full re-render now -- PT Due (see
           // computePTTaxDue) depends on it for plain Non-VAT rows, so
