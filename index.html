@@ -4855,8 +4855,20 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const m = /^q([1-4])_(pt|it)_(?:payment_)?remarks$/.exec(k);
     return m ? 'q'+m[1]+'_'+m[2]+'_tax_due' : (k==='annual_1701_remarks' ? 'annual_1701_tax_due' : null);
   }
+  // "With Sales / With Expenses": the quarter's figure as SHOWN on screen is > 0
+  // (VAT clients: from the VAT Worksheet; 0 FILING / FOR CLOSURE rows: ₱0).
+  const SALES_AMOUNT_COLS = SALES_NUMERIC_COLS.filter(([k])=> /^q[1-4]_(sales|expenses)$/.test(k));
+  function salesShownAmt(r, key){
+    if(isZeroStatusRow(r) && ZERO_STATUS_KEYS.includes(key)) return 0;
+    if(normalizeTaxType(r.tax_type)==='VAT' && r.client_id_no){
+      const ws = vatWsFor(r.client_id_no, r.year);
+      if(ws){ const v = vatSalesCellValue(vatYearCalc(ws), key); if(v !== undefined) return v === '' ? null : Number(v); }
+    }
+    return salesBlank(r[key]) ? null : Number(r[key]);
+  }
   function salesMissingMatch(r, mf){
     let m;
+    if((m = /^with:(.+)$/.exec(mf))){ const v = salesShownAmt(r, m[1]); return v !== null && !isNaN(v) && v > 0; }
     if((m = /^done:(.+)$/.exec(mf))) return !salesBlank(r[m[1]]);
     if((m = /^undone:(.+)$/.exec(mf))){
       if(!salesBlank(r[m[1]])) return false;
@@ -4869,6 +4881,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
   salesMissingFilter.innerHTML = '<option value="">Show all (no field filter)</option>' +
     `<optgroup label="Missing a value">${SALES_NUMERIC_COLS.map(([key,label])=>`<option value="${esc(key)}">Missing: ${esc(label)}</option>`).join('')}</optgroup>` +
+    `<optgroup label="With a value (greater than ₱0)">${SALES_AMOUNT_COLS.map(([key,label])=>`<option value="with:${esc(key)}">With ${esc(label)}</option>`).join('')}</optgroup>` +
     `<optgroup label="Has a Tax Due (to check remarks)">${SALES_TAXDUE_FILTER_COLS.map(([key,label])=>`<option value="has:${esc(key)}">Has ${esc(label)}</option>`).join('')}</optgroup>` +
     `<optgroup label="Tax Due with no remark / payment note yet">${SALES_TAXDUE_FILTER_COLS.map(([key,label])=>`<option value="norem:${esc(key)}">${esc(label)} — no remarks yet</option>`).join('')}</optgroup>` +
     `<optgroup label="Remarks / Payment — DONE (filled in)">${SALES_REMARK_COLS.map(([key,label])=>`<option value="done:${esc(key)}">${esc(label)} — done</option>`).join('')}</optgroup>` +
