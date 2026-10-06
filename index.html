@@ -103,7 +103,7 @@
   }
   #cor-app .tab-btn{
     font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:0.5px;
-    text-transform:uppercase;background:transparent;border:none;
+    text-transform:uppercase;background:transparent;border:none;text-decoration:none;
     padding:9px 16px;cursor:pointer;color:var(--sidebar-ink-soft);
     border-radius:8px;
     display:flex;align-items:center;gap:9px;
@@ -431,18 +431,18 @@
         </div>
       </div>
       <span class="nav-eyebrow">Menu</span>
-      <button class="tab-btn active" data-tab="calendar"><span class="ico" data-ico="calendar"></span>Filing Calendar</button>
-      <button class="tab-btn" data-tab="tracker"><span class="ico" data-ico="tracker"></span>Task Tracker</button>
-      <button class="tab-btn" data-tab="registry"><span class="ico" data-ico="registry"></span>Client Registry</button>
-      <button class="tab-btn" data-tab="scan"><span class="ico" data-ico="scan"></span>Scan &amp; Add (OCR)</button>
-      <button class="tab-btn" data-tab="creds"><span class="ico" data-ico="creds"></span>Credentials</button>
-      <button class="tab-btn" data-tab="sales"><span class="ico" data-ico="sales"></span>Sales Summary</button>
-      <button class="tab-btn" data-tab="vat"><span class="ico" data-ico="vat"></span>VAT Worksheet</button>
-      <button class="tab-btn" data-tab="taxopt"><span class="ico" data-ico="taxopt"></span>Tax Option Compare</button>
-      <button class="tab-btn" data-tab="tax2307"><span class="ico" data-ico="tax2307"></span>2307 Register</button>
-      <button class="tab-btn" data-tab="sawt"><span class="ico" data-ico="sawt"></span>SAWT / 2307 Received</button>
-      <button class="tab-btn" data-tab="report"><span class="ico" data-ico="report"></span>eBIRForms Profile</button>
-      <button class="tab-btn" data-tab="settings"><span class="ico" data-ico="settings"></span>Settings</button>
+      <a class="tab-btn active" data-tab="calendar" href="#calendar"><span class="ico" data-ico="calendar"></span>Filing Calendar</a>
+      <a class="tab-btn" data-tab="tracker" href="#tracker"><span class="ico" data-ico="tracker"></span>Task Tracker</a>
+      <a class="tab-btn" data-tab="registry" href="#registry"><span class="ico" data-ico="registry"></span>Client Registry</a>
+      <a class="tab-btn" data-tab="scan" href="#scan"><span class="ico" data-ico="scan"></span>Scan &amp; Add (OCR)</a>
+      <a class="tab-btn" data-tab="creds" href="#creds"><span class="ico" data-ico="creds"></span>Credentials</a>
+      <a class="tab-btn" data-tab="sales" href="#sales"><span class="ico" data-ico="sales"></span>Sales Summary</a>
+      <a class="tab-btn" data-tab="vat" href="#vat"><span class="ico" data-ico="vat"></span>VAT Worksheet</a>
+      <a class="tab-btn" data-tab="taxopt" href="#taxopt"><span class="ico" data-ico="taxopt"></span>Tax Option Compare</a>
+      <a class="tab-btn" data-tab="tax2307" href="#tax2307"><span class="ico" data-ico="tax2307"></span>2307 Register</a>
+      <a class="tab-btn" data-tab="sawt" href="#sawt"><span class="ico" data-ico="sawt"></span>SAWT / 2307 Received</a>
+      <a class="tab-btn" data-tab="report" href="#report"><span class="ico" data-ico="report"></span>eBIRForms Profile</a>
+      <a class="tab-btn" data-tab="settings" href="#settings"><span class="ico" data-ico="settings"></span>Settings</a>
     </nav>
     <div class="main-col">
     <div class="topbar">
@@ -2155,7 +2155,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
   function renderTaxOpt(){
     taxoptInit();
-    if(!taxopt) taxoptLoad(); else renderTaxoptResults();
+    // Not edited by hand -> re-read the Sales Summary / 2307 figures every time the tab is opened,
+    // so expenses or sales that were just updated elsewhere show up here. Hand-typed numbers are kept.
+    if(!taxopt || !taxopt.dirty) taxoptLoad(); else renderTaxoptResults();
   }
   toEl.client.addEventListener('change', taxoptLoad);
   toEl.year.addEventListener('change', taxoptLoad);
@@ -2206,12 +2208,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   toEl.body.addEventListener('input', e=>{
     const el = e.target.closest('.taxopt-in'); if(!el || !taxopt) return;
     if(el.value.trim()[0] === '=') return;           // formula: evaluated on change
+    taxopt.dirty = true;
     taxopt.vals[el.dataset.k] = el.value.trim() === '' ? null : taxoptNum(el.value);
     renderTaxoptResults();
   });
   toEl.body.addEventListener('change', e=>{
     if(!taxopt) return;
     const el = e.target.closest('.taxopt-in');
+    if(el || e.target.closest('.taxopt-as')) taxopt.dirty = true;
     if(el){
       let raw = el.value.trim();
       if(raw[0] === '='){
@@ -2655,15 +2659,35 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   });
 
   // ---------- Tabs ----------
+  // Every sidebar menu is a real link (href="#tab"): a normal click switches
+  // tab right here, while Ctrl/Cmd-click, middle-click or right-click -> "Open
+  // in new tab" opens that menu in its own browser tab, straight on that page
+  // (the address-bar #tab is read on load, below). The login session is shared
+  // between browser tabs, so the new tab doesn't ask to sign in again.
+  function activateTab(tab, render){
+    const btn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+    if(!btn || !document.getElementById('panel-' + tab)) return false;
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-' + tab).classList.add('active');
+    if(render !== false) renderActiveTab(tab);
+    return true;
+  }
   document.querySelectorAll('.tab-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
-      document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
-      renderActiveTab(btn.dataset.tab);
+    btn.addEventListener('click', e=>{
+      // Let the browser handle "open in new tab / window" clicks itself.
+      if(e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button === 1) return;
+      e.preventDefault();
+      activateTab(btn.dataset.tab);
+      try{ history.replaceState(null, '', '#' + btn.dataset.tab); }catch(err){ /* ignore -- address bar just won't change */ }
     });
   });
+  // Opened (or reloaded) with #sales etc. in the address bar -> start on that menu.
+  // No render here: the data isn't loaded yet; loadAllData renders the active tab.
+  function tabFromHash(){ return String(location.hash || '').replace(/^#/, ''); }
+  activateTab(tabFromHash(), false);
+  window.addEventListener('hashchange', ()=>{ const t = tabFromHash(); if(t) activateTab(t); });
   function renderActiveTab(tab){
     updatePageHeader(tab);
     if(tab === 'calendar'){ renderCalendar(); renderRefCalendar(); }
@@ -7125,6 +7149,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function applyRoleVisibility(){
     const credsTabBtn = document.querySelector('.tab-btn[data-tab="creds"]');
     if(credsTabBtn) credsTabBtn.style.display = isAdmin() ? '' : 'none';
+    // Opened straight onto #creds by someone who may not see it -> go to the first menu instead.
+    if(!isAdmin() && credsTabBtn && credsTabBtn.classList.contains('active')){ activateTab('calendar'); try{ history.replaceState(null, '', '#calendar'); }catch(err){} }
   }
 
   async function initAuth(){
