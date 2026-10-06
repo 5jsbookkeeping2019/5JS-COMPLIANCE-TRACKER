@@ -1755,6 +1755,37 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
     return n;
   }
+  // Task Tracker -> VAT tab: when an SLSP / VAT Relief task has BOTH "Done by" and a Date, that quarter's
+  // "Relief done by" on the VAT Worksheet is filled in automatically as "DONE BY <name> <date>" (so it turns
+  // Encoded and the READY FOR ENCODING note comes off the task). Only fills an EMPTY Relief done by -- text typed
+  // there is never overwritten, and un-doing the task does not clear it. Not blocked by quarter locks: it is an
+  // explicit action in the Task Tracker and every change is audited.
+  async function syncTaskDoneToVatRelief(t){
+    try{
+      if(!t || t.form !== 'SLSP' || t.status === 'NA') return;
+      const who = String(t.doneBy||'').trim(), when = String(t.doneDate||'').trim();
+      if(!who || !when) return;
+      const m = /^Q([1-4])\s+(\d{4})$/.exec(String(t.period||'').trim()); if(!m) return;
+      const q = Number(m[1]), year = Number(m[2]);
+      const client = taskClient(t), idNo = String(client['CLIENT ID NO.']||'').trim(); if(!idNo) return;
+      if(normalizeTaxType(client['TAX TYPE']) !== 'VAT' && !vatWsFor(idNo, year)) return;
+      const key = 'q'+q+'_relief_done_by';
+      let ws = vatWsFor(idNo, year);
+      if(ws && String(ws[key]||'').trim()) return;
+      ws = ws || await ensureVatWs(idNo, year);
+      if(String(ws[key]||'').trim()) return;
+      const val = 'DONE BY ' + who.replace(/^done\s*by\s*/i, '').trim().toUpperCase() + ' ' + when;
+      const oldVal = ws[key];
+      const stamp = {updated_at: new Date().toISOString(), updated_by: currentUserEmail};
+      const { error } = await sb.from('cor_vat_worksheet').update({[key]: val, ...stamp}).eq('id', ws.id);
+      if(error){ console.error(error); toast('Warning: the VAT tab\'s Relief done by could not be filled in — please try again.'); return; }
+      ws[key] = val; ws.updated_at = stamp.updated_at; ws.updated_by = stamp.updated_by;
+      logFieldAudit('cor_vat_worksheet_audit', 'record_id', ws.id, key, 'Q'+q+' VAT Relief done by (from Task Tracker)', oldVal || null, val);
+      await syncVatReliefTask(idNo, year, vatYearCalc(vatEffectiveWs(idNo, year, ws), vatClientIsZero(idNo, year)));
+      toast(`VAT tab: Q${q} Relief done by filled in (${val}).`);
+      const tab = document.querySelector('.tab-btn.active'); if(tab && tab.dataset.tab === 'vat') renderVat();
+    }catch(err){ console.error(err); }
+  }
   // Runs for every VAT client of the year (also clients without a worksheet row yet, e.g. 0 FILING ones that count as
   // READY) when the VAT tab is opened, so quarters that became READY through the Excel import or another screen get
   // their SLSP task without anyone having to press a button.
@@ -3045,6 +3076,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     toast(done? 'Marked as done.' : 'Reverted to pending.');
     const { error } = await sb.from('cor_tasks').update(patch).eq('id', tid);
     if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
+    else if(done) syncTaskDoneToVatRelief(t);
   }
 
   function renderRefCalendar(){
@@ -3223,7 +3255,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         renderCalStats();
         const { error } = await sb.from('cor_tasks').update(patch).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
-        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'status', 'Status', oldVal, t.status);
+        else { logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'status', 'Status', oldVal, t.status); syncTaskDoneToVatRelief(t); }
       });
       const taxDueInput = tr.querySelector('.taxduef');
       // Excel-style: focusing a cell that was filled by a formula shows the
@@ -3276,14 +3308,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         t.doneBy = e.target.value;
         const { error } = await sb.from('cor_tasks').update({done_by: t.doneBy}).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
-        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'done_by', 'Done by', oldVal, t.doneBy);
+        else { logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'done_by', 'Done by', oldVal, t.doneBy); syncTaskDoneToVatRelief(t); }
       });
       tr.querySelector('.donedatef').addEventListener('change', async e=>{
         const oldVal = t.doneDate;
         t.doneDate = e.target.value;
         const { error } = await sb.from('cor_tasks').update({done_date: t.doneDate}).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
-        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'done_date', 'Done date', oldVal, t.doneDate);
+        else { logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'done_date', 'Done date', oldVal, t.doneDate); syncTaskDoneToVatRelief(t); }
       });
       tr.querySelector('.notesf').addEventListener('change', async e=>{
         const oldVal = t.notes;
