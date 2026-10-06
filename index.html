@@ -84,6 +84,9 @@
     font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);
     text-align:right;line-height:1.6;
   }
+  /* Hide / show the left menu so the open tab can use the whole screen. */
+  #cor-app .menu-toggle-btn{margin-right:auto;white-space:nowrap;}
+  #cor-app .wrap.menu-hidden > .tabs{display:none !important;}
   #cor-app .header-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;align-items:center;}
 
   #cor-app .save-banner{
@@ -446,6 +449,7 @@
     </nav>
     <div class="main-col">
     <div class="topbar">
+      <button class="secondary menu-toggle-btn" id="menu-toggle-btn" type="button" aria-expanded="true" title="Hide the menu on the left so the page uses the whole screen (click again to bring it back)">◀ Hide menu</button>
       <div class="meta" id="today-label"></div>
       <div class="header-actions">
         <span class="meta" id="user-email-label" style="align-self:center;"></span>
@@ -500,7 +504,8 @@
             <option value="OVERDUE">Overdue</option>
             <option value="D">Done</option>
             <option value="Z">Zero / No Transaction</option>
-            <option value="N">Has note</option>
+            <option value="N">With notes</option>
+            <option value="NN">No notes</option>
             <option value="A">N/A (not applicable)</option>
           </select>
           <input class="search-input" id="tr-notes-filter" placeholder="Filter by notes (e.g. ZERO FILING)...">
@@ -1034,6 +1039,27 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return (st.unchecked.size > 0 && shown.length === 1) ? shown[0].value : '';
   }
   document.querySelectorAll('select.filter[data-chk]').forEach(makeCheckFilter);
+
+  // "Clear filters" button on every tab that has filters: un-ticks every checkbox filter and empties the
+  // search / notes boxes of that tab in one click (sort order and the VAT year / quarter pickers are left alone).
+  function clearPanelFilters(panel){
+    const sels = Array.from(panel.querySelectorAll('select[data-chk]'));
+    sels.forEach(sel=>{ const st = CHK_FILTERS.get(sel); if(st){ st.unchecked.clear(); st.checked.clear(); st.render(); } });
+    const boxes = Array.from(panel.querySelectorAll('.filter-row input.search-input, .filter-row input.filter'))
+      .filter(i=> !i.type || i.type === 'text' || i.type === 'search');
+    boxes.forEach(i=>{ i.value = ''; });
+    if(sels[0]) sels[0].dispatchEvent(new Event('change', {bubbles:true}));
+    if(boxes[0]) boxes[0].dispatchEvent(new Event('input', {bubbles:true}));
+  }
+  ['calendar','tracker','registry','sales','vat','tax2307','sawt','report'].forEach(name=>{
+    const panel = document.getElementById('panel-'+name); if(!panel) return;
+    const row = panel.querySelector('.filter-row'); if(!row) return;
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'secondary clear-filters-btn'; btn.textContent = '✕ Clear filters';
+    btn.title = 'Remove every filter and search on this tab and show everything again';
+    btn.addEventListener('click', ()=> clearPanelFilters(panel));
+    row.appendChild(btn);
+  });
 
   // ---------- Supabase client ----------
   // Guarded: if the CDN script failed to load (offline, blocked, opened as a plain
@@ -1590,7 +1616,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // it's safe to call repeatedly. Every change is audit-logged.
   async function syncVatLinks(ws){
     const calc = vatYearCalc(vatEffectiveWs(ws.client_id_no, ws.year, ws), vatClientIsZero(ws.client_id_no, ws.year));
-    const result = {sales:0, tasks:0};
+    const result = {sales:0, tasks:0, slsp:0};
     const cleared = {};   // quarter -> the half-finished Tax Due taken back off the Sales Summary row
     const row = salesSummary.find(r=> vatKey(r.client_id_no, r.year) === vatKey(ws.client_id_no, ws.year));
     if(row && !isZeroStatusRow(row)){
@@ -1650,8 +1676,29 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         else { result.tasks++; logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'tax_due', 'Tax Due (from VAT Worksheet)', oldVal, t.taxDue); }
       }
     }
+    // VAT Relief signal -> the client's SLSP task (the SLSP / VAT Relief encoding job): a quarter that is
+    // READY FOR ENCODING gets this note on its SLSP task so it shows up in the Task Tracker (search / notes filter
+    // "READY FOR ENCODING"); the note is taken off again once "Relief done by" is filled in or the quarter becomes
+    // incomplete. A note someone typed there is never overwritten, and finished / N/A tasks are left alone.
+    if(client){
+      for(const qc of calc){
+        const t = tasks.find(x=> x.clientId === client._id && x.form === 'SLSP' && x.period === 'Q'+qc.q+' '+ws.year);
+        if(!t || t.status === 'DONE' || t.status === 'NA') continue;
+        const cur = String(t.notes||'').trim();
+        let target = null;
+        if(qc.relief === 'READY'){ if(cur === '' || cur === VAT_RELIEF_NOTE) target = VAT_RELIEF_NOTE; else continue; }
+        else { if(cur === VAT_RELIEF_NOTE) target = ''; else continue; }
+        if(cur === target) continue;
+        const oldVal = t.notes;
+        t.notes = target;
+        const { error } = await sb.from('cor_tasks').update({notes: target || null}).eq('id', t.id);
+        if(error){ console.error(error); t.notes = oldVal; toast('Warning: an SLSP task could not be updated — please try again.'); }
+        else { result.slsp++; logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'notes', 'Notes (VAT Relief signal from VAT Worksheet)', oldVal, t.notes); }
+      }
+    }
     return result;
   }
+  const VAT_RELIEF_NOTE = 'READY FOR ENCODING — VAT Relief';
 
 
   // ---- Sales Summary Tax Due  ->  Task Tracker Tax Due ----
@@ -1969,6 +2016,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(!tr.querySelector('.history-vat-btn')){ const last = tr.lastElementChild; if(last) last.innerHTML = '<button class="tiny history-vat-btn">History</button>'; }
     const r = await syncVatLinks(ws);
     if(r.sales || r.tasks) toast(`VAT Due updated → Sales Summary${r.tasks ? ' + 2550Q task' : ''}.`);
+    else if(r.slsp) toast('SLSP / VAT Relief task updated in the Task Tracker.');
   });
   function VAT_FIELD_LABEL(field){
     let m = /^m(\d+)_(net_sales|vat_exempt|zero_rated|net_purchase)$/.exec(field);
@@ -1994,10 +2042,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(!list.length){ toast('Nothing to sync yet for '+(year||'this year')+'.'); return; }
     const btn = document.getElementById('vat-sync-all-btn');
     btn.disabled = true;
-    let sales = 0, taskCount = 0;
-    for(const w of list){ const r = await syncVatLinks(w); sales += r.sales; taskCount += r.tasks; }
+    let sales = 0, taskCount = 0, slspCount = 0;
+    for(const w of list){ const r = await syncVatLinks(w); sales += r.sales; taskCount += r.tasks; slspCount += r.slsp; }
     btn.disabled = false;
-    toast(sales || taskCount ? `Synced: ${sales} Sales Summary value(s) and ${taskCount} 2550Q task(s) updated.` : 'Everything was already in sync.');
+    toast(sales || taskCount || slspCount ? `Synced: ${sales} Sales Summary value(s), ${taskCount} 2550Q task(s) and ${slspCount} SLSP / VAT Relief task(s) updated.` : 'Everything was already in sync.');
   });
   function handleVatRealtime(payload){
     if(payload.eventType === 'DELETE'){
@@ -2665,6 +2713,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   });
 
   // ---------- Tabs ----------
+  // Hide / show the left menu (remembered per browser).
+  (function(){
+    const wrap = document.getElementById('app-wrap'), btn = document.getElementById('menu-toggle-btn');
+    if(!wrap || !btn) return;
+    function setHidden(h, save){
+      wrap.classList.toggle('menu-hidden', h);
+      btn.textContent = h ? '▶ Show menu' : '◀ Hide menu';
+      btn.setAttribute('aria-expanded', h ? 'false' : 'true');
+      if(save){ try{ localStorage.setItem('cor_menu_hidden', h ? '1' : '0'); }catch(e){} }
+    }
+    let saved = false;
+    try{ saved = localStorage.getItem('cor_menu_hidden') === '1'; }catch(e){}
+    setHidden(saved, false);
+    btn.addEventListener('click', ()=> setHidden(!wrap.classList.contains('menu-hidden'), true));
+  })();
   // Every sidebar menu is a real link (href="#tab"): a normal click switches
   // tab right here, while Ctrl/Cmd-click, middle-click or right-click -> "Open
   // in new tab" opens that menu in its own browser tab, straight on that page
@@ -2941,7 +3004,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // checked = no filter).
     const sfs = chkChecked(trStatusFilter), payfs = chkChecked(trPaymentFilter);
     const statusMatch = (t, v)=> v==='OVERDUE' ? isOverdue(t) : v==='D' ? t.status==='DONE' : v==='P' ? t.status==='PENDING'
-      : v==='Z' ? t.status==='ZERO' : v==='N' ? !!t.notes : v==='A' ? t.status==='NA' : false;
+      : v==='Z' ? t.status==='ZERO' : v==='N' ? !!String(t.notes||'').trim() : v==='NN' ? !String(t.notes||'').trim() : v==='A' ? t.status==='NA' : false;
     const payMatch = (t, v)=> v==='NO_DUE' ? (t.taxDue===null || t.taxDue===undefined || !(t.taxDue>0))
       : v==='DUE_UNPAID' ? (t.taxDue!==null && t.taxDue>0 && !t.paymentStatus)
       : v==='LIAISON' ? t.paymentStatus==='GIVEN TO LIAISON' : v==='PAID' ? t.paymentStatus==='PAID' : false;
