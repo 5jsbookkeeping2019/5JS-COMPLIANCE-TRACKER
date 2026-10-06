@@ -2367,7 +2367,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     rows.push(['exp', kind==='corp' ? 'Operating expenses (itemized)' : 'Expenses (itemized)']);
     rows.push(['cwt','Creditable tax withheld (2307) — this quarter']);
     rows.push(['paid','Income tax actually paid this quarter (optional)']);
-    const head = `<tr><th style="text-align:left;">Per quarter (not cumulative)</th>${[1,2,3,4].map(q=>`<th>Q${q}</th>`).join('')}</tr>`;
+    const head = `<tr><th style="text-align:left;">Per quarter (not cumulative)</th>${[1,2,3,4].map(q=>`<th style="text-align:center;">Q${q}</th>`).join('')}</tr>`;
     const body = rows.map(([k,label])=>`<tr><td>${esc(label)}</td>${[1,2,3,4].map(q=>`<td>${inp('q'+q+'_'+k, k==='paid'?'auto':'')}</td>`).join('')}</tr>`).join('');
     const refIT = st.hasSalesRow ? `<tr><td style="color:var(--ink-soft);">Sales Summary “IT Due” (for comparison)</td>${[1,2,3].map(q=>`<td class="num mono" style="color:var(--ink-soft);">${esc(fmtVatMoney(st.zero ? 0 : (st.refIT[q]===undefined||st.refIT[q]===null||st.refIT[q]==='' ? null : Number(st.refIT[q]))))}</td>`).join('')}<td></td></tr>` : '';
     const chk = (a, label, checked, title)=> `<label style="display:inline-flex;align-items:center;gap:6px;margin-right:18px;font-size:12.5px;" title="${esc(title||'')}"><input type="checkbox" class="taxopt-as" data-a="${a}"${checked?' checked':''}>${esc(label)}</label>`;
@@ -2427,7 +2427,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // ---- results ----
   function taxoptTable(head, rows, opts){
     opts = opts || {};
-    return `<div class="table-scroll" style="max-width:${opts.width||980}px;margin-bottom:6px;"><table><thead><tr>${head.map((h,i)=>`<th${i? ' style="text-align:right;"':''}>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr${r.cls?` class="${r.cls}"`:''}${r.style?` style="${r.style}"`:''}>${r.cells.map((c,i)=>`<td${i? ' class="num mono"':''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    return `<div class="table-scroll" style="max-width:${opts.width||980}px;margin-bottom:6px;"><table><thead><tr>${head.map((h,i)=>`<th${/^Q[1-4]$/.test(h) ? ' style="text-align:center;"' : (i? ' style="text-align:right;"':'')}>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr${r.cls?` class="${r.cls}"`:''}${r.style?` style="${r.style}"`:''}>${r.cells.map((c,i)=>`<td${i? ' class="num mono"':''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
   }
   const taxoptMoney = n => (n===null || n===undefined) ? '—' : '₱' + fmtVatMoney(n);
   function renderTaxoptResults(){
