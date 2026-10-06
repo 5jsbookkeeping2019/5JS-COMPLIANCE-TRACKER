@@ -614,7 +614,7 @@
             <option value="3">Highlight: Q3</option><option value="4">Highlight: Q4</option>
             <option value="0">No highlight</option>
           </select>
-          <button class="secondary" id="sales-locks-btn" title="Finished quarters are locked automatically so their Sales and Expenses can't be edited by mistake. Open this to lock a quarter right after it's filed, or unlock one (e.g. an amended return).">🔒 Quarter locks</button>
+          <button class="secondary" id="sales-locks-btn" title="Finished quarters are locked automatically so nothing in them can be edited by mistake. Open this to lock a quarter right after it's filed, or unlock one (e.g. an amended return).">🔒 Quarter locks</button>
           <button class="secondary" id="add-sales-year-btn">+ Add New Year</button>
           <button class="secondary" id="sales-sync-tasks-btn" title="Fills the Tax Due of the matching 2551Q / 2550Q / 1701Q / 1702Q tasks in the Task Tracker from this tab. Only EMPTY task Tax Due cells are filled; figures already typed in the Task Tracker are never overwritten.">Sync Tax Due → Task Tracker</button>
         </div>
@@ -622,7 +622,7 @@
           <span class="small-note" id="sales-count" style="margin:0;"></span>
         </div>
       </div>
-      <div class="small-note">Combined VAT and Non-VAT (NVAT) clients, per quarter — from the Sales Summary file. Edit any cell directly (same as Task Tracker) — saved automatically to the live database. Use the "Show all" dropdown to find who's still missing a value for a particular field (e.g. Q3 Sales) — this excludes actual "0" values (confirmed zero filing), blank only. There's no manual "Add client" here — the Client Registry is the source: every new client added there automatically gets its own row here (Client ID/Name/TIN/Trade Name already filled in), so the two always stay linked. When a new year starts, use "+ Add New Year" to build a fresh set of rows for every Active/0 Filing/For Closure/Annual Client that doesn't have an End of Service Date yet (i.e. still existing and not yet tagged as service-ended) — no need to do it one by one or wait for a new SQL script. <b>Finished quarters are locked:</b> the Sales and Expenses of every quarter older than the one being filed are read-only (grey) so they can't be changed by mistake — use <b>🔒 Quarter locks</b> to lock a quarter right after it's filed, or to unlock one when an amended return needs a correction.</div>
+      <div class="small-note">Combined VAT and Non-VAT (NVAT) clients, per quarter — from the Sales Summary file. Edit any cell directly (same as Task Tracker) — saved automatically to the live database. Use the "Show all" dropdown to find who's still missing a value for a particular field (e.g. Q3 Sales) — this excludes actual "0" values (confirmed zero filing), blank only. There's no manual "Add client" here — the Client Registry is the source: every new client added there automatically gets its own row here (Client ID/Name/TIN/Trade Name already filled in), so the two always stay linked. When a new year starts, use "+ Add New Year" to build a fresh set of rows for every Active/0 Filing/For Closure/Annual Client that doesn't have an End of Service Date yet (i.e. still existing and not yet tagged as service-ended) — no need to do it one by one or wait for a new SQL script. <b>Finished quarters are locked:</b> every detail of a quarter (Sales, Expenses, PT / IT Due, remarks and payment notes) is read-only (grey) once that quarter is older than the one being filed so they can't be changed by mistake — use <b>🔒 Quarter locks</b> to lock a quarter right after it's filed, or to unlock one when an amended return needs a correction.</div>
       <datalist id="sales-client-id-options"></datalist>
       <!-- Suggestions (free text still allowed) for the per-quarter PT/IT Remarks and Payment cells:
            has the client paid 5Js, and where is the tax due in the payment process. -->
@@ -1438,9 +1438,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
 
   // ===================== QUARTER LOCKS =====================
-  // Once a quarter is finished its Sales, Expenses (Sales Summary) and the VAT
-  // Worksheet figures (monthly Net Sales / VAT-Exempt / Zero-Rated / Net
-  // Purchase, Tax Paid, Carry-in, Non-VAT Exp) become read-only, so a filed
+  // Once a quarter is locked EVERY detail of it is read-only: Sales Summary --
+  // Sales, Expenses, PT / IT Due, PT / IT Remarks and Payment; VAT Worksheet --
+  // monthly Net Sales / VAT-Exempt / Zero-Rated / Net Purchase, Tax Paid,
+  // Carry-in, Non-VAT Exp, Relief done by and Remarks. So a filed
   // quarter can't be changed by a slip of the keyboard. Two layers:
   //   1. AUTOMATIC: every quarter older than the one being filed right now
   //      (see currentFilingQuarter) is locked -- e.g. in Oct-Dec 2026, Q2 2026
@@ -1448,8 +1449,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   //   2. MANUAL (cor_quarter_locks): staff can Lock a quarter as soon as it is
   //      filed, or Unlock an auto-locked one (e.g. an amended return). A manual
   //      row always wins over the automatic rule.
-  // Locks are per year + quarter (all clients). Remarks / payment notes / Tax
-  // Due fields are NOT locked -- payment status still has to be updated.
+  // Locks are per year + quarter (all clients). Every per-quarter detail locks, including
+  // remarks / payment notes (user decision) -- unlock a quarter to update them.
+  // Every per-quarter column of a Sales Summary row (Sales, Expenses, PT/IT Due, PT/IT Remarks, PT/IT Payment).
+  const QUARTER_LOCK_KEY_RE = /^q([1-4])_(sales|expenses|pt_tax_due|pt_remarks|pt_payment_remarks|it_tax_due|it_remarks|it_payment_remarks)$/;
   function quarterLockRow(year, q){ return quarterLocks.find(l=> Number(l.year)===Number(year) && Number(l.quarter)===Number(q)) || null; }
   function quarterIsAutoLocked(year, q){
     year = Number(year); q = Number(q);
@@ -1468,7 +1471,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return quarterIsAutoLocked(year, q) ? 'auto' : 'open';
   }
   const QUARTER_LOCK_LABEL = {auto:'Locked (finished quarter)', locked:'Locked', unlocked:'Unlocked (manual)', open:'Open'};
-  const quarterLockedMsg = (year, q)=> `🔒 Q${q} ${year} is locked — its Sales, Expenses and Tax Paid can't be edited by mistake. Use "Quarter locks" (Sales Summary) or the lock button (VAT Worksheet) to unlock it first.`;
+  const quarterLockedMsg = (year, q)=> `🔒 Q${q} ${year} is locked — all its details (Sales, Expenses, Tax Due, remarks / payment notes, Tax Paid) are locked so they can't be edited by mistake. Use "Quarter locks" (Sales Summary) or the lock button (VAT Worksheet) to unlock it first.`;
   // Which quarter a VAT Worksheet field belongs to (m1..m12 -> 1..4, qN_* -> N).
   function vatFieldQuarter(field){
     let m = /^m(\d+)_/.exec(field); if(m) return Math.ceil(Number(m[1])/3);
@@ -1508,7 +1511,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // Lock is instant; Unlock asks first (it opens every client's figures for that quarter).
   async function toggleQuarterLock(year, q){
     const wasLocked = quarterIsLocked(year, q);
-    if(wasLocked && !confirm(`Unlock Q${q} ${year}?\n\nSales, Expenses and Tax Paid of ALL clients for that quarter become editable again. Remember to lock it again when you're done.`)) return false;
+    if(wasLocked && !confirm(`Unlock Q${q} ${year}?\n\nEvery detail of that quarter (Sales, Expenses, Tax Due, remarks / payment notes, Tax Paid) becomes editable again for ALL clients. Remember to lock it again when you're done.`)) return false;
     const ok = await setQuarterLock(year, q, !wasLocked);
     if(ok) refreshQuarterLockViews();
     return ok;
@@ -1559,7 +1562,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const root = document.getElementById('modal-root');
     root.innerHTML = `<div class="modal-backdrop" id="qlocks-backdrop"><div class="modal" style="max-width:760px;">
       <h2>Quarter locks</h2>
-      <div class="small-note" style="margin-bottom:10px;">A locked quarter makes the <b>Sales</b> and <b>Expenses</b> (Sales Summary) and the <b>VAT Worksheet figures / Tax Paid</b> read-only for every client, so a finished quarter can't be changed by accident. Quarters older than the one being filed lock <b>automatically</b>; you can also <b>Lock</b> a quarter right after it's filed, or <b>Unlock</b> one (e.g. an amended return) and lock it again afterwards. Remarks, payment notes and Tax Due stay editable.</div>
+      <div class="small-note" style="margin-bottom:10px;">Locking a quarter makes <b>all of its details</b> read-only for every client — in the Sales Summary: Sales, Expenses, PT / IT Due, PT / IT Remarks and Payment notes; in the VAT Worksheet: the monthly figures, Tax Paid, Carry-in, Non-VAT Exp, Relief done by and Remarks — so a finished quarter can't be changed by accident. Quarters older than the one being filed lock <b>automatically</b>; you can also <b>Lock</b> a quarter right after it's filed, or <b>Unlock</b> one (e.g. an amended return) and lock it again afterwards.</div>
       <div id="qlocks-body" style="overflow:auto;"></div>
       <div style="margin-top:16px;display:flex;justify-content:flex-end;"><button class="secondary" id="qlocks-close-btn">Close</button></div>
     </div></div>`;
@@ -1873,8 +1876,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         <td class="num mono" data-calc="salesTotal" style="color:var(--ink-soft);">${cells.salesTotal}</td>
         <td class="num mono" data-calc="expensesTotal" style="color:var(--ink-soft);">${cells.expensesTotal}</td>
         <td><span class="vat-badge ${qc.relief.toLowerCase()}" data-calc="relief">${VAT_RELIEF_LABEL[qc.relief]}</span></td>
-        <td><input class="inline-text vat-cell" data-key="q${q}_relief_done_by" style="width:130px;" placeholder="e.g. DONE BY ARVI 4/23" value="${esc(ws['q'+q+'_relief_done_by']||'')}"></td>
-        <td><input class="inline-text vat-cell" data-key="q${q}_remarks" style="width:140px;" value="${esc(ws['q'+q+'_remarks']||'')}"></td>
+        <td><input class="inline-text vat-cell" data-key="q${q}_relief_done_by" style="width:130px;${qLocked?'background:var(--paper-line);color:var(--ink-soft);cursor:not-allowed;':''}" placeholder="e.g. DONE BY ARVI 4/23" value="${esc(ws['q'+q+'_relief_done_by']||'')}"${qLocked?' readonly title="'+esc(quarterLockedMsg(year, q))+'"':''}></td>
+        <td><input class="inline-text vat-cell" data-key="q${q}_remarks" style="width:140px;${qLocked?'background:var(--paper-line);color:var(--ink-soft);cursor:not-allowed;':''}" value="${esc(ws['q'+q+'_remarks']||'')}"${qLocked?' readonly title="'+esc(quarterLockedMsg(year, q))+'"':''}></td>
         <td>${e.ws ? '<button class="tiny history-vat-btn">History</button>' : ''}</td>
       </tr>`;
     }).join('');
@@ -1922,10 +1925,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const field = inp.dataset.key;
     const idNo = tr.dataset.idno, year = Number(vatYearFilter.value), q = Number(vatQuarterFilter.value) || 1;
     const isText = /_relief_done_by$|_remarks$/.test(field);
-    if(!isText && quarterIsLocked(year, vatFieldQuarter(field))){
+    if(quarterIsLocked(year, vatFieldQuarter(field))){
       // Defensive: the cell is read-only, but a lock set by someone else a moment ago may not have re-rendered here yet.
       toast(quarterLockedMsg(year, vatFieldQuarter(field)));
-      inp.value = fmtNumInput((vatWsFor(idNo, year) || {})[field]);
+      inp.value = isText ? ((vatWsFor(idNo, year) || {})[field] || '') : fmtNumInput((vatWsFor(idNo, year) || {})[field]);
       renderVat();
       return;
     }
@@ -4771,7 +4774,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         const isComputed = COMPUTED_KEYS.has(key) || isPTAuto || isNetIncomeAuto || isZeroAuto || isVatAuto;
         // Finished quarters: that quarter's Sales / Expenses are read-only
         // (see QUARTER LOCKS) so a filed figure can't be changed by accident.
-        const qLockM = /^q([1-4])_(sales|expenses)$/.exec(key);
+        const qLockM = QUARTER_LOCK_KEY_RE.exec(key);
         const isQLocked = !!qLockM && quarterIsLocked(r.year, qLockM[1]);
         const isLocked = isAutoFilled || isComputed || ALWAYS_LOCKED_KEYS.has(key) || isQLocked;
         const computedVal = isZeroAuto ? 0
@@ -4812,7 +4815,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           ? 'Sourced from the Client Registry (Client ID: '+esc(r.client_id_no)+') — edit it there if it’s wrong.'
           : isZeroAuto
           ? 'Automatically ₱0 — this client’s status is '+esc(String(resolveSalesClientStatus(r)).toUpperCase())+', so no sales or tax is due. Change the Client Status to edit it.'
-          : isQLocked
+          : (isQLocked && !isPTAuto)
           ? esc(quarterLockedMsg(r.year, qLockM[1]))
           : isVatAuto
           ? (vatAutoVal === '' ? 'Tax Due appears here once this quarter is complete in the VAT Worksheet tab (Net Sales and Net Purchase for all 3 months).' : 'Comes from the VAT Worksheet tab (Net Sales + VAT-Exempt + Zero-Rated / Net Purchase + Non-VAT Exp / VAT Due) — edit it there.')
@@ -4856,7 +4859,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           const key = e.target.dataset.key;
           const colDef = SALES_SUMMARY_COLS.find(c=>c[0]===key);
           const oldVal = rec[key];
-          const lockM = /^q([1-4])_(sales|expenses)$/.exec(key);
+          const lockM = QUARTER_LOCK_KEY_RE.exec(key);
           if(lockM && quarterIsLocked(rec.year, lockM[1])){
             // Defensive: the cell is read-only, but a lock set by someone else a moment ago may not have re-rendered here yet.
             toast(quarterLockedMsg(rec.year, lockM[1]));
