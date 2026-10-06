@@ -504,11 +504,14 @@
             <option value="OVERDUE">Overdue</option>
             <option value="D">Done</option>
             <option value="Z">Zero / No Transaction</option>
-            <option value="N">With notes</option>
-            <option value="NN">No notes</option>
             <option value="A">N/A (not applicable)</option>
           </select>
           <input class="search-input" id="tr-notes-filter" placeholder="Filter by notes (e.g. ZERO FILING)...">
+          <select class="filter" id="tr-notes-presence-filter" data-chk="include" data-chk-noun="notes">
+            <option value="">All (with / without notes)</option>
+            <option value="N">With notes</option>
+            <option value="NN">No notes</option>
+          </select>
           <select class="filter" id="tr-client-status-filter" data-chk="exclude" data-chk-noun="client statuses"><option value="">All client statuses</option></select>
           <select class="filter" id="tr-payment-filter" data-chk="include" data-chk-noun="payment">
             <option value="">All (payment)</option>
@@ -2960,9 +2963,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const trClientStatusFilter = document.getElementById('tr-client-status-filter');
   const trPaymentFilter = document.getElementById('tr-payment-filter');
   const trStageFilter = document.getElementById('tr-stage-filter');
+  const trNotesPresenceFilter = document.getElementById('tr-notes-presence-filter');
   const trSortFilter = document.getElementById('tr-sort-filter');
   [trSearch, trNotesFilter].forEach(el=>el.addEventListener('input', renderTracker));
-  [trFormFilter, trPeriodFilter, trStatusFilter, trClientStatusFilter, trPaymentFilter, trStageFilter, trSortFilter].forEach(el=>el.addEventListener('change', renderTracker));
+  [trFormFilter, trPeriodFilter, trStatusFilter, trClientStatusFilter, trPaymentFilter, trStageFilter, trNotesPresenceFilter, trSortFilter].forEach(el=>el.addEventListener('change', renderTracker));
 
   // Rebuilding the <select> options (needed whenever the task list changes,
   // e.g. a live update from another staff member) used to always reset the
@@ -3004,7 +3008,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // checked = no filter).
     const sfs = chkChecked(trStatusFilter), payfs = chkChecked(trPaymentFilter);
     const statusMatch = (t, v)=> v==='OVERDUE' ? isOverdue(t) : v==='D' ? t.status==='DONE' : v==='P' ? t.status==='PENDING'
-      : v==='Z' ? t.status==='ZERO' : v==='N' ? !!String(t.notes||'').trim() : v==='NN' ? !String(t.notes||'').trim() : v==='A' ? t.status==='NA' : false;
+      : v==='Z' ? t.status==='ZERO' : v==='N' ? !!String(t.notes||'').trim() : v==='A' ? t.status==='NA' : false;
     const payMatch = (t, v)=> v==='NO_DUE' ? (t.taxDue===null || t.taxDue===undefined || !(t.taxDue>0))
       : v==='DUE_UNPAID' ? (t.taxDue!==null && t.taxDue>0 && !t.paymentStatus)
       : v==='LIAISON' ? t.paymentStatus==='GIVEN TO LIAISON' : v==='PAID' ? t.paymentStatus==='PAID' : false;
@@ -3015,6 +3019,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(!chkPass(trClientStatusFilter, taskClient(t)['CLIENT?'] || '__BLANK__')) return false;
       if(payfs.length && !payfs.some(v=>payMatch(t, v))) return false;
       if(!chkPass(trStageFilter, t.stage)) return false;
+      const npf = chkChecked(trNotesPresenceFilter);
+      if(npf.length === 1 && (npf[0]==='N') !== !!String(t.notes||'').trim()) return false;
       if(nq && !(t.notes||'').toLowerCase().includes(nq)) return false;
       if(q){
         const c = taskClient(t);
