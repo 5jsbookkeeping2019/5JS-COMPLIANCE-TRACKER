@@ -2427,7 +2427,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // ---- results ----
   function taxoptTable(head, rows, opts){
     opts = opts || {};
-    return `<div class="table-scroll" style="max-width:${opts.width||980}px;margin-bottom:6px;"><table><thead><tr>${head.map((h,i)=>`<th${/^Q[1-4]$/.test(h) ? ' style="text-align:center;"' : (i? ' style="text-align:right;"':'')}>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr${r.cls?` class="${r.cls}"`:''}${r.style?` style="${r.style}"`:''}>${r.cells.map((c,i)=>`<td${i? ' class="num mono"':''}${i && /^Q[1-4]$/.test(head[i]) ? ' style="text-align:center;"' : ''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    return `<div class="table-scroll" style="max-width:${opts.width||980}px;margin-bottom:6px;"><table><thead><tr>${head.map((h,i)=>`<th${i ? ' style="text-align:center;"' : ''}>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr${r.cls?` class="${r.cls}"`:''}${r.style?` style="${r.style}"`:''}>${r.cells.map((c,i)=>`<td${i? ' class="num mono"':''}${i ? ' style="text-align:center;"' : ''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
   }
   const taxoptMoney = n => (n===null || n===undefined) ? '—' : '₱' + fmtVatMoney(n);
   function renderTaxoptResults(){
