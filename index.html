@@ -605,7 +605,7 @@
           <select class="filter" id="sales-taxoption-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="tax options"><option value="">All tax options</option></select>
           <select class="filter" id="sales-client-status-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="client statuses"><option value="">All client statuses</option></select>
           <select class="filter" id="sales-agent-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="sales reps"><option value="">All Sales Representatives</option></select>
-          <select class="filter" id="sales-missing-filter" data-chk="include" data-chk-noun="missing"><option value="">Show all (no missing-field filter)</option></select>
+          <select class="filter" id="sales-missing-filter" data-chk="include" data-chk-noun="filters"><option value="">Show all (no field filter)</option></select>
           <select class="filter" id="sales-quarter-hl" title="Highlights that quarter's columns so data isn't typed into the wrong quarter" style="min-width:150px;">
             <option value="auto">Highlight: quarter being filed</option>
             <option value="1">Highlight: Q1</option><option value="2">Highlight: Q2</option>
@@ -3925,8 +3925,46 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // filter (text remarks are fine to leave blank on purpose; year isn't a
   // field someone "forgets to fill in").
   const SALES_NUMERIC_COLS = SALES_SUMMARY_COLS.filter(c=>c[2]==='num' && c[0]!=='year');
-  salesMissingFilter.innerHTML = '<option value="">Show all (no missing-field filter)</option>' +
-    SALES_NUMERIC_COLS.map(([key,label])=>`<option value="${esc(key)}">Missing: ${esc(label)}</option>`).join('');
+  // Three kinds of options (grouped in the dropdown):
+  //   <col>        rows MISSING a value for that column (the original filter)
+  //   has:<col>    rows that HAVE a Tax Due (> 0) in that column
+  //   norem:<col>  rows that have a Tax Due but NO remark / payment note yet
+  //                (so you can go through them and mark who already paid,
+  //                who is for billing ("singil"), who is for payment in bank)
+  // Any combination can be ticked at once -- a row shows if it matches ANY.
+  const SALES_TAXDUE_FILTER_COLS = SALES_NUMERIC_COLS.filter(([k])=> /^(q[1-4]_pt_tax_due|q[1-3]_it_tax_due|annual_1701_tax_due)$/.test(k));
+  function salesRemarkKeys(dueKey){
+    const m = /^q([1-4])_(pt|it)_tax_due$/.exec(dueKey);
+    if(m) return ['q'+m[1]+'_'+m[2]+'_remarks', 'q'+m[1]+'_'+m[2]+'_payment_remarks'];
+    return dueKey==='annual_1701_tax_due' ? ['annual_1701_remarks'] : [];
+  }
+  const salesBlank = v => v===null || v===undefined || String(v).trim()==='';
+  // The Tax Due the row actually SHOWS for a column (auto-computed 3% Percentage
+  // Tax, zero-status rows = 0, VAT quarters from the VAT Worksheet), not just
+  // what happens to be stored -- so the filter matches what's on screen.
+  function salesShownDue(r, key){
+    if(isZeroStatusRow(r) && ZERO_STATUS_KEYS.includes(key)) return 0;
+    const pm = /^q([1-4])_pt_tax_due$/.exec(key);
+    if(pm){
+      const a = computePTTaxDue(r, pm[1]);
+      if(a !== undefined) return a;
+      if(normalizeTaxType(r.tax_type)==='VAT' && r.client_id_no){
+        const ws = vatWsFor(r.client_id_no, r.year);
+        if(ws){ const v = vatSalesCellValue(vatYearCalc(ws), key); if(v !== undefined) return v === '' ? null : v; }
+      }
+    }
+    return salesBlank(r[key]) ? null : Number(r[key]);
+  }
+  function salesMissingMatch(r, mf){
+    let m;
+    if((m = /^has:(.+)$/.exec(mf))){ const v = salesShownDue(r, m[1]); return v !== null && v > 0; }
+    if((m = /^norem:(.+)$/.exec(mf))){ const v = salesShownDue(r, m[1]); return v !== null && v > 0 && salesRemarkKeys(m[1]).every(k=>salesBlank(r[k])); }
+    return salesBlank(r[mf]);
+  }
+  salesMissingFilter.innerHTML = '<option value="">Show all (no field filter)</option>' +
+    `<optgroup label="Missing a value">${SALES_NUMERIC_COLS.map(([key,label])=>`<option value="${esc(key)}">Missing: ${esc(label)}</option>`).join('')}</optgroup>` +
+    `<optgroup label="Has a Tax Due (to check remarks)">${SALES_TAXDUE_FILTER_COLS.map(([key,label])=>`<option value="has:${esc(key)}">Has ${esc(label)}</option>`).join('')}</optgroup>` +
+    `<optgroup label="Tax Due with no remark / payment note yet">${SALES_TAXDUE_FILTER_COLS.map(([key,label])=>`<option value="norem:${esc(key)}">${esc(label)} — no remarks yet</option>`).join('')}</optgroup>`;
 
   // The first 4 columns (Year, Client, TIN, Trade Name) stay pinned on
   // screen while the rest of the (very wide) table scrolls horizontally.
@@ -4088,7 +4126,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(!chkPass(salesTaxOptionFilter, normalizeTaxOption(r.tax_option))) return false;
       if(!chkPass(salesClientStatusFilter, resolveSalesClientStatus(r))) return false;
       if(!chkPass(salesAgentFilter, r.agent)) return false;
-      if(mfs.length && !mfs.some(mf=> r[mf]===null || r[mf]===undefined || r[mf]==='')) return false;
+      if(mfs.length && !mfs.some(mf=> salesMissingMatch(r, mf))) return false;
       if(q){
         const hay = (r.name+' '+r.tin+' '+(r.trade_name||'')+' '+(r.client_id_no||'')).toLowerCase();
         if(!hay.includes(q)) return false;
