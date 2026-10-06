@@ -519,8 +519,6 @@
             <option value="P">Pending</option>
             <option value="OVERDUE">Overdue</option>
             <option value="D">Done</option>
-            <option value="Z">Zero / No Transaction</option>
-            <option value="A">N/A (not applicable)</option>
           </select>
           <input class="search-input" id="tr-notes-filter" placeholder="Filter by notes (e.g. ZERO FILING)...">
           <select class="filter" id="tr-notes-presence-filter" data-chk="include" data-chk-noun="notes">
@@ -649,17 +647,6 @@
       </div>
       <div class="small-note">Combined VAT and Non-VAT (NVAT) clients, per quarter — from the Sales Summary file. Edit any cell directly (same as Task Tracker) — saved automatically to the live database. Use the "Show all" dropdown to find who's still missing a value for a particular field (e.g. Q3 Sales) — this excludes actual "0" values (confirmed zero filing), blank only. There's no manual "Add client" here — the Client Registry is the source: every new client added there automatically gets its own row here (Client ID/Name/TIN/Trade Name already filled in), so the two always stay linked. When a new year starts, use "+ Add New Year" to build a fresh set of rows for every Active/0 Filing/For Closure/Annual Client that doesn't have an End of Service Date yet (i.e. still existing and not yet tagged as service-ended) — no need to do it one by one or wait for a new SQL script. <b>Finished quarters are locked:</b> every detail of a quarter (Sales, Expenses, PT / IT Due, remarks and payment notes) is read-only (grey) once that quarter is older than the one being filed so they can't be changed by mistake — use <b>🔒 Quarter locks</b> to lock a quarter right after it's filed, or to unlock one when an amended return needs a correction.</div>
       <datalist id="sales-client-id-options"></datalist>
-      <!-- Suggestions (free text still allowed) for the per-quarter PT/IT Remarks and Payment cells:
-           has the client paid 5Js, and where is the tax due in the payment process. -->
-      <datalist id="sales-payment-remark-options">
-        <option value="SOA SENT"></option>
-        <option value="PAID - CLIENT PAID 5JS"></option>
-        <option value="PARTIAL PAYMENT"></option>
-        <option value="CLIENT NOT YET PAID"></option>
-        <option value="FOR PAYMENT IN BANK"></option>
-        <option value="GIVEN TO LIAISON"></option>
-        <option value="TAX PAID IN BANK"></option>
-      </datalist>
       <div class="table-scroll" style="margin-top:10px;" id="sales-table"></div>
     </div>
     <div class="tab-panel" id="panel-vat">
@@ -1245,18 +1232,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     ['pf','PF','num'], ['agent','Sales Representative','select',SALES_REP_OPTS], ['birth_incorp_date','Birthday/Incorp.','text'],
     ['civil_status','Civil Stat','text'], ['rental_tax_compensation','Rental Tax / Comp.','text'],
     ['q1_sales','Q1 Sales','num'], ['q1_expenses','Q1 Expenses','num'], ['q1_pt_tax_due','Q1 PT Due','num'],
-    ['q1_pt_remarks','Q1 PT Remarks','text'], ['q1_pt_payment_remarks','Q1 PT Payment','text'],
-    ['q1_it_tax_due','Q1 IT Due','num'], ['q1_it_remarks','Q1 IT Remarks','text'], ['q1_it_payment_remarks','Q1 IT Payment','text'],
+    ['q1_pt_remarks','Q1 PT Remarks (Done by)','text'], ['q1_pt_payment_remarks','Q1 PT Payment','text'],
+    ['q1_it_tax_due','Q1 IT Due','num'], ['q1_it_remarks','Q1 IT Remarks (Done by)','text'], ['q1_it_payment_remarks','Q1 IT Payment','text'],
     ['q2_sales','Q2 Sales','num'], ['q2_expenses','Q2 Expenses','num'], ['q2_pt_tax_due','Q2 PT Due','num'],
-    ['q2_pt_remarks','Q2 PT Remarks','text'], ['q2_pt_payment_remarks','Q2 PT Payment','text'],
-    ['q2_it_tax_due','Q2 IT Due','num'], ['q2_it_remarks','Q2 IT Remarks','text'], ['q2_it_payment_remarks','Q2 IT Payment','text'],
+    ['q2_pt_remarks','Q2 PT Remarks (Done by)','text'], ['q2_pt_payment_remarks','Q2 PT Payment','text'],
+    ['q2_it_tax_due','Q2 IT Due','num'], ['q2_it_remarks','Q2 IT Remarks (Done by)','text'], ['q2_it_payment_remarks','Q2 IT Payment','text'],
     ['q3_sales','Q3 Sales','num'], ['q3_expenses','Q3 Expenses','num'], ['q3_pt_tax_due','Q3 PT Due','num'],
-    ['q3_pt_remarks','Q3 PT Remarks','text'], ['q3_pt_payment_remarks','Q3 PT Payment','text'],
-    ['q3_it_tax_due','Q3 IT Due','num'], ['q3_it_remarks','Q3 IT Remarks','text'], ['q3_it_payment_remarks','Q3 IT Payment','text'],
+    ['q3_pt_remarks','Q3 PT Remarks (Done by)','text'], ['q3_pt_payment_remarks','Q3 PT Payment','text'],
+    ['q3_it_tax_due','Q3 IT Due','num'], ['q3_it_remarks','Q3 IT Remarks (Done by)','text'], ['q3_it_payment_remarks','Q3 IT Payment','text'],
     ['q4_sales','Q4 Sales','num'], ['q4_expenses','Q4 Expenses','num'], ['q4_pt_tax_due','Q4 PT Due','num'],
-    ['q4_pt_remarks','Q4 PT Remarks','text'], ['q4_pt_payment_remarks','Q4 PT Payment','text'],
+    ['q4_pt_remarks','Q4 PT Remarks (Done by)','text'], ['q4_pt_payment_remarks','Q4 PT Payment','text'],
     ['total_sales','Total Sales','num'], ['total_expenses','Total Expenses','num'], ['net_income','Net Income','num'],
-    ['annual_1701_tax_due','1701 Due','num'], ['annual_1701_remarks','1701 Remarks','text'],
+    ['annual_1701_tax_due','1701 Due','num'], ['annual_1701_remarks','1701 Remarks (Done by)','text'],
   ];
   function mapSalesSummaryFromDb(rows){
     return (rows||[]).map(r=>{
@@ -1862,6 +1849,50 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(error){ console.error(error); t.taxDue = oldVal; toast('Warning: a task\'s Tax Due could not be updated from the Sales Summary — please try again.'); continue; }
       n++;
       logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'tax_due', 'Tax Due (from Sales Summary)', oldVal, v);
+    }
+    if(n && document.querySelector('.tab-btn.active').dataset.tab === 'tracker') renderTracker();
+    return n;
+  }
+
+  // Sales Summary "PT / IT / 1701 Remarks (Done by)" -> the matching task's Done by in
+  // the Task Tracker (PT = 2551Q / 2550Q, IT = 1701Q / 1702Q for that quarter,
+  // 1701 Remarks = the annual 1701 / 1702 task of that tax year).
+  // A trailing m/d date ("ARVI 4/23") also fills Done date. Only EMPTY task
+  // fields are filled -- or ones that still hold what this cell had before this
+  // edit (so a correction keeps following); a Done by someone typed in the Task
+  // Tracker is never overwritten. Status is NOT changed; N/A tasks are skipped.
+  async function syncSalesDoneByToTasks(rec, key, newVal, prevVal){
+    // Annual 1701 / 1702 remarks -> the annual return task (period "TY <year> (filed <year+1>)").
+    const m = /^q([1-4])_(pt|it)_remarks$/.exec(key) || (key==='annual_1701_remarks' ? [key,'','annual'] : null);
+    if(!m || !rec.client_id_no) return 0;
+    const raw = String(newVal||'').trim();
+    if(!raw) return 0;
+    const client = findClientByIdNo(rec.client_id_no);
+    if(!client) return 0;
+    const dm = /^(.*?)[\s,\-]*(\d{1,2}\/\d{1,2})$/.exec(raw);
+    const who = (dm ? dm[1] : raw).trim(), when = dm ? dm[2] : '';
+    if(!who) return 0;
+    const prevRaw = String(prevVal||'').trim();
+    const pm = prevRaw ? /^(.*?)[\s,\-]*(\d{1,2}\/\d{1,2})$/.exec(prevRaw) : null;
+    const prevWho = pm ? pm[1].trim() : prevRaw, prevWhen = pm ? pm[2] : '';
+    const isAnnual = m[2]==='annual';
+    const period = isAnnual ? '' : 'Q'+m[1]+' '+rec.year;
+    const annualPrefix = 'TY '+rec.year;
+    let n = 0;
+    for(const t of tasks){
+      if(t.clientId !== client._id || t.status==='NA') continue;
+      if(isAnnual ? !(['1701','1701A','1702'].includes(String(t.form).toUpperCase()) && String(t.period||'').startsWith(annualPrefix)) : (t.period !== period || !SALES_TAXDUE_FORMS[m[2]].includes(t.form))) continue;
+      const patch = {}, olds = {};
+      if(!t.doneBy || (prevWho && t.doneBy===prevWho)){ if(t.doneBy!==who){ olds.done_by=t.doneBy; patch.done_by=who; } }
+      if(when && (!t.doneDate || (prevWhen && t.doneDate===prevWhen)) && t.doneDate!==when){ olds.done_date=t.doneDate; patch.done_date=when; }
+      if(!Object.keys(patch).length) continue;
+      const { error } = await sb.from('cor_tasks').update(patch).eq('id', t.id);
+      if(error){ console.error(error); toast('Warning: a task\'s Done by could not be updated from the Sales Summary — please try again.'); continue; }
+      if('done_by' in patch) t.doneBy = patch.done_by;
+      if('done_date' in patch) t.doneDate = patch.done_date;
+      n++;
+      if('done_by' in patch) logFieldAudit('cor_tasks_audit','record_id',t.id,'done_by','Done by (from Sales Summary)',olds.done_by||null,patch.done_by);
+      if('done_date' in patch) logFieldAudit('cor_tasks_audit','record_id',t.id,'done_date','Done date (from Sales Summary)',olds.done_date||null,patch.done_date);
     }
     if(n && document.querySelector('.tab-btn.active').dataset.tab === 'tracker') renderTracker();
     return n;
@@ -4816,6 +4847,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // Remark / payment-note columns: "done" = something is typed in it; "undone" =
   // empty while that quarter actually has a Tax Due > 0 (a blank remark on a ₱0
   // quarter is nothing to chase, so it is not listed as undone).
+  // PT / IT "Payment" cells are a dropdown (where is the tax due in the payment
+  // process). The matching "Remarks" cells are free text = who did it ("Done by").
+  const SALES_PAYMENT_OPTIONS = [['','—'],['SOA SENT','SOA SENT'],['PAID - CLIENT PAID 5JS','PAID - CLIENT PAID 5JS'],['PARTIAL PAYMENT','PARTIAL PAYMENT'],['CLIENT NOT YET PAID','CLIENT NOT YET PAID'],['FOR PAYMENT IN BANK','FOR PAYMENT IN BANK'],['GIVEN TO LIAISON','GIVEN TO LIAISON'],['TAX PAID IN BANK','TAX PAID IN BANK']];
   const SALES_REMARK_COLS = SALES_SUMMARY_COLS.filter(c=> /^(q[1-4]_(pt|it)_(payment_)?remarks|annual_1701_remarks)$/.test(c[0]));
   function salesDueKeyForRemark(k){
     const m = /^q([1-4])_(pt|it)_(?:payment_)?remarks$/.exec(k);
@@ -5120,8 +5154,15 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           const optsHtml = selectOptionsHtml(opts, val);
           return `<td class="${frozen?'frozen-col':''}${qHlClass(key)}" style="${tdStyle}"><select class="inline-text sales-cell" data-key="${esc(key)}" style="width:${width}px;">${optsHtml}</select></td>`;
         }
-        const listAttr = key==='client_id_no' ? ' list="sales-client-id-options"'
-          : /^q[1-4]_(pt|it)_(remarks|payment_remarks)$/.test(key) ? ' list="sales-payment-remark-options"' : '';
+        if(/^q[1-4]_(pt|it)_payment_remarks$/.test(key)){
+          const payLocked = !!qLockM && quarterIsLocked(r.year, qLockM[1]);
+          const curPay = String(val||'');
+          if(payLocked){
+            return `<td class="${qHlClass(key)}"><input class="inline-text sales-cell" data-key="${esc(key)}" readonly title="${esc(quarterLockedMsg(r.year, qLockM[1]))}" style="width:${width+20}px;background:var(--paper-line);color:var(--ink-soft);cursor:not-allowed;" value="${esc(curPay)}"></td>`;
+          }
+          return `<td class="${qHlClass(key)}"><select class="inline-text sales-cell" data-key="${esc(key)}" style="width:${width+20}px;">${selectOptionsHtml(SALES_PAYMENT_OPTIONS, curPay)}</select></td>`;
+        }
+        const listAttr = key==='client_id_no' ? ' list="sales-client-id-options"' : '';
         const lockReason = isAutoFilled
           ? 'Sourced from the Client Registry (Client ID: '+esc(r.client_id_no)+') — edit it there if it’s wrong.'
           : isZeroAuto
@@ -5149,7 +5190,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         // "Year" is also kind 'num' (for right-aligned styling) but isn't a
         // money amount, so it's left as a plain 4-digit number.
         const displayVal = (kind==='num' && key!=='year') ? fmtNumInput(val) : (val!==null && val!==undefined ? val : '');
-        return `<td class="${frozen?'frozen-col':''}${qHlClass(key)}" style="${tdStyle}"><input class="inline-text sales-cell${kind==='num'?' mono':''}" data-key="${esc(key)}"${listAttr}${roAttrs} style="width:${width}px;${roStyle}" value="${esc(displayVal)}"></td>`;
+        return `<td class="${frozen?'frozen-col':''}${qHlClass(key)}" style="${tdStyle}"><input class="inline-text sales-cell${kind==='num'?' mono':''}" data-key="${esc(key)}"${listAttr}${/^q[1-4]_(pt|it)_remarks$/.test(key)?' placeholder="done by"':''}${roAttrs} style="width:${width}px;${roStyle}" value="${esc(displayVal)}"></td>`;
       }).join('');
       const editedTitle = r.updated_by ? `Last edited by ${r.updated_by} on ${fmtAuditWhen(r.updated_at)}` : '';
       // Deleting a Sales Summary row is admin-only, same restriction as
@@ -5327,6 +5368,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
             });
             // Non-VAT / any Sales Summary Tax Due -> the matching tasks in the Task Tracker
             syncSalesTaxDueToTasks(rec, taxDuePrev).then(n=>{ if(n) toast(`Tax Due → Task Tracker (${n} task${n>1?'s':''}).`); });
+            syncSalesDoneByToTasks(rec, key, val, oldVal).then(n=>{ if(n) toast(`Done by → Task Tracker (${n} task${n>1?'s':''}).`); });
           }
           // tax_option also triggers a full re-render now -- PT Due (see
           // computePTTaxDue) depends on it for plain Non-VAT rows, so
