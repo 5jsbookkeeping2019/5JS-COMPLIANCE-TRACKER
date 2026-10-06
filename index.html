@@ -256,6 +256,7 @@
   #cor-app .vat-badge{display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.4px;padding:3px 8px;border-radius:10px;white-space:nowrap;text-transform:uppercase;}
   #cor-app .vat-badge.incomplete{background:rgba(33,28,24,0.06);color:var(--ink-soft);}
   #cor-app .vat-badge.ready{background:var(--gold-soft);color:var(--gold);font-weight:600;}
+  #cor-app tr.taxopt-best td{background:var(--forest-soft);}
   #cor-app .vat-badge.encoded{background:var(--forest-soft);color:var(--forest);font-weight:600;}
   #cor-app select.chk-native{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px;min-width:0;padding:0;border:0;}
   #cor-app .chk-filter-group{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.4px;text-transform:uppercase;color:var(--ink-soft);padding:6px 4px 2px;}
@@ -437,6 +438,7 @@
       <button class="tab-btn" data-tab="creds"><span class="ico" data-ico="creds"></span>Credentials</button>
       <button class="tab-btn" data-tab="sales"><span class="ico" data-ico="sales"></span>Sales Summary</button>
       <button class="tab-btn" data-tab="vat"><span class="ico" data-ico="vat"></span>VAT Worksheet</button>
+      <button class="tab-btn" data-tab="taxopt"><span class="ico" data-ico="taxopt"></span>Tax Option Compare</button>
       <button class="tab-btn" data-tab="tax2307"><span class="ico" data-ico="tax2307"></span>2307 Register</button>
       <button class="tab-btn" data-tab="sawt"><span class="ico" data-ico="sawt"></span>SAWT / 2307 Received</button>
       <button class="tab-btn" data-tab="report"><span class="ico" data-ico="report"></span>eBIRForms Profile</button>
@@ -625,6 +627,7 @@
            has the client paid 5Js, and where is the tax due in the payment process. -->
       <datalist id="sales-payment-remark-options">
         <option value="PAID - CLIENT PAID 5JS"></option>
+        <option value="SOA SENT"></option>
         <option value="CLIENT NOT YET PAID"></option>
         <option value="PARTIAL PAYMENT"></option>
         <option value="FOR PAYMENT IN BANK"></option>
@@ -656,6 +659,31 @@
       </div>
       <div class="small-note">One row per VAT client (Sales Summary rows tagged VAT for the chosen year). Type each month's <b>vatable Net Sales</b>, <b>VAT-Exempt</b>, <b>Zero-Rated</b> and <b>Net Purchase</b> (you can type a formula starting with <b>=</b>, like in Excel). <b>VAT Due = Net Sales × 12% − Net Purchase × 12% − Tax Paid + Carry-in</b> (same as your Excel). Each quarter's Sales (vatable + exempt + zero-rated), Expenses (Net Purchase + any <b>Non-VAT Exp</b> you add here) and VAT Due flow automatically into the <b>Sales Summary</b> and the <b>2550Q task's Tax Due</b> in the Task Tracker. A quarter turns <b>READY FOR ENCODING</b> (signal for whoever prepares the SLSP / VAT Relief) once all 3 months have both Net Sales and Net Purchase filled in (0 counts); type who encoded it in <b>Relief done by</b> to mark it done. <b>Carry-in</b> fills itself in (last quarter's negative VAT Due = unused credit); type a number to override, e.g. Q1's credit from last year (negative number, same as the Excel).</div>
       <div class="table-scroll" style="margin-top:10px;" id="vat-table"></div>
+    </div>
+    <div class="tab-panel" id="panel-taxopt">
+      <div class="registry-head">
+        <div class="filter-row">
+          <input class="search-input" id="taxopt-client" list="taxopt-client-list" placeholder="Client — type ID or name (or leave blank to just calculate)" style="min-width:300px;">
+          <datalist id="taxopt-client-list"></datalist>
+          <select class="filter" id="taxopt-year"></select>
+          <select class="filter" id="taxopt-kind">
+            <option value="auto">Taxpayer: auto-detect</option>
+            <option value="ind">Individual / single proprietor</option>
+            <option value="corp">Corporation / partnership</option>
+          </select>
+          <select class="filter" id="taxopt-thru">
+            <option value="1">Through Q1 (Jan–Mar)</option><option value="2">Through Q2 (Jan–Jun)</option>
+            <option value="3">Through Q3 (Jan–Sep)</option><option value="4">Full year (Q4)</option>
+          </select>
+          <select class="filter" id="taxopt-basis">
+            <option value="ann">Compare on a full-year projection (annualized)</option>
+            <option value="ytd">Compare on year-to-date actuals</option>
+          </select>
+          <button class="secondary" id="taxopt-reload-btn" title="Throws away what you typed here and starts again from the Sales Summary and 2307 figures">Reload from Sales Summary</button>
+        </div>
+      </div>
+      <div class="small-note">Compare Itemized vs OSD vs the 8% option (individuals) or Itemized vs OSD (corporations), and see the quarterly income tax (1701Q / 1702Q) update as you type. The figures start from the client's Sales Summary row and the 2307s received, but everything here is a what-if — nothing typed here is saved. Rates used (2026): graduated table 0–35%, 8% on gross less ₱250,000, OSD 40%, 3% percentage tax, corporate 25% / 20%, MCIT 2%. This is a planning aid, not tax advice — confirm with the BIR rules and the client's facts.</div>
+      <div id="taxopt-body"></div>
     </div>
     <div class="tab-panel" id="panel-tax2307">
       <div class="registry-head">
@@ -1810,6 +1838,364 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     } else if(tab === 'sales') renderSalesSummary();
   }
 
+  // ===================== TAX OPTION COMPARE =====================
+  // Per client + year: (1) compares Itemized vs OSD vs 8% (individuals) or
+  // Itemized vs OSD (corporations) on the same figures, with a break-even
+  // point; (2) computes the quarterly income tax (BIR 1701Q / 1702Q) live as
+  // the figures are typed -- cumulative method: tax on year-to-date taxable
+  // income, less payments on earlier quarters and cumulative creditable
+  // withholding (2307). Figures start from the Sales Summary + SAWT /
+  // 2307 Received tabs but are editable "what-if" inputs; nothing typed here
+  // is saved. Rates (2026): TRAIN graduated table (unchanged since 2023), 8%
+  // option with the P250,000 deduction (only if not VAT-registered, gross <=
+  // P3M, purely self-employed), OSD = 40% (of gross sales for individuals,
+  // of gross income for corporations), percentage tax 3%, RCIT 25% / 20%
+  // (net taxable income <= P5M AND total assets <= P100M excl. land), MCIT 2%
+  // of gross income from the 4th taxable year (annual only).
+  const TAXOPT_BRACKETS = [[0,0,0],[250000,0,0.15],[400000,22500,0.20],[800000,102500,0.25],[2000000,402500,0.30],[8000000,2202500,0.35]];
+  const TAXOPT_8_CAP = 3000000, TAXOPT_8_DEDUCT = 250000, TAXOPT_PT = 0.03, TAXOPT_MCIT = 0.02;
+  const taxoptR2 = n => Math.round(n*100)/100;
+  const taxoptNum = v => { const n = parseFloat(String(v===null||v===undefined?'':v).replace(/[,₱\s]/g,'')); return isFinite(n) ? n : 0; };
+  function taxoptGraduated(ti){
+    if(!(ti > 0)) return 0;
+    let b = TAXOPT_BRACKETS[0];
+    TAXOPT_BRACKETS.forEach(x=>{ if(ti > x[0]) b = x; });
+    return taxoptR2(b[1] + (ti - b[0]) * b[2]);
+  }
+  const TAXOPT_OPT_LABEL = {ITEM:'Graduated — Itemized deductions', OSD:'Graduated — OSD (40%)', '8':'8% flat rate'};
+
+  // Individual / single proprietor: income tax + percentage tax for one option.
+  // S sales, N other income, X itemized expenses, C taxable compensation (mixed
+  // income earners). Business-attributable tax only: the tax already withheld on
+  // compensation is the same under every option, so it is netted out.
+  function taxoptIndTax(opt, S, N, X, C, st){
+    const pt = (st.pt && opt !== '8') ? taxoptR2(TAXOPT_PT * S) : 0;
+    let base, it;
+    if(opt === '8'){
+      base = Math.max(0, S + N - (st.mixed ? 0 : TAXOPT_8_DEDUCT));
+      it = taxoptR2(base * 0.08);
+    } else {
+      const bi = opt === 'OSD' ? (S * 0.6 + N) : (S + N - X);
+      base = bi;
+      it = Math.max(0, taxoptR2(taxoptGraduated(Math.max(0, bi + C)) - taxoptGraduated(C)));
+    }
+    return {base, it, pt, total: taxoptR2(it + pt)};
+  }
+  // Corporation / partnership: RCIT (25% or 20%) with the 2% MCIT floor (annual).
+  function taxoptCorpRate(st, ntiAnnual){
+    if(st.rateMode === '25') return 0.25;
+    if(st.rateMode === '20') return 0.20;
+    return (st.assetsOK && ntiAnnual <= 5000000) ? 0.20 : 0.25;
+  }
+  function taxoptCorpTax(opt, S, COS, X, st, ntiAnnual){
+    const GI = S - COS;
+    const nti = opt === 'OSD' ? GI * 0.6 : GI - X;
+    const rate = taxoptCorpRate(st, ntiAnnual === undefined ? nti : ntiAnnual);
+    const rcit = taxoptR2(Math.max(0, nti) * rate);
+    const mcit = st.mcit ? taxoptR2(Math.max(0, GI) * TAXOPT_MCIT) : 0;
+    const it = Math.max(rcit, mcit);
+    const pt = st.pt ? taxoptR2(TAXOPT_PT * S) : 0;
+    return {GI, nti, rate, rcit, mcit, it, pt, total: taxoptR2(it + pt), mcitApplied: mcit > rcit};
+  }
+
+  // ---- state ----
+  let taxopt = null;
+  const toEl = {
+    client: document.getElementById('taxopt-client'), list: document.getElementById('taxopt-client-list'),
+    year: document.getElementById('taxopt-year'), kind: document.getElementById('taxopt-kind'),
+    thru: document.getElementById('taxopt-thru'), basis: document.getElementById('taxopt-basis'),
+    body: document.getElementById('taxopt-body'),
+  };
+  const TAXOPT_QKEYS = ['sales','other','cos','exp','cwt','paid'];
+  function taxoptCum(st, k, q){ let s = 0; for(let i=1;i<=q;i++) s += taxoptNum(st.vals['q'+i+'_'+k]); return s; }
+  function taxoptElectionOf(salesRow, client){
+    const tt = normalizeTaxType((salesRow && salesRow.tax_type) || (client && client['TAX TYPE']) || '');
+    const opt = normalizeTaxOption(salesRow && salesRow.tax_option);
+    if(opt === '8%' || opt === 'Mixed Income - 8%' || tt === 'Non-VAT (8% Flat Rate)') return '8';
+    if(opt === 'Itemized' || opt === 'Mixed Income - Itemized') return 'ITEM';
+    if(opt === 'OSD' || opt === 'Mixed Income - OSD') return 'OSD';
+    return '';
+  }
+  function taxoptNewState(client, year){
+    const idNo = client ? String(client['CLIENT ID NO.']||'').trim() : '';
+    const salesRow = idNo ? salesSummary.find(r=> vatKey(r.client_id_no, r.year) === vatKey(idNo, year)) : null;
+    const classif = client ? String(client['TAXPAYER CLASSIFICATION']||'') : '';
+    const isCorp = /corp|partnership|\binc\b/i.test(classif);
+    const tt = normalizeTaxType((salesRow && salesRow.tax_type) || (client && client['TAX TYPE']) || '');
+    const opt = normalizeTaxOption(salesRow && salesRow.tax_option);
+    const st = {
+      idNo, year, name: client ? (client.NAME||'') : '', kindAuto: isCorp ? 'corp' : 'ind',
+      vals:{}, comp:0, mixed: /^Mixed/.test(opt), pt: !client || tt === 'Non-VAT' || tt === 'Non-VAT (8% Flat Rate)',
+      vatReg: tt === 'VAT', assetsOK:true, mcit:false, rateMode:'auto',
+      elect: taxoptElectionOf(salesRow, client), electText: opt || tt || '', qopt:'AUTO',
+      hasSalesRow: !!salesRow, refIT:{}, zero: !!(salesRow && isZeroStatusRow(salesRow)),
+    };
+    if(client){
+      const m = String(client['TIN REG. DATE']||client['BUSINESS REG. DATE']||'').match(/(19|20)\d\d/);
+      if(m){ st.regYear = Number(m[0]); st.mcit = isCorp && Number(year) >= st.regYear + 3; }
+    }
+    if(salesRow){
+      for(let q=1;q<=4;q++){
+        st.vals['q'+q+'_sales'] = salesRow['q'+q+'_sales'];
+        st.vals['q'+q+'_exp'] = salesRow['q'+q+'_expenses'];
+        if(q<=3) st.refIT[q] = salesRow['q'+q+'_it_tax_due'];
+      }
+    }
+    // 2307s received for this client (matched by TIN) for that year, per quarter
+    const tinDigits = client ? String(client.TIN||'').replace(/\D/g,'') : '';
+    if(tinDigits){
+      for(let q=1;q<=4;q++){
+        const sum = sawtEntries.filter(e=> String(e.client_tin||'').replace(/\D/g,'') === tinDigits && Number(e.period_year) === Number(year) && normalizeQuarterNum(e.period_quarter) === q)
+          .reduce((a,e)=> a + taxoptNum(e.tax_withheld), 0);
+        if(sum) st.vals['q'+q+'_cwt'] = taxoptR2(sum);
+      }
+    }
+    return st;
+  }
+  function taxoptKind(){ return toEl.kind.value === 'auto' ? (taxopt ? taxopt.kindAuto : 'ind') : toEl.kind.value; }
+
+  function taxoptInit(){
+    const years = new Set(salesSummary.map(r=>Number(r.year)).filter(y=>!isNaN(y)));
+    const fq = currentFilingQuarter(), cy = new Date().getFullYear() + fq.yearOffset;
+    years.add(cy); years.add(new Date().getFullYear());
+    const list = Array.from(years).sort((a,b)=>b-a);
+    const prev = toEl.year.value;
+    toEl.year.innerHTML = list.map(y=>`<option value="${y}">${y}</option>`).join('');
+    toEl.year.value = list.map(String).includes(prev) ? prev : String(cy);
+    if(!toEl.thru.dataset.init){ toEl.thru.value = String(fq.q); toEl.thru.dataset.init = '1'; }
+    toEl.list.innerHTML = clients.filter(c=> c['CLIENT ID NO.'] && !['NO','CLOSED'].includes(String(c['CLIENT?']||'').trim().toUpperCase()))
+      .sort((a,b)=> String(a.NAME||'').localeCompare(String(b.NAME||'')))
+      .map(c=>`<option value="${esc(c['CLIENT ID NO.'])} — ${esc(c.NAME||'')}"></option>`).join('');
+  }
+  function taxoptResolveClient(text){
+    const t = String(text||'').trim();
+    if(!t) return null;
+    const idPart = t.split(' — ')[0].trim();
+    return findClientByIdNo(idPart) || clients.find(c=> String(c.NAME||'').trim().toLowerCase() === t.toLowerCase()) || null;
+  }
+  function taxoptLoad(){
+    const text = toEl.client.value.trim();
+    const client = taxoptResolveClient(text);
+    if(text && !client) toast('No client matches "'+text+'" — pick one from the list, or clear the box to use it as a plain calculator.');
+    taxopt = taxoptNewState(client, Number(toEl.year.value));
+    renderTaxoptForm();
+  }
+  function renderTaxOpt(){
+    taxoptInit();
+    if(!taxopt) taxoptLoad(); else renderTaxoptResults();
+  }
+  toEl.client.addEventListener('change', taxoptLoad);
+  toEl.year.addEventListener('change', taxoptLoad);
+  document.getElementById('taxopt-reload-btn').addEventListener('click', taxoptLoad);
+  toEl.kind.addEventListener('change', renderTaxoptForm);
+  toEl.thru.addEventListener('change', renderTaxoptResults);
+  toEl.basis.addEventListener('change', renderTaxoptResults);
+
+  // ---- form (inputs) ----
+  function renderTaxoptForm(){
+    const st = taxopt; if(!st){ return; }
+    const kind = taxoptKind();
+    const inp = (k, ph)=> `<input class="inline-text taxopt-in mono" data-k="${k}" style="width:112px;text-align:right;" placeholder="${ph||''}" value="${esc(fmtNumInput(st.vals[k]))}">`;
+    const rows = [['sales', kind==='corp' ? 'Sales / revenue (gross)' : 'Gross sales / receipts']];
+    if(kind==='ind') rows.push(['other','Other income (non-operating)']);
+    if(kind==='corp') rows.push(['cos','Cost of sales / services']);
+    rows.push(['exp', kind==='corp' ? 'Operating expenses (itemized)' : 'Expenses (itemized)']);
+    rows.push(['cwt','Creditable tax withheld (2307) — this quarter']);
+    rows.push(['paid','Income tax actually paid this quarter (optional)']);
+    const head = `<tr><th style="text-align:left;">Per quarter (not cumulative)</th>${[1,2,3,4].map(q=>`<th>Q${q}</th>`).join('')}</tr>`;
+    const body = rows.map(([k,label])=>`<tr><td>${esc(label)}</td>${[1,2,3,4].map(q=>`<td>${inp('q'+q+'_'+k, k==='paid'?'auto':'')}</td>`).join('')}</tr>`).join('');
+    const refIT = st.hasSalesRow ? `<tr><td style="color:var(--ink-soft);">Sales Summary “IT Due” (for comparison)</td>${[1,2,3].map(q=>`<td class="num mono" style="color:var(--ink-soft);">${esc(fmtVatMoney(st.zero ? 0 : (st.refIT[q]===undefined||st.refIT[q]===null||st.refIT[q]==='' ? null : Number(st.refIT[q]))))}</td>`).join('')}<td></td></tr>` : '';
+    const chk = (a, label, checked, title)=> `<label style="display:inline-flex;align-items:center;gap:6px;margin-right:18px;font-size:12.5px;" title="${esc(title||'')}"><input type="checkbox" class="taxopt-as" data-a="${a}"${checked?' checked':''}>${esc(label)}</label>`;
+    let assume = '';
+    if(kind==='ind'){
+      assume = chk('mixed','Mixed-income earner (also has a salary → no ₱250,000 deduction under 8%)', st.mixed) +
+        chk('pt','Subject to 3% percentage tax (non-VAT)', st.pt, 'Not paid under the 8% option') +
+        chk('vatReg','VAT-registered (8% not allowed)', st.vatReg) +
+        `<label style="font-size:12.5px;white-space:nowrap;">Taxable compensation income, full year: <input class="inline-text taxopt-as mono" data-a="comp" style="width:112px;text-align:right;" value="${esc(fmtNumInput(st.comp))}"></label>`;
+    } else {
+      assume = chk('pt','Subject to 3% percentage tax (non-VAT)', st.pt) +
+        chk('assetsOK','Total assets ≤ ₱100M (excluding land)', st.assetsOK, 'Needed, together with net taxable income ≤ ₱5M, for the reduced 20% rate') +
+        chk('mcit','MCIT applies (4th taxable year onward)', st.mcit, st.regYear ? 'Registered '+st.regYear : 'Unknown registration year') +
+        `<label style="font-size:12.5px;white-space:nowrap;">Income tax rate: <select class="filter taxopt-as" data-a="rateMode" style="min-width:150px;"><option value="auto"${st.rateMode==='auto'?' selected':''}>Auto (20% / 25%)</option><option value="25"${st.rateMode==='25'?' selected':''}>Force 25%</option><option value="20"${st.rateMode==='20'?' selected':''}>Force 20%</option></select></label>`;
+    }
+    const qopts = kind==='corp' ? [['ITEM','Itemized'],['OSD','OSD (40%)']] : [['ITEM','Graduated — Itemized'],['OSD','Graduated — OSD (40%)'],['8','8% flat rate']];
+    const who = st.name ? `<b>${esc(st.name)}</b> · ${esc(st.idNo)} · ${st.electText ? 'current election: <b>'+esc(st.electText)+'</b>' : 'no tax option set yet'}` : 'No client selected — use it as a plain calculator, or pick a client above to start from the Sales Summary figures.';
+    toEl.body.innerHTML = `
+      <div class="small-note" style="margin-bottom:6px;">${who}${st.zero ? ' · <b style="color:var(--gold);">status 0 FILING / FOR CLOSURE</b>' : ''}</div>
+      <div class="table-scroll" style="max-width:860px;"><table><thead>${head}</thead><tbody>${body}${refIT}</tbody></table></div>
+      <div style="margin:10px 0 4px;display:flex;flex-wrap:wrap;gap:6px 0;align-items:center;">${assume}</div>
+      <div style="margin:6px 0 14px;font-size:12.5px;">Show the quarterly computation for:
+        <select class="filter taxopt-as" data-a="qopt" style="min-width:210px;margin-left:6px;"><option value="AUTO"${st.qopt==='AUTO'?' selected':''}>Current election / best option</option>${qopts.map(([v,l])=>`<option value="${v}"${st.qopt===v?' selected':''}>${esc(l)}</option>`).join('')}</select>
+      </div>
+      <div id="taxopt-results"></div>`;
+    renderTaxoptResults();
+  }
+  toEl.body.addEventListener('input', e=>{
+    const el = e.target.closest('.taxopt-in'); if(!el || !taxopt) return;
+    if(el.value.trim()[0] === '=') return;           // formula: evaluated on change
+    taxopt.vals[el.dataset.k] = el.value.trim() === '' ? null : taxoptNum(el.value);
+    renderTaxoptResults();
+  });
+  toEl.body.addEventListener('change', e=>{
+    if(!taxopt) return;
+    const el = e.target.closest('.taxopt-in');
+    if(el){
+      let raw = el.value.trim();
+      if(raw[0] === '='){
+        try { raw = String(evalTaxFormula(raw)); } catch(err){ toast('Formula error: '+err.message); el.value = fmtNumInput(taxopt.vals[el.dataset.k]); return; }
+      }
+      taxopt.vals[el.dataset.k] = raw === '' ? null : taxoptNum(raw);
+      el.value = fmtNumInput(taxopt.vals[el.dataset.k]);
+      renderTaxoptResults();
+      return;
+    }
+    const as = e.target.closest('.taxopt-as'); if(!as) return;
+    const a = as.dataset.a;
+    if(as.type === 'checkbox') taxopt[a] = as.checked;
+    else if(a === 'comp'){ taxopt.comp = taxoptNum(as.value); as.value = fmtNumInput(taxopt.comp); }
+    else taxopt[a] = as.value;
+    renderTaxoptResults();
+  });
+
+  // ---- results ----
+  function taxoptTable(head, rows, opts){
+    opts = opts || {};
+    return `<div class="table-scroll" style="max-width:${opts.width||980}px;margin-bottom:6px;"><table><thead><tr>${head.map((h,i)=>`<th${i? ' style="text-align:right;"':''}>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr${r.cls?` class="${r.cls}"`:''}${r.style?` style="${r.style}"`:''}>${r.cells.map((c,i)=>`<td${i? ' class="num mono"':''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  }
+  const taxoptMoney = n => (n===null || n===undefined) ? '—' : '₱' + fmtVatMoney(n);
+  function renderTaxoptResults(){
+    const st = taxopt, out = document.getElementById('taxopt-results');
+    if(!st || !out) return;
+    const kind = taxoptKind();
+    const thru = Number(toEl.thru.value) || 4;
+    const scale = (toEl.basis.value === 'ann' && thru < 4) ? 4/thru : 1;
+    const S = taxoptCum(st,'sales',thru)*scale, N = taxoptCum(st,'other',thru)*scale, COS = taxoptCum(st,'cos',thru)*scale, X = taxoptCum(st,'exp',thru)*scale;
+    const basisNote = scale === 1 ? `Year-to-date through Q${thru}${thru<4?' (not annualized — the ₱250,000 exemption and the brackets are annual, so a partial year flatters graduated rates)':''}` : `Q1–Q${thru} annualized ×${(4/thru).toFixed(2).replace(/\.?0+$/,'')} to a full-year projection`;
+    let html = '';
+    let best = null;
+    const results = {};
+    if(kind === 'ind'){
+      const grossAnnual = taxoptCum(st,'sales',thru)*(4/thru) + taxoptCum(st,'other',thru)*(4/thru);
+      const elig8 = !st.vatReg && grossAnnual <= TAXOPT_8_CAP;
+      const why8 = st.vatReg ? 'Not available — VAT-registered taxpayers cannot use the 8% option.' : (grossAnnual > TAXOPT_8_CAP ? `Not available — projected gross of ${taxoptMoney(grossAnnual)} is over the ₱3,000,000 limit.` : '');
+      ['ITEM','OSD','8'].forEach(o=>{ if(o==='8' && !elig8) return; results[o] = taxoptIndTax(o, S, N, X, taxoptNum(st.comp), st); });
+      const ranked = Object.keys(results).sort((a,b)=> results[a].total - results[b].total);
+      best = ranked[0];
+      const rowsC = ['ITEM','OSD','8'].map(o=>{
+        const r = results[o];
+        const cur = st.elect === o ? ' <span class="vat-badge incomplete">current</span>' : '';
+        if(!r) return {cells:[`${TAXOPT_OPT_LABEL[o]}${cur}`, `<span style="font-family:inherit;color:var(--ink-soft);white-space:normal;">${esc(why8)}</span>`,'','','',''], style:'opacity:.75;'};
+        const diff = r.total - results[best].total;
+        return {cells:[`${TAXOPT_OPT_LABEL[o]}${cur}${o===best?' <span class="vat-badge ready">best</span>':''}`, taxoptMoney(r.base), taxoptMoney(r.it), taxoptMoney(r.pt), `<b>${taxoptMoney(r.total)}</b>`, diff > 0.005 ? '+'+taxoptMoney(diff) : '—'], cls:o===best?'taxopt-best':''};
+      });
+      html += `<h3 style="margin:6px 0;">Which option costs less?</h3><div class="small-note" style="margin:0 0 6px;">${esc(basisNote)}. Compares income tax + percentage tax${st.mixed?' on the business income only (compensation tax is the same either way)':''}. Gross: ${taxoptMoney(S)}${N?' + other '+taxoptMoney(N):''} · expenses ${taxoptMoney(X)}.</div>` +
+        taxoptTable(['Option','Taxable base','Income tax','Percentage tax (3%)','Total tax cost','More than best'], rowsC, {width:960});
+      // verdict + break-even
+      const cur = st.elect && results[st.elect] ? st.elect : '';
+      let verdict = `<b>${esc(TAXOPT_OPT_LABEL[best])}</b> costs the least: ${taxoptMoney(results[best].total)}.`;
+      if(cur && cur !== best){ verdict += ` Staying on ${esc(TAXOPT_OPT_LABEL[cur])} costs ${taxoptMoney(results[cur].total - results[best].total)} more.`; }
+      else if(cur && cur === best){ verdict += ' That is the current election — keep it.'; }
+      else if(st.elect === '8' && !elig8){ verdict += ' The current 8% election would no longer be allowed on these figures.'; }
+      if(st.elect && st.elect !== best){ verdict += ' (The option is chosen on the first quarterly return of the year and generally cannot be changed for that year — this matters for next year\'s Q1.)'; }
+      html += `<div class="small-note" style="margin:6px 0 4px;font-size:13px;color:var(--ink);">${verdict}</div>`;
+      if(elig8){
+        const f = X0 => taxoptIndTax('ITEM', S, N, X0, taxoptNum(st.comp), st).total - results['8'].total;
+        const hi = S + N + 1;
+        let be = null, beNote = '';
+        if(f(0) <= 0) beNote = 'Itemized is cheaper than 8% at every expense level for these sales.';
+        else if(f(hi) > 0) beNote = 'The 8% option is cheaper than Itemized at every expense level for these sales (the 3% percentage tax alone costs more).';
+        else { let lo = 0, up = hi; for(let i=0;i<60;i++){ const mid=(lo+up)/2; if(f(mid) > 0) lo = mid; else up = mid; } be = (lo+up)/2; }
+        if(be !== null){
+          be = Math.round(be);   // the crossover lands on a whole-peso tie; show it cleanly
+          const pctBE = S>0 ? be/S*100 : 0, pctNow = S>0 ? X/S*100 : 0;
+          beNote = `Itemized beats 8% only when expenses are more than <b>${taxoptMoney(be)}</b> (${pctBE.toFixed(2).replace(/0$/,'')}% of sales). Current expenses: ${taxoptMoney(X)} (${pctNow.toFixed(1)}% of sales) — ${X > be ? 'above' : 'below'} the break-even.`;
+        }
+        html += `<div class="small-note" style="margin:0 0 4px;font-size:12.5px;">Break-even (Itemized vs 8%): ${beNote}</div>`;
+      }
+      html += `<div class="small-note" style="margin:0 0 14px;">OSD beats Itemized whenever expenses are under 40% of sales. Tax rules used: TRAIN graduated table, 8% on gross less ₱250,000 (purely self-employed), 3% percentage tax for non-VAT businesses.</div>`;
+    } else {
+      ['ITEM','OSD'].forEach(o=>{
+        const g = S - COS, ntiO = o === 'OSD' ? g*0.6 : g - X;
+        results[o] = taxoptCorpTax(o, S, COS, X, st, ntiO * (scale === 1 ? 4/thru : 1));   // reduced-rate test is on the full-year figure
+      });
+      best = results.ITEM.total <= results.OSD.total ? 'ITEM' : 'OSD';
+      const rowsC = ['ITEM','OSD'].map(o=>{
+        const r = results[o];
+        const cur = st.elect === o ? ' <span class="vat-badge incomplete">current</span>' : '';
+        const diff = r.total - results[best].total;
+        return {cells:[`${o==='ITEM'?'Itemized deductions':'OSD (40% of gross income)'}${cur}${o===best?' <span class="vat-badge ready">best</span>':''}`, taxoptMoney(r.nti), (r.rate*100)+'%', taxoptMoney(r.rcit), r.mcit ? taxoptMoney(r.mcit)+(r.mcitApplied?' ◄':'') : '—', `<b>${taxoptMoney(r.it)}</b>`, taxoptMoney(r.pt), `<b>${taxoptMoney(r.total)}</b>`, diff > 0.005 ? '+'+taxoptMoney(diff) : '—'], cls:o===best?'taxopt-best':''};
+      });
+      html += `<h3 style="margin:6px 0;">Itemized vs OSD (corporation)</h3><div class="small-note" style="margin:0 0 6px;">${esc(basisNote)}. Gross income ${taxoptMoney(S-COS)} (sales ${taxoptMoney(S)} less cost ${taxoptMoney(COS)}). ◄ = the 2% MCIT is higher than the regular tax, so the MCIT is what is due. The 8% option is for individuals only.</div>` +
+        taxoptTable(['Option','Net taxable income','Rate','Regular tax (RCIT)','MCIT 2%','Income tax due','Percentage tax (3%)','Total tax cost','More than best'], rowsC, {width:1100});
+      let verdict = `<b>${best==='ITEM'?'Itemized deductions':'OSD'}</b> costs the least: ${taxoptMoney(results[best].total)}.`;
+      if(st.elect && results[st.elect] && st.elect !== best) verdict += ` The current election (${st.elect==='ITEM'?'Itemized':'OSD'}) costs ${taxoptMoney(results[st.elect].total - results[best].total)} more.`;
+      else if(st.elect && st.elect === best) verdict += ' That is the current election — keep it.';
+      html += `<div class="small-note" style="margin:6px 0 14px;font-size:13px;color:var(--ink);">${verdict}</div>`;
+    }
+
+    // ---- quarterly computation (cumulative) ----
+    const qo = st.qopt !== 'AUTO' ? st.qopt : (st.elect && results[st.elect] ? st.elect : best);
+    const cols = [1,2,3,4];
+    const cum = (k,q)=> taxoptCum(st,k,q);
+    const R = {gross:[], other:[], ded:[], base:[], tax:[], prev:[], cwt:[], due:[], rate:[], gi:[], mcit:[], annualTax:[]};
+    let paidPrev = 0, balance = null, mcitNote = '';
+    // reduced-rate test uses the annualized net taxable income at the selected cut-off quarter
+    const ntiAnn = kind === 'corp' ? ((qo==='OSD' ? (cum('sales',thru)-cum('cos',thru))*0.6 : cum('sales',thru)-cum('cos',thru)-cum('exp',thru)) * (4/thru)) : 0;
+    cols.forEach(q=>{
+      const s = cum('sales',q), n = cum('other',q), c = cum('cos',q), x = cum('exp',q), w = cum('cwt',q);
+      let tax, base, ded, annualTax = null, rate = null, gi = null, mcit = null;
+      if(kind === 'ind'){
+        const r = taxoptIndTax(qo, s, n, x, 0, Object.assign({}, st, {pt:false}));
+        tax = r.it; base = r.base; ded = qo==='8' ? (st.mixed ? 0 : TAXOPT_8_DEDUCT) : (qo==='OSD' ? s*0.4 : x);
+      } else {
+        const r = taxoptCorpTax(qo, s, c, x, Object.assign({}, st, {mcit:false}), ntiAnn);
+        tax = r.rcit; base = r.nti; rate = r.rate; gi = r.GI; ded = qo==='OSD' ? r.GI*0.4 : x;
+        if(q === 4){ mcit = st.mcit ? taxoptR2(Math.max(0, r.GI) * TAXOPT_MCIT) : 0; annualTax = Math.max(tax, mcit); if(mcit > tax) mcitNote = 'MCIT (2% of gross income) is higher than the regular tax, so the MCIT is the annual income tax.'; }
+      }
+      const compDue = taxoptR2(Math.max(0, tax - paidPrev - w));
+      let due;
+      if(q < 4){
+        const paidOverride = st.vals['q'+q+'_paid'];
+        due = (paidOverride === null || paidOverride === undefined || paidOverride === '') ? compDue : taxoptNum(paidOverride);
+      } else {
+        const annual = annualTax !== null ? annualTax : tax;
+        balance = taxoptR2(annual - paidPrev - w);
+        due = balance;
+      }
+      R.gross.push(taxoptMoney(s)); if(kind==='ind') R.other.push(taxoptMoney(n));
+      R.ded.push(taxoptMoney(ded)); R.base.push(taxoptMoney(base)); R.tax.push(taxoptMoney(tax));
+      R.prev.push(q === 1 ? '—' : '−' + taxoptMoney(paidPrev)); R.cwt.push('−' + taxoptMoney(w));
+      R.due.push(q < 4 ? `<b>${taxoptMoney(due)}</b>` + (due !== compDue ? ` <span style="color:var(--ink-soft);font-weight:400;">(computed ${taxoptMoney(compDue)})</span>` : '') : `<b>${due < 0 ? '('+taxoptMoney(-due)+') overpaid' : taxoptMoney(due)}</b>`);
+      if(kind==='corp'){ R.rate.push(((rate||0)*100)+'%'); R.gi.push(taxoptMoney(gi)); R.mcit.push(q===4 ? (st.mcit ? taxoptMoney(mcit) : 'n/a') : '—'); R.annualTax.push(q===4 ? taxoptMoney(annualTax) : '—'); }
+      if(q < 4) paidPrev = taxoptR2(paidPrev + due);
+    });
+    const form = kind==='corp' ? '1702Q' : '1701Q', annualForm = kind==='corp' ? '1702' : '1701 / 1701A';
+    const lbl = kind==='ind'
+      ? (qo==='8' ? ['Cumulative gross receipts','Cumulative other income','Less: ' + (st.mixed ? 'no ₱250,000 (mixed income)' : '₱250,000 deduction'),'8% base','Tax on cumulative (8%)']
+        : ['Cumulative gross sales/receipts','Cumulative other income','Less: ' + (qo==='OSD' ? 'OSD (40% of sales)' : 'itemized expenses'),'Cumulative taxable income','Tax on cumulative (graduated table)'])
+      : ['Cumulative sales','','Less: ' + (qo==='OSD' ? 'OSD (40% of gross income)' : 'operating expenses'),'Cumulative net taxable income','Regular income tax on cumulative'];
+    const qrows = [];
+    qrows.push({cells:[lbl[0], ...R.gross]});
+    if(kind==='ind') qrows.push({cells:[lbl[1], ...R.other]});
+    if(kind==='corp') qrows.push({cells:['Gross income (sales − cost)', ...R.gi]});
+    qrows.push({cells:[lbl[2], ...R.ded]});
+    qrows.push({cells:[lbl[3], ...R.base]});
+    if(kind==='corp') qrows.push({cells:['Rate (RCIT)', ...R.rate]});
+    qrows.push({cells:[lbl[4], ...R.tax]});
+    qrows.push({cells:['Less: tax paid on earlier quarters', ...R.prev]});
+    qrows.push({cells:['Less: cumulative creditable withholding (2307)', ...R.cwt]});
+    if(kind==='corp'){ qrows.push({cells:['MCIT 2% of gross income (annual only)', ...R.mcit]}); qrows.push({cells:['Annual income tax (higher of RCIT / MCIT)', ...R.annualTax]}); }
+    qrows.push({cells:[`Tax due — ${form} for Q1–Q3; Q4 column = balance on annual ${annualForm}`, ...R.due], cls:'taxopt-best'});
+    if(st.hasSalesRow){
+      const refCells = [1,2,3].map(q=>{ const v = st.zero ? 0 : (st.refIT[q]===undefined||st.refIT[q]===null||st.refIT[q]==='' ? null : Number(st.refIT[q])); return taxoptMoney(v); });
+      qrows.push({cells:['Sales Summary IT Due (what is recorded now)', ...refCells, '—'], style:'color:var(--ink-soft);'});
+    }
+    html += `<h3 style="margin:6px 0;">Quarterly income tax (${form}) — ${esc(kind==='corp' ? (qo==='OSD'?'OSD':'Itemized') : TAXOPT_OPT_LABEL[qo])}</h3>` +
+      `<div class="small-note" style="margin:0 0 6px;">Cumulative method: tax on year-to-date taxable income − payments on earlier quarters − cumulative 2307 credits. A negative result in Q1–Q3 means no payment this quarter (the excess credit carries forward). ${kind==='corp' ? 'Quarterly returns use the regular tax only; the MCIT comparison happens on the annual return. Reduced 20% rate test uses the projected full-year net taxable income at Q'+thru+' ('+taxoptMoney(ntiAnn)+').' : 'Quarterly returns of a mixed-income earner cover the business income only. Percentage tax (2551Q, 3%) is separate and not shown here.'} ${esc(mcitNote)}</div>` +
+      taxoptTable(['', 'Q1','Q2','Q3','Q4'], qrows, {width:980});
+    out.innerHTML = html;
+  }
+
   const STATUS_DISPLAY = {NA:'N/A'};
   function fmtPeso(n){
     if(n===null || n===undefined || n==='') return '';
@@ -2052,6 +2438,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     registry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 20v-1.8a3.2 3.2 0 0 0-3.2-3.2H6.2A3.2 3.2 0 0 0 3 18.2V20"/><circle cx="9.5" cy="7.5" r="3.5"/><path d="M21 20v-1.5a3 3 0 0 0-2.2-2.9"/><path d="M15.2 4.2a3.5 3.5 0 0 1 0 6.6"/></svg>',
     scan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2"/><path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M20 8V6a2 2 0 0 0-2-2h-2"/><path d="M20 16v2a2 2 0 0 1-2 2h-2"/><circle cx="12" cy="12" r="3.2"/></svg>',
     creds: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M11 12l8-8"/><path d="M16 7l2.5 2.5"/><path d="M13.5 9.5l2 2"/></svg>',
+    taxopt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 21h14"/><path d="M6 7h12"/><path d="M6 7l-3 7a3 3 0 0 0 6 0z"/><path d="M18 7l-3 7a3 3 0 0 0 6 0z"/></svg>',
     vat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="10" y2="11"/><line x1="12" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="10" y2="15"/><line x1="12" y1="15" x2="16" y2="15"/></svg>',
     sales: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="20"/><rect x="6" y="12" width="3" height="8"/><rect x="11" y="8" width="3" height="12"/><rect x="16" y="4" width="3" height="16"/></svg>',
     tax2307: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M9 9h6"/><path d="M9 13h6"/><path d="M9 17h3"/></svg>',
@@ -2072,6 +2459,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     scan:{icon:'scan', title:'Scan & Add (OCR)', sub:'Upload a COR photo or PDF to auto-fill a new client record.'},
     creds:{icon:'creds', title:'Credentials', sub:'Stored account logins for client portals, encrypted at rest.'},
     sales:{icon:'sales', title:'Sales Summary', sub:'Quarterly sales figures per client for tax and VAT filings.'},
+    taxopt:{icon:'taxopt', title:'Tax Option Compare', sub:'Itemized vs OSD vs 8% side by side, plus the quarterly income tax computed live.'},
     vat:{icon:'vat', title:'VAT Worksheet', sub:'Monthly vatable sales and purchases per VAT client, computed into VAT Due.'},
     tax2307:{icon:'tax2307', title:'2307 Register', sub:'Creditable withholding tax certificates issued to clients.'},
     sawt:{icon:'sawt', title:'SAWT / 2307 Received', sub:'Certificates received from clients’ customers, for SAWT filing.'},
@@ -2111,6 +2499,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(tab === 'creds') renderCreds();
     if(tab === 'sales') renderSalesSummary();
     if(tab === 'vat') renderVat();
+    if(tab === 'taxopt') renderTaxOpt();
     if(tab === 'tax2307') renderEntries2307();
     if(tab === 'sawt') renderSawt();
     if(tab === 'report') renderReport();
