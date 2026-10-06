@@ -507,6 +507,7 @@
           <select class="filter" id="tr-client-status-filter" data-chk="exclude" data-chk-noun="client statuses"><option value="">All client statuses</option></select>
           <select class="filter" id="tr-payment-filter" data-chk="include" data-chk-noun="payment">
             <option value="">All (payment)</option>
+            <option value="NO_DUE">No Tax Due (blank or ₱0)</option>
             <option value="DUE_UNPAID">Has Tax Due, not yet given to liaison</option>
             <option value="LIAISON">Given to Liaison</option>
             <option value="PAID">Paid</option>
@@ -2941,7 +2942,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const sfs = chkChecked(trStatusFilter), payfs = chkChecked(trPaymentFilter);
     const statusMatch = (t, v)=> v==='OVERDUE' ? isOverdue(t) : v==='D' ? t.status==='DONE' : v==='P' ? t.status==='PENDING'
       : v==='Z' ? t.status==='ZERO' : v==='N' ? !!t.notes : v==='A' ? t.status==='NA' : false;
-    const payMatch = (t, v)=> v==='DUE_UNPAID' ? (t.taxDue!==null && t.taxDue>0 && !t.paymentStatus)
+    const payMatch = (t, v)=> v==='NO_DUE' ? (t.taxDue===null || t.taxDue===undefined || !(t.taxDue>0))
+      : v==='DUE_UNPAID' ? (t.taxDue!==null && t.taxDue>0 && !t.paymentStatus)
       : v==='LIAISON' ? t.paymentStatus==='GIVEN TO LIAISON' : v==='PAID' ? t.paymentStatus==='PAID' : false;
     let pool = tasks.filter(t=>{
       if(!chkPass(trFormFilter, t.form)) return false;
