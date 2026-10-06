@@ -818,6 +818,11 @@
       <div class="table-scroll" style="margin-top:12px;max-width:900px;max-height:320px;" id="zero-status-table"></div>
       <div class="small-note" id="zero-status-summary" style="margin-top:8px;"></div>
       <button class="secondary" id="zero-status-apply-btn" style="margin-top:8px;" disabled>Apply zeros</button>
+      <h3 style="margin-top:30px;">Restore Tasks Wrongly Marked N/A</h3>
+      <div class="small-note">When a client's status is set to NO / CLOSED, or an End of Service Date is entered, the app automatically marks their open tasks N/A. If the client later became active again (or the End of Service Date was removed / moved later), those tasks stayed N/A. This lists every ACTIVE client that still has tasks the app itself auto-marked N/A, and puts them back to Pending. (Tasks someone set to N/A by hand are left alone — change those from the Status dropdown in the Task Tracker.)</div>
+      <div class="table-scroll" style="margin-top:12px;max-width:900px;max-height:320px;" id="restore-na-table"></div>
+      <div class="small-note" id="restore-na-summary" style="margin-top:8px;"></div>
+      <button class="secondary" id="restore-na-apply-btn" style="margin-top:8px;" disabled>Restore to Pending</button>
       <h3 style="margin-top:30px;">Branch Tag vs. Client Registry Audit</h3>
       <div class="small-note">"Branch" on a Sales Summary row's Tax Type or Tax Option is just a free label on that row — it's a completely separate thing from the Client Registry's own "Registering Office" + "Main Client ID" fields, which is what the Branch Client ID Numbering tool above actually reads to assign a 5JS-0001-B1-style Client ID. The two don't talk to each other, so it's easy for them to drift apart. This lists every Sales Summary row tagged Branch (Tax Type and/or Tax Option) whose Client Registry entry ISN'T set up to match — Registering Office isn't Branch, Main Client ID is blank, or the Client ID hasn't been renumbered yet — read-only, for manual review (fix each one in the Client Registry or Settings tools above, whichever is actually correct for that client).</div>
       <div class="table-scroll" style="margin-top:12px;max-width:900px;" id="branch-audit-table"></div>
@@ -2700,7 +2705,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(tab === 'tax2307') renderEntries2307();
     if(tab === 'sawt') renderSawt();
     if(tab === 'report') renderReport();
-    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderZeroStatusTool(); renderCredsAccessLog(); }
+    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderZeroStatusTool(); renderRestoreNATool(); renderCredsAccessLog(); }
   }
 
   // Jumps to another tab programmatically (reuses the same click handler
@@ -4097,8 +4102,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const statusUpper = String(rec['CLIENT?']||'').trim().toUpperCase();
       if(statusUpper === 'NO' || statusUpper === 'CLOSED'){
         await applyInactiveClientNA(rec._id, rec['CLIENT?'], rec.NAME);
-      } else if(rec['END OF SERVICE DATE']){
-        await applyEndOfServiceNA(rec._id, rec['END OF SERVICE DATE'], rec.NAME);
+      } else {
+        if(rec['END OF SERVICE DATE']) await applyEndOfServiceNA(rec._id, rec['END OF SERVICE DATE'], rec.NAME);
+        // client is active again (or the end date moved later) -> undo the app's own earlier auto-N/A
+        const back = await restoreAutoNATasks(clientById[rec._id] || rec);
+        if(back) toast(`${back} task(s) ${rec.NAME? 'for '+rec.NAME+' ':''}put back to Pending (client is active).`);
       }
     });
   }
@@ -4126,6 +4134,56 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     affected.forEach(t => { t.status = 'NA'; t.doneBy=''; t.doneDate=''; t.notes = note; });
     toast(`${affected.length} future task(s) ${clientName? 'for '+clientName+' ':''}marked N/A due to end of service date.`);
   }
+
+  // The reverse of the two functions above: tasks the APP marked N/A (recognised by the note
+  // it wrote) go back to Pending once the client is active again -- i.e. status is not NO /
+  // CLOSED and the End of Service Date is blank or on/after the task's due date. Tasks someone
+  // set to N/A by hand have a different (or no) note and are never touched.
+  const AUTO_NA_NOTE_RE = /^N\/A — (client status is |end of service as of )/;
+  function restorableNATasksFor(client){
+    if(!client) return [];
+    const st = String(client['CLIENT?']||'').trim().toUpperCase();
+    if(st === 'NO' || st === 'CLOSED') return [];
+    const end = String(client['END OF SERVICE DATE']||'').trim();
+    return tasks.filter(t => t.clientId === client._id && t.status === 'NA' && AUTO_NA_NOTE_RE.test(t.notes||'') && (!end || t.due <= end));
+  }
+  async function restoreAutoNATasks(client){
+    const affected = restorableNATasksFor(client);
+    if(!affected.length) return 0;
+    const ids = affected.map(t=>t.id);
+    const { error } = await sb.from('cor_tasks').update({status:'PENDING', notes:null}).in('id', ids);
+    if(error){ console.error(error); toast('Could not put the N/A tasks back to Pending — please try again.'); return 0; }
+    affected.forEach(t=>{ logFieldAudit('cor_tasks_audit','record_id', t.id, 'status', 'Status (restored: client active again)', 'NA', 'PENDING'); t.status = 'PENDING'; t.notes = ''; });
+    return affected.length;
+  }
+  function renderRestoreNATool(){
+    const area = document.getElementById('restore-na-table');
+    const summary = document.getElementById('restore-na-summary');
+    const btn = document.getElementById('restore-na-apply-btn');
+    if(!area) return;
+    const plans = clients.map(c=>({c, list: restorableNATasksFor(c)})).filter(p=>p.list.length);
+    if(!plans.length){
+      area.innerHTML = '<div class="small-note">No active client has tasks that the app auto-marked N/A — nothing to restore.</div>';
+      summary.textContent = ''; btn.disabled = true; return;
+    }
+    const rows = plans.map(p=>`<tr><td class="mono">${esc(p.c['CLIENT ID NO.']||'')}</td><td>${esc(p.c.NAME||'')}</td><td>${esc(p.c['CLIENT?']||'')}</td><td class="num">${p.list.length}</td><td>${esc(p.list.slice(0,4).map(t=>t.form+' '+t.period).join(', '))}${p.list.length>4?'…':''}</td></tr>`).join('');
+    area.innerHTML = `<table><thead><tr><th>Client ID</th><th>Client</th><th>Status</th><th>N/A tasks</th><th>e.g.</th></tr></thead><tbody>${rows}</tbody></table>`;
+    summary.textContent = `${plans.reduce((a,p)=>a+p.list.length,0)} task(s) of ${plans.length} active client(s) will go back to Pending.`;
+    btn.disabled = false;
+  }
+  document.getElementById('restore-na-apply-btn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('restore-na-apply-btn');
+    const plans = clients.map(c=>({c, list: restorableNATasksFor(c)})).filter(p=>p.list.length);
+    if(!plans.length) return;
+    const n = plans.reduce((a,p)=>a+p.list.length,0);
+    if(!confirm(`Put ${n} task(s) of ${plans.length} active client(s) back to Pending?`)) return;
+    btn.disabled = true;
+    let done = 0;
+    for(const p of plans) done += await restoreAutoNATasks(p.c);
+    toast(`${done} task(s) back to Pending.`);
+    renderRestoreNATool();
+    renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
+  });
 
   // Whenever a client's CLIENT? status is set to NO or CLOSED, they're no
   // longer a client at all -- mark every one of their not-yet-done tasks
@@ -4542,8 +4600,22 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
     return salesBlank(r[key]) ? null : Number(r[key]);
   }
+  // Remark / payment-note columns: "done" = something is typed in it; "undone" =
+  // empty while that quarter actually has a Tax Due > 0 (a blank remark on a ₱0
+  // quarter is nothing to chase, so it is not listed as undone).
+  const SALES_REMARK_COLS = SALES_SUMMARY_COLS.filter(c=> /^(q[1-4]_(pt|it)_(payment_)?remarks|annual_1701_remarks)$/.test(c[0]));
+  function salesDueKeyForRemark(k){
+    const m = /^q([1-4])_(pt|it)_(?:payment_)?remarks$/.exec(k);
+    return m ? 'q'+m[1]+'_'+m[2]+'_tax_due' : (k==='annual_1701_remarks' ? 'annual_1701_tax_due' : null);
+  }
   function salesMissingMatch(r, mf){
     let m;
+    if((m = /^done:(.+)$/.exec(mf))) return !salesBlank(r[m[1]]);
+    if((m = /^undone:(.+)$/.exec(mf))){
+      if(!salesBlank(r[m[1]])) return false;
+      const dk = salesDueKeyForRemark(m[1]); const v = dk ? salesShownDue(r, dk) : null;
+      return v !== null && v > 0;
+    }
     if((m = /^has:(.+)$/.exec(mf))){ const v = salesShownDue(r, m[1]); return v !== null && v > 0; }
     if((m = /^norem:(.+)$/.exec(mf))){ const v = salesShownDue(r, m[1]); return v !== null && v > 0 && salesRemarkKeys(m[1]).every(k=>salesBlank(r[k])); }
     return salesBlank(r[mf]);
@@ -4551,7 +4623,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   salesMissingFilter.innerHTML = '<option value="">Show all (no field filter)</option>' +
     `<optgroup label="Missing a value">${SALES_NUMERIC_COLS.map(([key,label])=>`<option value="${esc(key)}">Missing: ${esc(label)}</option>`).join('')}</optgroup>` +
     `<optgroup label="Has a Tax Due (to check remarks)">${SALES_TAXDUE_FILTER_COLS.map(([key,label])=>`<option value="has:${esc(key)}">Has ${esc(label)}</option>`).join('')}</optgroup>` +
-    `<optgroup label="Tax Due with no remark / payment note yet">${SALES_TAXDUE_FILTER_COLS.map(([key,label])=>`<option value="norem:${esc(key)}">${esc(label)} — no remarks yet</option>`).join('')}</optgroup>`;
+    `<optgroup label="Tax Due with no remark / payment note yet">${SALES_TAXDUE_FILTER_COLS.map(([key,label])=>`<option value="norem:${esc(key)}">${esc(label)} — no remarks yet</option>`).join('')}</optgroup>` +
+    `<optgroup label="Remarks / Payment — DONE (filled in)">${SALES_REMARK_COLS.map(([key,label])=>`<option value="done:${esc(key)}">${esc(label)} — done</option>`).join('')}</optgroup>` +
+    `<optgroup label="Remarks / Payment — UNDONE (Tax Due but still blank)">${SALES_REMARK_COLS.map(([key,label])=>`<option value="undone:${esc(key)}">${esc(label)} — undone</option>`).join('')}</optgroup>`;
 
   // The first 4 columns (Year, Client, TIN, Trade Name) stay pinned on
   // screen while the rest of the (very wide) table scrolls horizontally.
