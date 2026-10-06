@@ -1710,29 +1710,67 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         else { result.tasks++; logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'tax_due', 'Tax Due (from VAT Worksheet)', oldVal, t.taxDue); }
       }
     }
-    // VAT Relief signal -> the client's SLSP task (the SLSP / VAT Relief encoding job): a quarter that is
-    // READY FOR ENCODING gets this note on its SLSP task so it shows up in the Task Tracker (search / notes filter
-    // "READY FOR ENCODING"); the note is taken off again once "Relief done by" is filled in or the quarter becomes
-    // incomplete. A note someone typed there is never overwritten, and finished / N/A tasks are left alone.
-    if(client){
-      for(const qc of calc){
-        const t = tasks.find(x=> x.clientId === client._id && x.form === 'SLSP' && x.period === 'Q'+qc.q+' '+ws.year);
-        if(!t || t.status === 'DONE' || t.status === 'NA') continue;
-        const cur = String(t.notes||'').trim();
-        let target = null;
-        if(qc.relief === 'READY'){ if(cur === '' || cur === VAT_RELIEF_NOTE) target = VAT_RELIEF_NOTE; else continue; }
-        else { if(cur === VAT_RELIEF_NOTE) target = ''; else continue; }
-        if(cur === target) continue;
-        const oldVal = t.notes;
-        t.notes = target;
-        const { error } = await sb.from('cor_tasks').update({notes: target || null}).eq('id', t.id);
-        if(error){ console.error(error); t.notes = oldVal; toast('Warning: an SLSP task could not be updated — please try again.'); }
-        else { result.slsp++; logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'notes', 'Notes (VAT Relief signal from VAT Worksheet)', oldVal, t.notes); }
-      }
-    }
+    result.slsp += await syncVatReliefTask(ws.client_id_no, ws.year, calc);
     return result;
   }
   const VAT_RELIEF_NOTE = 'READY FOR ENCODING — VAT Relief';
+  let vatReliefCreateFailed = false;   // stop after the first failed insert instead of showing one warning per client
+  const vatReliefHas = n => String(n||'').includes(VAT_RELIEF_NOTE);
+  const vatReliefAdd = n => { n = String(n||'').trim(); return n ? n + ' | ' + VAT_RELIEF_NOTE : VAT_RELIEF_NOTE; };
+  const vatReliefRemove = n => String(n||'').replace(' | ' + VAT_RELIEF_NOTE, '').replace(VAT_RELIEF_NOTE + ' | ', '').replace(VAT_RELIEF_NOTE, '').trim();
+  // VAT Relief signal -> the client's SLSP task (the SLSP / VAT Relief encoding job). A quarter that is READY FOR
+  // ENCODING gets the note "READY FOR ENCODING — VAT Relief" on its SLSP task (appended after any note staff already
+  // typed, never replacing it) and the SLSP task is CREATED when the client doesn't have one yet for that quarter
+  // (the due date comes from the 2026 filing calendar). The note comes off again once "Relief done by" is filled in
+  // (Encoded) or the quarter becomes incomplete. Finished / N/A tasks are left alone.
+  async function syncVatReliefTask(idNo, year, calc){
+    const client = findClientByIdNo(idNo);
+    if(!client) return 0;
+    const st = String(client['CLIENT?']||'').trim().toUpperCase();
+    let n = 0;
+    for(const qc of calc){
+      const period = 'Q'+qc.q+' '+year;
+      let t = tasks.find(x=> x.clientId === client._id && x.form === 'SLSP' && x.period === period);
+      if(!t){
+        if(qc.relief !== 'READY' || st === 'NO' || st === 'CLOSED' || vatReliefCreateFailed) continue;
+        const ref = CALENDAR_REF.find(r=> r.form === 'SLSP' && r.period === period);
+        if(!ref) continue;
+        const row = {client_id: client._id, form:'SLSP', frequency:'Quarterly', period, due_date: ref.due_date, status:'PENDING', notes: VAT_RELIEF_NOTE};
+        const { data, error } = await sb.from('cor_tasks').insert(row).select().single();
+        if(error || !data){ console.error(error); vatReliefCreateFailed = true; toast('Warning: the SLSP / VAT Relief task could not be created in the Task Tracker (' + ((error && error.message) || 'unknown error') + ').'); continue; }
+        const mapped = mapTaskFromDb(data);
+        if(!tasks.some(x=>x.id===mapped.id)) tasks.push(mapped);
+        logFieldAudit('cor_tasks_audit', 'record_id', mapped.id, 'notes', 'Task created (VAT Relief ready, from VAT Worksheet)', null, VAT_RELIEF_NOTE);
+        n++; continue;
+      }
+      if(t.status === 'DONE' || t.status === 'NA') continue;
+      const cur = String(t.notes||'');
+      const target = qc.relief === 'READY' ? (vatReliefHas(cur) ? cur : vatReliefAdd(cur)) : (vatReliefHas(cur) ? vatReliefRemove(cur) : cur);
+      if(target === cur) continue;
+      const oldVal = t.notes;
+      t.notes = target;
+      const { error } = await sb.from('cor_tasks').update({notes: target || null}).eq('id', t.id);
+      if(error){ console.error(error); t.notes = oldVal; toast('Warning: an SLSP task could not be updated — please try again.'); }
+      else { n++; logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'notes', 'Notes (VAT Relief signal from VAT Worksheet)', oldVal, t.notes); }
+    }
+    return n;
+  }
+  // Runs for every VAT client of the year (also clients without a worksheet row yet, e.g. 0 FILING ones that count as
+  // READY) when the VAT tab is opened, so quarters that became READY through the Excel import or another screen get
+  // their SLSP task without anyone having to press a button.
+  const vatReliefAutoDone = new Set();
+  async function autoSyncVatRelief(year, force){
+    if(!year || !sb || (!force && vatReliefAutoDone.has(year))) return 0;
+    vatReliefAutoDone.add(year);
+    let n = 0;
+    const {rows} = vatRowsForYear(year);
+    for(const e of rows){
+      const calc = vatYearCalc(vatEffectiveWs(e.idNo, year, vatWsFor(e.idNo, year)), vatClientIsZero(e.idNo, year));
+      n += await syncVatReliefTask(e.idNo, year, calc);
+    }
+    if(n){ toast(`${n} SLSP / VAT Relief task(s) updated in the Task Tracker.`); }
+    return n;
+  }
 
 
   // ---- Sales Summary Tax Due  ->  Task Tracker Tax Due ----
@@ -1907,6 +1945,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const year = Number(vatYearFilter.value);
     const q = Number(vatQuarterFilter.value) || 1;
     refreshVatLockButton();
+    if(year) autoSyncVatRelief(year);
     if(!year){
       vatTable.innerHTML = '<div class="small-note" style="padding:14px;">No VAT clients yet — set a Sales Summary row\'s Tax Type to VAT (and give it a Client ID) and it will appear here.</div>';
       document.getElementById('vat-count').textContent = '';
@@ -2078,6 +2117,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     btn.disabled = true;
     let sales = 0, taskCount = 0, slspCount = 0;
     for(const w of list){ const r = await syncVatLinks(w); sales += r.sales; taskCount += r.tasks; slspCount += r.slsp; }
+    slspCount += await autoSyncVatRelief(year, true);
     btn.disabled = false;
     toast(sales || taskCount || slspCount ? `Synced: ${sales} Sales Summary value(s), ${taskCount} 2550Q task(s) and ${slspCount} SLSP / VAT Relief task(s) updated.` : 'Everything was already in sync.');
   });
