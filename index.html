@@ -865,7 +865,7 @@
       <button class="secondary" id="undo-tasks-load-btn" style="margin-top:8px;">Check which tasks can be removed</button>
       <button class="secondary" id="undo-tasks-apply-btn" style="margin-top:8px;" disabled>Remove these tasks</button>
       <h3 style="margin-top:30px;">Import ITR 2025 (1701 / 1702 annual) into the Task Tracker</h3>
-      <div class="small-note">One-time import of the “ITR 2025” list (238 clients, 1701 / 1702 for tax year 2025, filed 2026). For every matched client (by TIN) it creates the annual task <b>TY 2025 (filed 2026)</b> — form 1701 for individuals, 1702 for corporations — with the list’s Tax Due and Remarks as notes. <b>DONE …</b> remarks become Done (with the date, and “DONE BY &lt;name&gt;” as Done by); <b>PAID …</b> become Done + Paid (with the payment date); everything else (FOR PAYMENT, FOR PRINT, FOR SEND TO ERWIN, …) stays Pending with the remark as a note. If the client already has that annual task, only its <b>empty</b> fields are filled — nothing typed is overwritten. Clients whose status is NO / CLOSED are listed but un-ticked. Tick / untick clients as needed.</div>
+      <div class="small-note">One-time import of the “ITR 2025” list (238 clients, 1701 / 1702 for tax year 2025, filed 2026). For every matched client (by TIN) it creates the annual task <b>TY 2025 (filed 2026)</b> — form 1701 for individuals, 1702 for corporations — with the list’s Tax Due and <b>every remark in Notes</b> (if the task already has notes, the remark is added after them). <b>DONE …</b> remarks become Done (with the date, and “DONE BY &lt;name&gt;” as Done by); <b>PAID …</b> become Done + Paid (the Done date is the same as the payment date); everything else (FOR PAYMENT, FOR PRINT, FOR SEND TO ERWIN, …) stays Pending with the remark as a note. If the client already has that annual task, only its <b>empty</b> fields are filled — nothing typed is overwritten (existing notes are kept and the remark is appended). Clients whose status is NO / CLOSED are listed but un-ticked. Tick / untick clients as needed.</div>
       <div class="table-scroll" style="margin-top:12px;max-width:1100px;max-height:420px;" id="itr-import-table"></div>
       <div class="small-note" id="itr-import-summary" style="margin-top:8px;"></div>
       <button class="secondary" id="itr-import-load-btn" style="margin-top:8px;">Preview the ITR 2025 import</button>
@@ -4640,7 +4640,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const r = String(remark||'').trim(), u = r.toUpperCase();
     const md = (r.match(/(\d{1,2}\/\d{1,2})/)||[])[1] || '';
     const by = (u.match(/^DONE BY\s+([A-Z][A-Z .]*?)\s*(?:\d{1,2}\/\d{1,2}|$)/)||[])[1] || '';
-    if(/^PAID\b/.test(u)) return {status:'DONE', paid:true, payDate:md, doneDate:'', doneBy:''};
+    if(/^PAID\b/.test(u)) return {status:'DONE', paid:true, payDate:md, doneDate:md, doneBy:''};   // Paid -> Done, same date as the payment date
     if(/^DONE\b/.test(u)) return {status:'DONE', paid:false, doneDate:md, doneBy:by.trim(), payDate:''};
     if(/^ITR DONE\b/.test(u) || /DELIVERED VIA LALAMOVE/.test(u)) return {status:'DONE', paid:false, doneDate:'', doneBy:'', payDate:''};
     return {status:'PENDING', paid:false, doneDate:'', doneBy:'', payDate:''};
@@ -4682,7 +4682,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       payment_status: cls.paid ? 'PAID' : null, payment_date: cls.payDate || null};
     if(!t){ Object.assign(patch, want); patch.status = cls.status; return patch; }
     if(empty(t.taxDue) && want.tax_due!==null && want.tax_due!==undefined) patch.tax_due = want.tax_due;
-    if(empty(t.notes) && want.notes) patch.notes = want.notes;
+    // every remark of the list ends up in Notes: empty notes get it, notes staff already typed keep their text and the remark is appended (once)
+    if(want.notes){
+      if(empty(t.notes)) patch.notes = want.notes;
+      else if(!String(t.notes).includes(want.notes)) patch.notes = String(t.notes).trim() + ' | ' + want.notes;
+    }
     if(empty(t.doneBy) && want.done_by) patch.done_by = want.done_by;
     if(empty(t.doneDate) && want.done_date) patch.done_date = want.done_date;
     if(empty(t.paymentStatus) && want.payment_status) patch.payment_status = want.payment_status;
