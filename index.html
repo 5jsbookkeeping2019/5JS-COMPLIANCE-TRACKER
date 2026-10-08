@@ -576,6 +576,8 @@
             <option value="">Default order</option>
             <option value="client_id">Sort: Client ID</option>
             <option value="name">Sort: Business Name</option>
+            <option value="bk_old">Sort: Bookkeeping start — oldest first</option>
+            <option value="bk_new">Sort: Bookkeeping start — newest first</option>
           </select>
           <button class="secondary" id="add-client-btn">+ Add client manually</button>
         </div>
@@ -3505,6 +3507,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       filtered.sort((a,b)=> String(a['CLIENT ID NO.']||'').localeCompare(String(b['CLIENT ID NO.']||''), undefined, {numeric:true, sensitivity:'base'}));
     } else if(regSortMode === 'name'){
       filtered.sort((a,b)=> String(a.NAME||'').localeCompare(String(b.NAME||''), undefined, {sensitivity:'base'}));
+    } else if(regSortMode === 'bk_old' || regSortMode === 'bk_new'){
+      // Bookkeeping start date (ISO or free text); clients with no / unreadable date always go FIRST
+      const bkTime = c=>{ const raw = String(c['BOOKKEEPING DATE']||'').trim(); if(!raw) return null; const t = Date.parse(/^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0,10) : raw); return isNaN(t) ? null : t; };
+      const dir = regSortMode === 'bk_old' ? 1 : -1;
+      filtered.sort((a,b)=>{
+        const x = bkTime(a), y = bkTime(b);
+        if(x===null && y===null) return String(a['CLIENT ID NO.']||'').localeCompare(String(b['CLIENT ID NO.']||''), undefined, {numeric:true});
+        if(x===null) return -1; if(y===null) return 1;   // no date -> listed first, so they can be filled in
+        return (x - y) * dir || String(a['CLIENT ID NO.']||'').localeCompare(String(b['CLIENT ID NO.']||''), undefined, {numeric:true});
+      });
     }
     const tableArea = document.getElementById('registry-table');
     if(clients.length === 0){
@@ -3558,16 +3570,42 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     toast('CSV downloaded');
   }
 
-  // Assigns the next sequential 5JS-#### code by scanning the client_id_no's
-  // already in use -- keeps working even if some clients were given custom
-  // (non-sequential) codes, since it only looks at the highest number seen.
+  // Assigns the next sequential 5JS-#### code: the highest plain 5JS-#### number in use + 1 (same digit width,
+  // at least 4). Branch IDs such as 5JS-0002-B7 and custom codes are ignored so they can't push the counter,
+  // and a code that is already taken is never handed out twice.
   function nextClientIdNo(){
-    let maxN = 0;
+    let maxN = 0, width = 4;
     clients.forEach(c=>{
-      const m = String(c['CLIENT ID NO.']||'').match(/(\d+)\s*$/);
-      if(m) maxN = Math.max(maxN, parseInt(m[1],10));
+      const m = String(c['CLIENT ID NO.']||'').trim().match(/^5JS-(\d+)$/i);
+      if(m){ maxN = Math.max(maxN, parseInt(m[1],10)); width = Math.max(width, m[1].length); }
     });
-    return '5JS-' + String(maxN+1).padStart(4,'0');
+    let n = maxN + 1, id;
+    do { id = '5JS-' + String(n++).padStart(width,'0'); } while(findClientByIdNo(id));
+    return id;
+  }
+  // Everything a brand-new Registry client needs before it is saved: a Client ID that continues from the latest
+  // one (blank, or already taken by someone else meanwhile -> next free number) and, when no Forms were ticked,
+  // a starting Forms list from Tax Type / Classification / registered withholding (staff can still edit it later).
+  function finalizeNewClientRec(rec, suggestedId){
+    const idNow = String(rec['CLIENT ID NO.']||'').trim();
+    const taken = idNow && clients.some(x=>x._id!==rec._id && String(x['CLIENT ID NO.']||'').trim().toUpperCase() === idNow.toUpperCase());
+    if(!idNow || (taken && idNow === suggestedId)){
+      rec['CLIENT ID NO.'] = nextClientIdNo();
+      toast('Client ID set to ' + rec['CLIENT ID NO.'] + ' (next free number).');
+    }
+    if(!String(rec.FORMS||'').trim()){
+      const f = deriveFormsFromRegisteredTypes(rec);
+      if(f) rec.FORMS = f;
+    }
+  }
+  // After a new client is saved: Sales Summary row (this year) + Task Tracker / Filing Calendar tasks (upcoming due dates).
+  async function afterNewClientSaved(rec){
+    await ensureSalesSummaryRowForClient(rec);
+    const st = String(rec['CLIENT?']||'').trim().toUpperCase();
+    if(st !== 'NO' && st !== 'CLOSED'){
+      const made = await createMissingTasksFor(clientById[rec._id] || rec, 'upcoming');
+      if(made) toast(`${made} task(s) ${rec.NAME? 'for '+rec.NAME+' ':''}added to the Task Tracker / Filing Calendar.`);
+    }
   }
   // Case/whitespace-insensitive lookup of a client by their Client ID No. --
   // this is what lets Sales Summary (and eventually other tabs) resolve a
@@ -4314,6 +4352,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       rec.FORMS = readFormsGrid(root);
       delete rec.FORMS_OTHER;
       if(!rec.NAME){ toast('Client Name is required'); return; }
+      if(isNew) finalizeNewClientRec(rec, c['CLIENT ID NO.']);
       const diff = computeClientDiff(before, rec);
       if(!isNew && diff.length){
         // Specifically flag any field that USED to have a value and is now
@@ -4342,7 +4381,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(isNew){
         clients.push(rec);
         clientById[rec._id] = rec;
-        await ensureSalesSummaryRowForClient(rec);
+        await afterNewClientSaved(rec);
       } else {
         Object.assign(c, rec);
         if(diff.length) await logClientAudit('update', clientId, before, rec, diff);
@@ -4352,7 +4391,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const statusUpper = String(rec['CLIENT?']||'').trim().toUpperCase();
       // a new client (or a Forms list filled in later) gets its upcoming tasks right away
       // (only when the client has no tasks at all yet, so editing an existing client can never create look-alike duplicates)
-      if(statusUpper !== 'NO' && statusUpper !== 'CLOSED' && !tasks.some(t=>t.clientId===rec._id)){
+      if(!isNew && statusUpper !== 'NO' && statusUpper !== 'CLOSED' && !tasks.some(t=>t.clientId===rec._id)){
         const made = await createMissingTasksFor(clientById[rec._id] || rec, 'upcoming');
         if(made){ toast(`${made} task(s) ${rec.NAME? 'for '+rec.NAME+' ':''}added to the Task Tracker / Filing Calendar.`); renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'registry'); }
       }
@@ -4717,6 +4756,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       rec.FORMS = readFormsGrid(area);
       delete rec.FORMS_OTHER;
       if(!rec.NAME){ toast('Client Name is required'); return; }
+      finalizeNewClientRec(rec, d['CLIENT ID NO.']);
       saveBtn.disabled = true;
       const dbRow = clientAppKeysToDbRow(rec, CLIENT_FIELDS.map(f=>f[0]));
       dbRow.id = rec._id;
@@ -4731,8 +4771,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       }
       clients.push(rec);
       clientById[rec._id] = rec;
-      await ensureSalesSummaryRowForClient(rec);
       toast('Added to Client Registry.');
+      await afterNewClientSaved(rec);
       area.innerHTML=''; document.getElementById('preview-area').innerHTML=''; fileInput.value='';
       initRegistryFilters(); initReportFilters();
     });
