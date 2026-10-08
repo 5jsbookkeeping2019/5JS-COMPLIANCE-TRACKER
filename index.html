@@ -641,7 +641,7 @@
           </select>
           <button class="secondary" id="sales-locks-btn" title="Finished quarters are locked automatically so nothing in them can be edited by mistake. Open this to lock a quarter right after it's filed, or unlock one (e.g. an amended return).">🔒 Quarter locks</button>
           <button class="secondary" id="add-sales-year-btn">+ Add New Year</button>
-          <button class="secondary" id="sales-sync-tasks-btn" title="Fills the Tax Due of the matching 2551Q / 2550Q / 1701Q / 1702Q tasks in the Task Tracker from this tab. Only EMPTY task Tax Due cells are filled; figures already typed in the Task Tracker are never overwritten.">Sync Tax Due → Task Tracker</button>
+          <button class="secondary" id="sales-sync-tasks-btn" title="Fills the Tax Due of the matching 2551Q / 2550Q / 1701Q / 1702Q tasks — and the annual 1701 / 1702 task (1701 Due; 1701 Remarks → Done by / date / Done) — in the Task Tracker from this tab. Only EMPTY task Tax Due cells are filled; figures already typed in the Task Tracker are never overwritten.">Sync Tax Due → Task Tracker</button>
         </div>
         <div class="toolbar-right">
           <span class="small-note" id="sales-count" style="margin:0;"></span>
@@ -1822,6 +1822,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const zero = isZeroStatusRow(rec);
     const vws = (normalizeTaxType(rec.tax_type)==='VAT' && rec.client_id_no) ? vatWsFor(rec.client_id_no, rec.year) : null;
     const vcalc = vws ? vatYearCalc(vws) : null;
+    // Annual 1701 / 1702 Tax Due (goes to the annual task of that tax year)
+    if(!(rec.annual_1701_tax_due===null || rec.annual_1701_tax_due===undefined || rec.annual_1701_tax_due==='') && !isNaN(Number(rec.annual_1701_tax_due))) out.annual_1701_tax_due = Number(rec.annual_1701_tax_due);
     for(let q=1;q<=4;q++){
       const ptKey = 'q'+q+'_pt_tax_due', itKey = 'q'+q+'_it_tax_due';
       const hasSales = rec['q'+q+'_sales'] !== null && rec['q'+q+'_sales'] !== undefined && rec['q'+q+'_sales'] !== '';
@@ -1838,6 +1840,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return out;
   }
   const SALES_TAXDUE_FORMS = {pt:['2551Q','2550Q'], it:['1701Q','1702Q']};
+  const SALES_ANNUAL_FORMS = ['1701','1701A','1702'];
   // Tasks that should pick up a Sales Summary row's Tax Due. A task's Tax
   // Due is only touched when it is EMPTY, or when it still equals the value
   // the Sales Summary had before this edit (so it keeps following) -- a
@@ -1848,9 +1851,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const cur = salesTaxDueMap(rec), plan = [];
     Object.keys(cur).forEach(key=>{
       const m = /^q([1-4])_(pt|it)_tax_due$/.exec(key);
-      const period = 'Q'+m[1]+' '+rec.year, v = cur[key];
+      const annual = key === 'annual_1701_tax_due';
+      const period = annual ? '' : 'Q'+m[1]+' '+rec.year, v = cur[key];
       tasks.forEach(t=>{
-        if(t.clientId !== client._id || t.period !== period || !SALES_TAXDUE_FORMS[m[2]].includes(t.form)) return;
+        if(t.clientId !== client._id) return;
+        if(annual ? !(SALES_ANNUAL_FORMS.includes(String(t.form).toUpperCase()) && String(t.period||'').startsWith('TY '+rec.year)) : (t.period !== period || !SALES_TAXDUE_FORMS[m[2]].includes(t.form))) return;
         const tv = (t.taxDue===null || t.taxDue===undefined || t.taxDue==='') ? null : Number(t.taxDue);
         if(tv === v) return;
         const pv = prevMap && prevMap[key] !== undefined ? prevMap[key] : undefined;
@@ -1881,38 +1886,48 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // fields are filled -- or ones that still hold what this cell had before this
   // edit (so a correction keeps following); a Done by someone typed in the Task
   // Tracker is never overwritten. Status is NOT changed; N/A tasks are skipped.
-  async function syncSalesDoneByToTasks(rec, key, newVal, prevVal){
-    // Annual 1701 / 1702 remarks -> the annual return task (period "TY <year> (filed <year+1>)").
+  // What the Sales Summary remark ("Done by" cell) would put on the matching tasks -- pure, nothing is saved here.
+  // Annual 1701 Remarks that start with DONE / PAID also mark the annual task Done.
+  function salesDoneByPlan(rec, key, newVal, prevVal){
     const m = /^q([1-4])_(pt|it)_remarks$/.exec(key) || (key==='annual_1701_remarks' ? [key,'','annual'] : null);
-    if(!m || !rec.client_id_no) return 0;
+    if(!m || !rec.client_id_no) return [];
     const raw = String(newVal||'').trim();
-    if(!raw) return 0;
+    if(!raw) return [];
     const client = findClientByIdNo(rec.client_id_no);
-    if(!client) return 0;
-    const dm = /^(.*?)[\s,\-]*(\d{1,2}\/\d{1,2})$/.exec(raw);
-    const who = (dm ? dm[1] : raw).trim(), when = dm ? dm[2] : '';
-    if(!who) return 0;
-    const prevRaw = String(prevVal||'').trim();
-    const pm = prevRaw ? /^(.*?)[\s,\-]*(\d{1,2}\/\d{1,2})$/.exec(prevRaw) : null;
-    const prevWho = pm ? pm[1].trim() : prevRaw, prevWhen = pm ? pm[2] : '';
+    if(!client) return [];
+    // status wording such as "FOR PAYMENT" / "FOR PRINT" / "READY FOR PICK UP" is a remark, not the name of who did it
+    const STATUS_WORDS = /\b(FOR|WAIT\w*|READY|NEED\w*|PICK\w*|SEND|SENT|PAPAGAWA|DELIVER\w*|PRINT\w*|PAYMENT|APPROVAL|DRAFT|CLIENT|REFUND|ESUB|ABONO)\b/i;
+    const split = txt => { const dm = /^(.*?)[\s,\-]*(\d{1,2}\/\d{1,2})$/.exec(txt); let who = (dm ? dm[1] : txt).replace(/^\s*(done\s*by|done|paid)\b[\s:.-]*/i,'').trim(); if(STATUS_WORDS.test(who)) who = ''; return {who, when: dm ? dm[2] : ''}; };
+    const cur = split(raw), prev = split(String(prevVal||'').trim());
     const isAnnual = m[2]==='annual';
+    const markDone = isAnnual && /^\s*(done|paid)\b/i.test(raw);
+    if(!cur.who && !cur.when && !markDone) return [];
     const period = isAnnual ? '' : 'Q'+m[1]+' '+rec.year;
-    const annualPrefix = 'TY '+rec.year;
-    let n = 0;
+    const out = [];
     for(const t of tasks){
       if(t.clientId !== client._id || t.status==='NA') continue;
-      if(isAnnual ? !(['1701','1701A','1702'].includes(String(t.form).toUpperCase()) && String(t.period||'').startsWith(annualPrefix)) : (t.period !== period || !SALES_TAXDUE_FORMS[m[2]].includes(t.form))) continue;
+      if(isAnnual ? !(SALES_ANNUAL_FORMS.includes(String(t.form).toUpperCase()) && String(t.period||'').startsWith('TY '+rec.year)) : (t.period !== period || !SALES_TAXDUE_FORMS[m[2]].includes(t.form))) continue;
       const patch = {}, olds = {};
-      if(!t.doneBy || (prevWho && t.doneBy===prevWho)){ if(t.doneBy!==who){ olds.done_by=t.doneBy; patch.done_by=who; } }
-      if(when && (!t.doneDate || (prevWhen && t.doneDate===prevWhen)) && t.doneDate!==when){ olds.done_date=t.doneDate; patch.done_date=when; }
-      if(!Object.keys(patch).length) continue;
+      if(cur.who && (!t.doneBy || (prev.who && t.doneBy===prev.who)) && t.doneBy!==cur.who){ olds.done_by=t.doneBy; patch.done_by=cur.who; }
+      if(cur.when && (!t.doneDate || (prev.when && t.doneDate===prev.when)) && t.doneDate!==cur.when){ olds.done_date=t.doneDate; patch.done_date=cur.when; }
+      if(markDone && t.status==='PENDING'){ olds.status=t.status; patch.status='DONE'; }
+      if(Object.keys(patch).length) out.push({t, patch, olds});
+    }
+    return out;
+  }
+  async function syncSalesDoneByToTasks(rec, key, newVal, prevVal){
+    const plan = salesDoneByPlan(rec, key, newVal, prevVal);
+    let n = 0;
+    for(const {t, patch, olds} of plan){
       const { error } = await sb.from('cor_tasks').update(patch).eq('id', t.id);
       if(error){ console.error(error); toast('Warning: a task\'s Done by could not be updated from the Sales Summary — please try again.'); continue; }
       if('done_by' in patch) t.doneBy = patch.done_by;
       if('done_date' in patch) t.doneDate = patch.done_date;
+      if('status' in patch) t.status = patch.status;
       n++;
       if('done_by' in patch) logFieldAudit('cor_tasks_audit','record_id',t.id,'done_by','Done by (from Sales Summary)',olds.done_by||null,patch.done_by);
       if('done_date' in patch) logFieldAudit('cor_tasks_audit','record_id',t.id,'done_date','Done date (from Sales Summary)',olds.done_date||null,patch.done_date);
+      if('status' in patch) logFieldAudit('cor_tasks_audit','record_id',t.id,'status','Status (from Sales Summary 1701 Remarks)',olds.status,patch.status);
     }
     if(n && document.querySelector('.tab-btn.active').dataset.tab === 'tracker') renderTracker();
     return n;
@@ -5150,13 +5165,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   document.getElementById('sales-sync-tasks-btn').addEventListener('click', async ()=>{
     const btn = document.getElementById('sales-sync-tasks-btn');
     const total = salesSummary.reduce((n,r)=> n + planSalesTaxDueToTasks(r, null).length, 0);
-    if(!total){ toast('Task Tracker already has every Tax Due from the Sales Summary (nothing empty to fill).'); return; }
-    if(!confirm(`Fill the Tax Due of ${total} Task Tracker task(s) from the Sales Summary? Only empty Tax Due cells are filled — anything already typed in the Task Tracker is left alone.`)) return;
+    const totalDone = salesSummary.reduce((n,r)=> n + salesDoneByPlan(r, 'annual_1701_remarks', r.annual_1701_remarks, null).length, 0);
+    if(!total && !totalDone){ toast('Task Tracker already has every Tax Due and annual 1701 Done from the Sales Summary (nothing empty to fill).'); return; }
+    if(!confirm(`Fill ${total} Task Tracker Tax Due cell(s) and update ${totalDone} annual 1701 / 1702 task(s) (Done by / date / Done) from the Sales Summary? Only empty cells are filled — anything already typed in the Task Tracker is left alone.`)) return;
     btn.disabled = true;
-    let n = 0;
-    for(const r of salesSummary) n += await syncSalesTaxDueToTasks(r, null);
+    let n = 0, d = 0;
+    for(const r of salesSummary){ n += await syncSalesTaxDueToTasks(r, null); d += await syncSalesDoneByToTasks(r, 'annual_1701_remarks', r.annual_1701_remarks, null); }
     btn.disabled = false;
-    toast(`Tax Due filled on ${n} Task Tracker task(s).`);
+    toast(`Tax Due filled on ${n} task(s); annual 1701 Done updated on ${d} task(s).`);
   });
   function salesHighlightQuarter(){
     const v = salesQuarterHl.value;
