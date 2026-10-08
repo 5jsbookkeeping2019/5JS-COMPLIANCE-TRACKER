@@ -850,6 +850,12 @@
       <div class="table-scroll" style="margin-top:12px;max-width:900px;max-height:320px;" id="restore-na-table"></div>
       <div class="small-note" id="restore-na-summary" style="margin-top:8px;"></div>
       <button class="secondary" id="restore-na-apply-btn" style="margin-top:8px;" disabled>Restore to Pending</button>
+      <h3 style="margin-top:30px;">Create Missing Tasks (Task Tracker / Filing Calendar)</h3>
+      <div class="small-note">The Task Tracker and the Filing Calendar only show tasks that exist. A client added to the Registry gets its tasks automatically for the <b>upcoming</b> due dates when saved; use this tool for the rest (e.g. a client that was in the Registry and Sales Summary but never got tasks, or a Forms list that was filled in later). It creates, from the client's <b>Forms</b> list and the filing calendar, every task the client doesn't have yet — nothing existing is changed. Clients with status NO / CLOSED are skipped, and so are due dates after an End of Service Date.</div>
+      <div class="filter-row" style="margin-top:8px;"><select class="filter" id="missing-tasks-scope"><option value="all">All periods in the calendar (same as other clients)</option><option value="upcoming">Only due dates from today onwards</option></select></div>
+      <div class="table-scroll" style="margin-top:12px;max-width:900px;max-height:320px;" id="missing-tasks-table"></div>
+      <div class="small-note" id="missing-tasks-summary" style="margin-top:8px;"></div>
+      <button class="secondary" id="missing-tasks-apply-btn" style="margin-top:8px;" disabled>Create missing tasks</button>
       <h3 style="margin-top:30px;">Branch Tag vs. Client Registry Audit</h3>
       <div class="small-note">"Branch" on a Sales Summary row's Tax Type or Tax Option is just a free label on that row — it's a completely separate thing from the Client Registry's own "Registering Office" + "Main Client ID" fields, which is what the Branch Client ID Numbering tool above actually reads to assign a 5JS-0001-B1-style Client ID. The two don't talk to each other, so it's easy for them to drift apart. This lists every Sales Summary row tagged Branch (Tax Type and/or Tax Option) whose Client Registry entry ISN'T set up to match — Registering Office isn't Branch, Main Client ID is blank, or the Client ID hasn't been renumbered yet — read-only, for manual review (fix each one in the Client Registry or Settings tools above, whichever is actually correct for that client).</div>
       <div class="table-scroll" style="margin-top:12px;max-width:900px;" id="branch-audit-table"></div>
@@ -2944,7 +2950,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(tab === 'tax2307') renderEntries2307();
     if(tab === 'sawt') renderSawt();
     if(tab === 'report') renderReport();
-    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderZeroStatusTool(); renderRestoreNATool(); renderCredsAccessLog(); }
+    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderZeroStatusTool(); renderRestoreNATool(); renderMissingTasksTool(); renderCredsAccessLog(); }
   }
 
   // Jumps to another tab programmatically (reuses the same click handler
@@ -4344,6 +4350,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       closeModal(); renderRegistry(); initRegistryFilters(); initReportFilters();
       toast(isNew? 'Added to registry.' : 'Updated.');
       const statusUpper = String(rec['CLIENT?']||'').trim().toUpperCase();
+      // a new client (or a Forms list filled in later) gets its upcoming tasks right away
+      // (only when the client has no tasks at all yet, so editing an existing client can never create look-alike duplicates)
+      if(statusUpper !== 'NO' && statusUpper !== 'CLOSED' && !tasks.some(t=>t.clientId===rec._id)){
+        const made = await createMissingTasksFor(clientById[rec._id] || rec, 'upcoming');
+        if(made){ toast(`${made} task(s) ${rec.NAME? 'for '+rec.NAME+' ':''}added to the Task Tracker / Filing Calendar.`); renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'registry'); }
+      }
       if(statusUpper === 'NO' || statusUpper === 'CLOSED'){
         await applyInactiveClientNA(rec._id, rec['CLIENT?'], rec.NAME);
       } else {
@@ -4400,6 +4412,74 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     affected.forEach(t=>{ logFieldAudit('cor_tasks_audit','record_id', t.id, 'status', 'Status (restored: client active again)', 'NA', 'PENDING'); t.status = 'PENDING'; t.notes = ''; });
     return affected.length;
   }
+  // ---- Missing tasks: the app only ever read pre-generated tasks, so a client added later (or whose Forms list
+  // was filled in later) had nothing in the Task Tracker / Filing Calendar. Build the tasks from the client's
+  // Forms + the filing calendar (CALENDAR_REF). Existing tasks (any status) are never touched or duplicated.
+  function missingTasksFor(client, scope){
+    if(!client) return {list:[], formsBlank:false};
+    const st = String(client['CLIENT?']||'').trim().toUpperCase();
+    if(st === 'NO' || st === 'CLOSED') return {list:[], formsBlank:false};
+    const forms = new Set(parseFormsCsv(client.FORMS).map(f=>f.toUpperCase()));
+    if(!forms.size) return {list:[], formsBlank:true};
+    if(forms.has('1701A')) forms.add('1701');
+    const end = String(client['END OF SERVICE DATE']||'').trim();
+    const today = new Date().toISOString().slice(0,10);
+    const have = new Set(tasks.filter(t=>t.clientId===client._id).map(t=>String(t.form).toUpperCase()+'|'+t.period));
+    const list = CALENDAR_REF.filter(r=>
+      forms.has(String(r.form).toUpperCase()) && r.due_date && !have.has(String(r.form).toUpperCase()+'|'+r.period) &&
+      (!end || r.due_date <= end) && (scope !== 'upcoming' || r.due_date >= today));
+    return {list, formsBlank:false};
+  }
+  async function createMissingTasksFor(client, scope){
+    const {list} = missingTasksFor(client, scope);
+    if(!list.length) return 0;
+    const rows = list.map(r=>({client_id: client._id, form: r.form, frequency: r.frequency, period: r.period, due_date: r.due_date, status:'PENDING'}));
+    let created = 0;
+    for(let i=0;i<rows.length;i+=100){
+      const { data, error } = await sb.from('cor_tasks').insert(rows.slice(i,i+100)).select();
+      if(error){ console.error(error); toast('Warning: the tasks could not be created in the Task Tracker (' + (error.message||'unknown error') + ').'); break; }
+      (data||[]).forEach(row=>{
+        const mapped = mapTaskFromDb(row);
+        if(!tasks.some(x=>x.id===mapped.id)) tasks.push(mapped);
+        logFieldAudit('cor_tasks_audit','record_id',mapped.id,'status','Task created (missing — from Forms + filing calendar)',null,'PENDING');
+        created++;
+      });
+    }
+    return created;
+  }
+  function renderMissingTasksTool(){
+    const area = document.getElementById('missing-tasks-table');
+    if(!area) return;
+    const summary = document.getElementById('missing-tasks-summary'), btn = document.getElementById('missing-tasks-apply-btn');
+    const scope = document.getElementById('missing-tasks-scope').value;
+    const res = clients.map(c=>({c, ...missingTasksFor(c, scope)}));
+    const plans = res.filter(p=>p.list.length);
+    const blanks = res.filter(p=>p.formsBlank && !/^(NO|CLOSED)$/.test(String(p.c['CLIENT?']||'').trim().toUpperCase()));
+    let h = '';
+    if(plans.length){
+      h += `<table><thead><tr><th>Client ID</th><th>Client</th><th>Status</th><th>Forms</th><th>Missing tasks</th></tr></thead><tbody>${plans.map(p=>`<tr><td class="mono">${esc(p.c['CLIENT ID NO.']||'')}</td><td>${esc(p.c.NAME||'')}</td><td>${esc(p.c['CLIENT?']||'')}</td><td>${esc(p.c.FORMS||'')}</td><td class="num">${p.list.length}</td></tr>`).join('')}</tbody></table>`;
+    } else h += '<div class="small-note">No client is missing tasks for the selected periods.</div>';
+    if(blanks.length) h += `<div class="small-note" style="margin-top:10px;color:var(--rust,#b3402a);"><b>${blanks.length} active client(s) have an empty Forms list</b>, so no tasks can be made for them: ${esc(blanks.slice(0,40).map(p=>p.c.NAME||p.c['CLIENT ID NO.']).join('; '))}${blanks.length>40?' …':''}. Open them in the Client Registry and use “Auto-fill Forms”.</div>`;
+    area.innerHTML = h;
+    const n = plans.reduce((a,p)=>a+p.list.length,0);
+    summary.textContent = plans.length ? `${n} task(s) will be created for ${plans.length} client(s).` : '';
+    btn.disabled = !plans.length;
+  }
+  document.getElementById('missing-tasks-scope').addEventListener('change', renderMissingTasksTool);
+  document.getElementById('missing-tasks-apply-btn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('missing-tasks-apply-btn');
+    const scope = document.getElementById('missing-tasks-scope').value;
+    const plans = clients.map(c=>({c, list: missingTasksFor(c, scope).list})).filter(p=>p.list.length);
+    if(!plans.length) return;
+    const n = plans.reduce((a,p)=>a+p.list.length,0);
+    if(!confirm(`Create ${n} missing task(s) for ${plans.length} client(s)?`)) return;
+    btn.disabled = true;
+    let done = 0;
+    for(const p of plans) done += await createMissingTasksFor(p.c, scope);
+    toast(`${done} task(s) created.`);
+    renderMissingTasksTool();
+    renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
+  });
   function renderRestoreNATool(){
     const area = document.getElementById('restore-na-table');
     const summary = document.getElementById('restore-na-summary');
