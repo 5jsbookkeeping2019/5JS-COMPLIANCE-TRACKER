@@ -853,11 +853,17 @@
       <div class="small-note" id="restore-na-summary" style="margin-top:8px;"></div>
       <button class="secondary" id="restore-na-apply-btn" style="margin-top:8px;" disabled>Restore to Pending</button>
       <h3 style="margin-top:30px;">Create Missing Tasks (Task Tracker / Filing Calendar)</h3>
-      <div class="small-note">The Task Tracker and the Filing Calendar only show tasks that exist. A client added to the Registry gets its tasks automatically for the <b>upcoming</b> due dates when saved; use this tool for the rest (e.g. a client that was in the Registry and Sales Summary but never got tasks, or a Forms list that was filled in later). It creates, from the client's <b>Forms</b> list and the filing calendar, every task the client doesn't have yet — nothing existing is changed. Clients with status NO / CLOSED are skipped, and so are due dates after an End of Service Date.</div>
-      <div class="filter-row" style="margin-top:8px;"><select class="filter" id="missing-tasks-scope"><option value="all">All periods in the calendar (same as other clients)</option><option value="upcoming">Only due dates from today onwards</option></select></div>
+      <div class="small-note">The Task Tracker and the Filing Calendar only show tasks that exist. A client added to the Registry gets its tasks automatically for the <b>upcoming</b> due dates when saved; use this tool for the rest (e.g. a client that was in the Registry and Sales Summary but never got tasks, or a Forms list that was filled in later). It creates, from the client's <b>Forms</b> list and the filing calendar, every task the client doesn't have yet — nothing existing is changed. Clients with status NO / CLOSED and Branch clients are skipped; filings due before the client&rsquo;s Bookkeeping start date (or before today when that date is blank) and after an End of Service Date are not created.</div>
+      <div class="filter-row" style="margin-top:8px;"><select class="filter" id="missing-tasks-scope"><option value="smart">From the client&rsquo;s Bookkeeping start date (from today if blank)</option><option value="upcoming">Only due dates from today onwards</option></select></div>
       <div class="table-scroll" style="margin-top:12px;max-width:900px;max-height:320px;" id="missing-tasks-table"></div>
       <div class="small-note" id="missing-tasks-summary" style="margin-top:8px;"></div>
       <button class="secondary" id="missing-tasks-apply-btn" style="margin-top:8px;" disabled>Create missing tasks</button>
+      <h3 style="margin-top:30px;">Undo Created Tasks (backward filings / branches)</h3>
+      <div class="small-note">Lists tasks made by “Create Missing Tasks” (or by a new client being saved) that still have <b>nothing typed on them</b> (Pending, no Done by / date, notes, Tax Due, payment, stage or assignee) and should not exist: filings <b>due before the client&rsquo;s Bookkeeping start date</b> (or before today when that date is blank), and every such task of a <b>Branch</b> client. Tasks you already worked on, and the upcoming ones, are never listed. Removing is permanent (it is written to the history).</div>
+      <div class="table-scroll" style="margin-top:12px;max-width:900px;max-height:320px;" id="undo-tasks-table"></div>
+      <div class="small-note" id="undo-tasks-summary" style="margin-top:8px;"></div>
+      <button class="secondary" id="undo-tasks-load-btn" style="margin-top:8px;">Check which tasks can be removed</button>
+      <button class="secondary" id="undo-tasks-apply-btn" style="margin-top:8px;" disabled>Remove these tasks</button>
       <h3 style="margin-top:30px;">Branch Tag vs. Client Registry Audit</h3>
       <div class="small-note">"Branch" on a Sales Summary row's Tax Type or Tax Option is just a free label on that row — it's a completely separate thing from the Client Registry's own "Registering Office" + "Main Client ID" fields, which is what the Branch Client ID Numbering tool above actually reads to assign a 5JS-0001-B1-style Client ID. The two don't talk to each other, so it's easy for them to drift apart. This lists every Sales Summary row tagged Branch (Tax Type and/or Tax Option) whose Client Registry entry ISN'T set up to match — Registering Office isn't Branch, Main Client ID is blank, or the Client ID hasn't been renumbered yet — read-only, for manual review (fix each one in the Client Registry or Settings tools above, whichever is actually correct for that client).</div>
       <div class="table-scroll" style="margin-top:12px;max-width:900px;" id="branch-audit-table"></div>
@@ -4454,19 +4460,33 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // ---- Missing tasks: the app only ever read pre-generated tasks, so a client added later (or whose Forms list
   // was filled in later) had nothing in the Task Tracker / Filing Calendar. Build the tasks from the client's
   // Forms + the filing calendar (CALENDAR_REF). Existing tasks (any status) are never touched or duplicated.
+  // A client's Bookkeeping start date as 'YYYY-MM-DD' (ISO or free text), or '' when blank / unreadable.
+  function clientBookkeepingIso(client){
+    const raw = String(client['BOOKKEEPING DATE']||'').trim();
+    if(!raw) return '';
+    if(/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0,10);
+    const t = Date.parse(raw);
+    return isNaN(t) ? '' : new Date(t - new Date(t).getTimezoneOffset()*60000).toISOString().slice(0,10);
+  }
+  const clientIsBranch = c => String(c['REGISTERING OFFICE']||'').trim() === 'Branch';
+  // scope 'smart' (default): only filings due on/after the client's Bookkeeping start date -- a client we took on
+  // on Aug 20 has no earlier filings -- and, when that date is blank, only filings due from today. 'upcoming': due from today.
+  // Branches are skipped (they usually have no tasks of their own).
   function missingTasksFor(client, scope){
     if(!client) return {list:[], formsBlank:false};
     const st = String(client['CLIENT?']||'').trim().toUpperCase();
-    if(st === 'NO' || st === 'CLOSED') return {list:[], formsBlank:false};
+    if(st === 'NO' || st === 'CLOSED' || clientIsBranch(client)) return {list:[], formsBlank:false};
     const forms = new Set(parseFormsCsv(client.FORMS).map(f=>f.toUpperCase()));
     if(!forms.size) return {list:[], formsBlank:true};
     if(forms.has('1701A')) forms.add('1701');
     const end = String(client['END OF SERVICE DATE']||'').trim();
     const today = new Date().toISOString().slice(0,10);
+    const bk = clientBookkeepingIso(client);
+    const cutoff = scope === 'upcoming' ? today : (bk || today);
     const have = new Set(tasks.filter(t=>t.clientId===client._id).map(t=>String(t.form).toUpperCase()+'|'+t.period));
     const list = CALENDAR_REF.filter(r=>
       forms.has(String(r.form).toUpperCase()) && r.due_date && !have.has(String(r.form).toUpperCase()+'|'+r.period) &&
-      (!end || r.due_date <= end) && (scope !== 'upcoming' || r.due_date >= today));
+      (!end || r.due_date <= end) && r.due_date >= cutoff);
     return {list, formsBlank:false};
   }
   async function createMissingTasksFor(client, scope){
@@ -4516,6 +4536,67 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     let done = 0;
     for(const p of plans) done += await createMissingTasksFor(p.c, scope);
     toast(`${done} task(s) created.`);
+    renderMissingTasksTool();
+    renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
+  });
+  // ---- Undo for tasks made by createMissingTasksFor: they are recognised by their audit entry
+  // ("Task created (missing ...") and only offered while still completely untouched.
+  const TASK_CREATED_AUDIT_RE = /^Task created \(missing/;
+  let undoTaskPlan = [];
+  const taskIsUntouched = t => t.status==='PENDING' && !t.doneBy && !t.doneDate && !String(t.notes||'').trim() && (t.taxDue===null||t.taxDue===undefined||t.taxDue==='')
+    && (t.sales===null||t.sales===undefined) && !t.paymentStatus && !t.paymentDate && !t.liaison && !t.stage && !t.assignedTo && !t.proofPath;
+  async function loadUndoTaskPlan(){
+    const ids = new Set();
+    for(let from=0; from<10000; from+=1000){
+      const { data, error } = await sb.from('cor_tasks_audit').select('record_id, changes').order('changed_at', {ascending:false}).range(from, from+999);
+      if(error){ console.error(error); toast('Could not read the task history — please try again.'); return null; }
+      (data||[]).forEach(r=>{ if(Array.isArray(r.changes) && r.changes.some(c=>c && TASK_CREATED_AUDIT_RE.test(String(c.label||'')))) ids.add(r.record_id); });
+      if(!data || data.length < 1000) break;
+    }
+    const today = new Date().toISOString().slice(0,10);
+    const plan = [];
+    tasks.forEach(t=>{
+      if(!ids.has(t.id) || !taskIsUntouched(t)) return;
+      const c = taskClient(t); if(!c) return;
+      const branch = clientIsBranch(c), bk = clientBookkeepingIso(c);
+      const backward = t.due < (bk || today);
+      if(branch || backward) plan.push({t, c, why: branch ? 'Branch client' : (bk ? 'Due before Bookkeeping start '+bk : 'Past due, no Bookkeeping start date')});
+    });
+    return plan;
+  }
+  function renderUndoTaskPlan(){
+    const area = document.getElementById('undo-tasks-table'), summary = document.getElementById('undo-tasks-summary'), btn = document.getElementById('undo-tasks-apply-btn');
+    if(!undoTaskPlan.length){ area.innerHTML = '<div class="small-note">Nothing to remove.</div>'; summary.textContent=''; btn.disabled = true; return; }
+    const byClient = new Map();
+    undoTaskPlan.forEach(p=>{ const k = p.c._id; if(!byClient.has(k)) byClient.set(k, {c:p.c, list:[]}); byClient.get(k).list.push(p); });
+    area.innerHTML = `<table><thead><tr><th>Client ID</th><th>Client</th><th>Tasks to remove</th><th>Reason</th><th>e.g.</th></tr></thead><tbody>${[...byClient.values()].map(g=>`<tr><td class="mono">${esc(g.c['CLIENT ID NO.']||'')}</td><td>${esc(g.c.NAME||'')}</td><td class="num">${g.list.length}</td><td>${esc(g.list[0].why)}</td><td>${esc(g.list.slice(0,3).map(p=>p.t.form+' '+p.t.period).join(', '))}${g.list.length>3?' …':''}</td></tr>`).join('')}</tbody></table>`;
+    summary.textContent = `${undoTaskPlan.length} task(s) of ${byClient.size} client(s) will be removed.`;
+    btn.disabled = false;
+  }
+  document.getElementById('undo-tasks-load-btn').addEventListener('click', async ()=>{
+    const b = document.getElementById('undo-tasks-load-btn'); b.disabled = true;
+    const plan = await loadUndoTaskPlan(); b.disabled = false;
+    if(plan === null) return;
+    undoTaskPlan = plan; renderUndoTaskPlan();
+  });
+  document.getElementById('undo-tasks-apply-btn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('undo-tasks-apply-btn');
+    const plan = undoTaskPlan.filter(p=>tasks.includes(p.t) && taskIsUntouched(p.t));
+    if(!plan.length) return;
+    if(!confirm(`Remove ${plan.length} task(s)? This cannot be undone.`)) return;
+    btn.disabled = true;
+    const ids = plan.map(p=>p.t.id); let removed = new Set();
+    for(let i=0;i<ids.length;i+=100){
+      const chunk = ids.slice(i,i+100);
+      const { data, error } = await sb.from('cor_tasks').delete().in('id', chunk).select('id');
+      if(error){ console.error(error); toast('Could not remove the tasks (' + (error.message||'unknown error') + ').'); break; }
+      (data||[]).forEach(r=>removed.add(r.id));
+    }
+    plan.forEach(p=>{ if(removed.has(p.t.id)) logRowAudit('cor_tasks_audit','record_id',p.t.id,'delete',{form:p.t.form, period:p.t.period, due_date:p.t.due, client_id:p.t.clientId},null,[{field:'task', label:'Task removed (undo of created tasks)', old:p.t.form+' '+p.t.period, new:''}]); });
+    for(let i=tasks.length-1;i>=0;i--) if(removed.has(tasks[i].id)) tasks.splice(i,1);
+    if(removed.size < ids.length && removed.size === 0) toast('The database did not remove them — your account may not be allowed to delete tasks.');
+    else toast(`${removed.size} task(s) removed.`);
+    undoTaskPlan = undoTaskPlan.filter(p=>!removed.has(p.t.id)); renderUndoTaskPlan();
     renderMissingTasksTool();
     renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
   });
