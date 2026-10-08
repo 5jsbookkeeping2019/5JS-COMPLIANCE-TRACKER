@@ -4506,6 +4506,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
     return created;
   }
+  const missingUnchecked = new Set();   // client _ids the user un-ticked in "Create Missing Tasks"
   function renderMissingTasksTool(){
     const area = document.getElementById('missing-tasks-table');
     if(!area) return;
@@ -4513,25 +4514,36 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const scope = document.getElementById('missing-tasks-scope').value;
     const res = clients.map(c=>({c, ...missingTasksFor(c, scope)}));
     const plans = res.filter(p=>p.list.length);
-    const blanks = res.filter(p=>p.formsBlank && !/^(NO|CLOSED)$/.test(String(p.c['CLIENT?']||'').trim().toUpperCase()));
+    const blanks = res.filter(p=>p.formsBlank && !/^(NO|CLOSED)$/.test(String(p.c['CLIENT?']||'').trim().toUpperCase()) && !clientIsBranch(p.c));
     let h = '';
     if(plans.length){
-      h += `<table><thead><tr><th>Client ID</th><th>Client</th><th>Status</th><th>Forms</th><th>Missing tasks</th></tr></thead><tbody>${plans.map(p=>`<tr><td class="mono">${esc(p.c['CLIENT ID NO.']||'')}</td><td>${esc(p.c.NAME||'')}</td><td>${esc(p.c['CLIENT?']||'')}</td><td>${esc(p.c.FORMS||'')}</td><td class="num">${p.list.length}</td></tr>`).join('')}</tbody></table>`;
+      h += `<table><thead><tr><th style="width:34px;"><input type="checkbox" id="missing-tasks-all" title="Select / unselect all"${plans.every(p=>!missingUnchecked.has(p.c._id))?' checked':''}></th><th>Client ID</th><th>Client</th><th>Status</th><th>Forms</th><th>Missing tasks</th></tr></thead><tbody>${plans.map(p=>`<tr><td><input type="checkbox" class="missing-tasks-cb" data-cid="${esc(p.c._id)}"${missingUnchecked.has(p.c._id)?'':' checked'}></td><td class="mono">${esc(p.c['CLIENT ID NO.']||'')}</td><td>${esc(p.c.NAME||'')}</td><td>${esc(p.c['CLIENT?']||'')}</td><td>${esc(p.c.FORMS||'')}</td><td class="num">${p.list.length}</td></tr>`).join('')}</tbody></table>`;
     } else h += '<div class="small-note">No client is missing tasks for the selected periods.</div>';
     if(blanks.length) h += `<div class="small-note" style="margin-top:10px;color:var(--rust,#b3402a);"><b>${blanks.length} active client(s) have an empty Forms list</b>, so no tasks can be made for them: ${esc(blanks.slice(0,40).map(p=>p.c.NAME||p.c['CLIENT ID NO.']).join('; '))}${blanks.length>40?' …':''}. Open them in the Client Registry and use “Auto-fill Forms”.</div>`;
     area.innerHTML = h;
-    const n = plans.reduce((a,p)=>a+p.list.length,0);
-    summary.textContent = plans.length ? `${n} task(s) will be created for ${plans.length} client(s).` : '';
-    btn.disabled = !plans.length;
+    const sel = plans.filter(p=>!missingUnchecked.has(p.c._id));
+    const n = sel.reduce((a,p)=>a+p.list.length,0);
+    summary.textContent = plans.length ? `${n} task(s) will be created for ${sel.length} of ${plans.length} client(s) (ticked).` : '';
+    btn.disabled = !sel.length;
   }
   document.getElementById('missing-tasks-scope').addEventListener('change', renderMissingTasksTool);
+  document.getElementById('missing-tasks-table').addEventListener('change', e=>{
+    if(e.target.id === 'missing-tasks-all'){
+      const scope = document.getElementById('missing-tasks-scope').value;
+      clients.forEach(c=>{ if(missingTasksFor(c, scope).list.length){ if(e.target.checked) missingUnchecked.delete(c._id); else missingUnchecked.add(c._id); } });
+      renderMissingTasksTool();
+    } else if(e.target.classList.contains('missing-tasks-cb')){
+      if(e.target.checked) missingUnchecked.delete(e.target.dataset.cid); else missingUnchecked.add(e.target.dataset.cid);
+      renderMissingTasksTool();
+    }
+  });
   document.getElementById('missing-tasks-apply-btn').addEventListener('click', async ()=>{
     const btn = document.getElementById('missing-tasks-apply-btn');
     const scope = document.getElementById('missing-tasks-scope').value;
-    const plans = clients.map(c=>({c, list: missingTasksFor(c, scope).list})).filter(p=>p.list.length);
+    const plans = clients.filter(c=>!missingUnchecked.has(c._id)).map(c=>({c, list: missingTasksFor(c, scope).list})).filter(p=>p.list.length);
     if(!plans.length) return;
     const n = plans.reduce((a,p)=>a+p.list.length,0);
-    if(!confirm(`Create ${n} missing task(s) for ${plans.length} client(s)?`)) return;
+    if(!confirm(`Create ${n} missing task(s) for ${plans.length} selected client(s)?`)) return;
     btn.disabled = true;
     let done = 0;
     for(const p of plans) done += await createMissingTasksFor(p.c, scope);
@@ -4539,6 +4551,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     renderMissingTasksTool();
     renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
   });
+
   // ---- Undo for tasks made by createMissingTasksFor: they are recognised by their audit entry
   // ("Task created (missing ...") and only offered while still completely untouched.
   const TASK_CREATED_AUDIT_RE = /^Task created \(missing/;
@@ -4564,15 +4577,28 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
     return plan;
   }
+  const undoUnchecked = new Set();   // client _ids un-ticked in "Undo Created Tasks"
+  const undoSelected = ()=> undoTaskPlan.filter(p=>!undoUnchecked.has(p.c._id));
   function renderUndoTaskPlan(){
     const area = document.getElementById('undo-tasks-table'), summary = document.getElementById('undo-tasks-summary'), btn = document.getElementById('undo-tasks-apply-btn');
     if(!undoTaskPlan.length){ area.innerHTML = '<div class="small-note">Nothing to remove.</div>'; summary.textContent=''; btn.disabled = true; return; }
     const byClient = new Map();
     undoTaskPlan.forEach(p=>{ const k = p.c._id; if(!byClient.has(k)) byClient.set(k, {c:p.c, list:[]}); byClient.get(k).list.push(p); });
-    area.innerHTML = `<table><thead><tr><th>Client ID</th><th>Client</th><th>Tasks to remove</th><th>Reason</th><th>e.g.</th></tr></thead><tbody>${[...byClient.values()].map(g=>`<tr><td class="mono">${esc(g.c['CLIENT ID NO.']||'')}</td><td>${esc(g.c.NAME||'')}</td><td class="num">${g.list.length}</td><td>${esc(g.list[0].why)}</td><td>${esc(g.list.slice(0,3).map(p=>p.t.form+' '+p.t.period).join(', '))}${g.list.length>3?' …':''}</td></tr>`).join('')}</tbody></table>`;
-    summary.textContent = `${undoTaskPlan.length} task(s) of ${byClient.size} client(s) will be removed.`;
-    btn.disabled = false;
+    const groups = [...byClient.values()];
+    area.innerHTML = `<table><thead><tr><th style="width:34px;"><input type="checkbox" id="undo-tasks-all" title="Select / unselect all"${groups.every(g=>!undoUnchecked.has(g.c._id))?' checked':''}></th><th>Client ID</th><th>Client</th><th>Tasks to remove</th><th>Reason</th><th>e.g.</th></tr></thead><tbody>${groups.map(g=>`<tr><td><input type="checkbox" class="undo-tasks-cb" data-cid="${esc(g.c._id)}"${undoUnchecked.has(g.c._id)?'':' checked'}></td><td class="mono">${esc(g.c['CLIENT ID NO.']||'')}</td><td>${esc(g.c.NAME||'')}</td><td class="num">${g.list.length}</td><td>${esc(g.list[0].why)}</td><td>${esc(g.list.slice(0,3).map(p=>p.t.form+' '+p.t.period).join(', '))}${g.list.length>3?' …':''}</td></tr>`).join('')}</tbody></table>`;
+    const sel = undoSelected();
+    summary.textContent = `${sel.length} task(s) of ${new Set(sel.map(p=>p.c._id)).size} ticked client(s) will be removed (of ${undoTaskPlan.length} task(s) / ${groups.length} client(s) listed).`;
+    btn.disabled = !sel.length;
   }
+  document.getElementById('undo-tasks-table').addEventListener('change', e=>{
+    if(e.target.id === 'undo-tasks-all'){
+      undoTaskPlan.forEach(p=>{ if(e.target.checked) undoUnchecked.delete(p.c._id); else undoUnchecked.add(p.c._id); });
+      renderUndoTaskPlan();
+    } else if(e.target.classList.contains('undo-tasks-cb')){
+      if(e.target.checked) undoUnchecked.delete(e.target.dataset.cid); else undoUnchecked.add(e.target.dataset.cid);
+      renderUndoTaskPlan();
+    }
+  });
   document.getElementById('undo-tasks-load-btn').addEventListener('click', async ()=>{
     const b = document.getElementById('undo-tasks-load-btn'); b.disabled = true;
     const plan = await loadUndoTaskPlan(); b.disabled = false;
@@ -4581,9 +4607,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   });
   document.getElementById('undo-tasks-apply-btn').addEventListener('click', async ()=>{
     const btn = document.getElementById('undo-tasks-apply-btn');
-    const plan = undoTaskPlan.filter(p=>tasks.includes(p.t) && taskIsUntouched(p.t));
+    const plan = undoSelected().filter(p=>tasks.includes(p.t) && taskIsUntouched(p.t));
     if(!plan.length) return;
-    if(!confirm(`Remove ${plan.length} task(s)? This cannot be undone.`)) return;
+    if(!confirm(`Remove ${plan.length} task(s) of the ticked client(s)? This cannot be undone.`)) return;
     btn.disabled = true;
     const ids = plan.map(p=>p.t.id); let removed = new Set();
     for(let i=0;i<ids.length;i+=100){
