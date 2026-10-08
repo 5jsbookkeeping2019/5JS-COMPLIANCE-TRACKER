@@ -868,6 +868,7 @@
       <div class="small-note">One-time import of the “ITR 2025” list (238 clients, 1701 / 1702 for tax year 2025, filed 2026). For every matched client (by TIN) it creates the annual task <b>TY 2025 (filed 2026)</b> — form 1701 for individuals, 1702 for corporations — with the list’s Tax Due and <b>every remark in Notes</b> (if the task already has notes, the remark is added after them). <b>DONE …</b> remarks become Done (with the date, and “DONE BY &lt;name&gt;” as Done by); <b>PAID …</b> become Done + Paid (the Done date is the same as the payment date); everything else (FOR PAYMENT, FOR PRINT, FOR SEND TO ERWIN, …) stays Pending with the remark as a note. If the client already has that annual task, only its <b>empty</b> fields are filled — nothing typed is overwritten (existing notes are kept and the remark is appended). Clients whose status is NO / CLOSED are listed but un-ticked. Tick / untick clients as needed.</div>
       <div class="table-scroll" style="margin-top:12px;max-width:1100px;max-height:420px;" id="itr-import-table"></div>
       <div class="small-note" id="itr-import-summary" style="margin-top:8px;"></div>
+      <div class="small-note" id="itr-import-errors" style="margin-top:6px;color:var(--rust,#b3402a);"></div>
       <button class="secondary" id="itr-import-load-btn" style="margin-top:8px;">Preview the ITR 2025 import</button>
       <button class="secondary" id="itr-import-apply-btn" style="margin-top:8px;" disabled>Import ticked clients</button>
       <h3 style="margin-top:30px;">Branch Tag vs. Client Registry Audit</h3>
@@ -4744,28 +4745,40 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(!todo.length) return;
     if(!confirm(`Import ${todo.length} client(s) into the Task Tracker (${todo.filter(p=>!p.existing).length} new task(s), ${todo.filter(p=>p.existing).length} existing task(s) to fill)?`)) return;
     btn.disabled = true;
-    let created = 0, filled = 0, failed = 0;
+    let created = 0, filled = 0, failed = 0; const errMsgs = [];
+    const fail = (p, step, error)=>{ console.error('ITR import', step, error); failed++; if(errMsgs.length < 6) errMsgs.push(`${p.c.NAME||p.name} (${step}): ${(error && (error.message || error.details || error.code)) || 'unknown error'}`); };
+    const mapK = {tax_due:'taxDue', notes:'notes', done_by:'doneBy', done_date:'doneDate', payment_status:'paymentStatus', payment_date:'paymentDate', status:'status'};
     for(const p of todo){
-      const patch = itrRowPatch(p);
-      if(p.existing){
-        const t = p.existing, olds = {tax_due:t.taxDue, notes:t.notes, done_by:t.doneBy, done_date:t.doneDate, payment_status:t.paymentStatus, payment_date:t.paymentDate, status:t.status};
-        const { error } = await sb.from('cor_tasks').update(patch).eq('id', t.id);
-        if(error){ console.error(error); failed++; continue; }
-        const mapK = {tax_due:'taxDue', notes:'notes', done_by:'doneBy', done_date:'doneDate', payment_status:'paymentStatus', payment_date:'paymentDate', status:'status'};
-        Object.keys(patch).forEach(k=>{ t[mapK[k]] = patch[k]; logFieldAudit('cor_tasks_audit','record_id',t.id,k,k.replace(/_/g,' ')+' (ITR 2025 import)',olds[k],patch[k]); });
-        filled++;
-      } else {
-        const row = Object.assign({client_id: p.c._id, form: p.form, frequency:'Annual', period: ITR2025_PERIOD, due_date: p.due_date}, patch);
-        const { data, error } = await sb.from('cor_tasks').insert(row).select().single();
-        if(error || !data){ console.error(error); failed++; if(failed === 1) toast('Warning: a task could not be created (' + ((error && error.message) || 'unknown error') + ').'); continue; }
-        const mapped = mapTaskFromDb(data); if(!tasks.some(x=>x.id===mapped.id)) tasks.push(mapped);
-        p.existing = mapped;
-        logFieldAudit('cor_tasks_audit','record_id',mapped.id,'status','Task created (ITR 2025 import)',null,patch.status);
-        created++;
-      }
+      try{
+        const patch = itrRowPatch(p);
+        let t = p.existing, olds = {};
+        if(!t){
+          // 1) create the task with the same minimal columns "Create Missing Tasks" uses, 2) then fill in the details by update
+          const row = {client_id: p.c._id, form: p.form, frequency:'Annual', period: ITR2025_PERIOD, due_date: p.due_date, status:'PENDING'};
+          const { data, error } = await sb.from('cor_tasks').insert(row).select().single();
+          if(error || !data){ fail(p, 'create task', error); continue; }
+          t = mapTaskFromDb(data); if(!tasks.some(x=>x.id===t.id)) tasks.push(t);
+          p.existing = t; created++;
+          logFieldAudit('cor_tasks_audit','record_id',t.id,'status','Task created (ITR 2025 import)',null,'PENDING');
+          olds = {tax_due:null, notes:'', done_by:'', done_date:'', payment_status:'', payment_date:'', status:'PENDING'};
+          delete patch.status; if(p.cls.status === 'DONE') patch.status = 'DONE';
+        } else {
+          olds = {tax_due:t.taxDue, notes:t.notes, done_by:t.doneBy, done_date:t.doneDate, payment_status:t.paymentStatus, payment_date:t.paymentDate, status:t.status};
+          filled++;
+        }
+        // details: one field at a time, so a single rejected column cannot block the others
+        for(const k of Object.keys(patch)){
+          if(patch[k]===null || patch[k]===undefined) continue;
+          const { error } = await sb.from('cor_tasks').update({[k]: patch[k]}).eq('id', t.id);
+          if(error){ fail(p, k, error); continue; }
+          t[mapK[k]] = patch[k];
+          logFieldAudit('cor_tasks_audit','record_id',t.id,k,k.replace(/_/g,' ')+' (ITR 2025 import)',olds[k],patch[k]);
+        }
+      }catch(err){ fail(p, 'unexpected', err); }
     }
-    toast(`ITR 2025 import: ${created} task(s) created, ${filled} filled${failed?`, ${failed} failed`:''}.`);
+    toast(`ITR 2025 import: ${created} task(s) created, ${filled} filled${failed?`, ${failed} problem(s) — see the message under the table`:''}.`);
     renderItrImport();
+    if(errMsgs.length){ const box = document.getElementById('itr-import-errors'); if(box) box.innerHTML = '<b>Some rows failed. Database message(s):</b><br>' + errMsgs.map(esc).join('<br>'); } else { const box = document.getElementById('itr-import-errors'); if(box) box.innerHTML = ''; }
     renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
   });
   function renderRestoreNATool(){
