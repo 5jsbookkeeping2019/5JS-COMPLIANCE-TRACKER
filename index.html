@@ -308,6 +308,10 @@
   }
   #cor-app td{padding:9px 8px;border-bottom:1px solid var(--paper-line);vertical-align:top;}
   #cor-app tr:hover td{background:var(--row-hover);}
+  #cor-app #panel-tracker.tr-full.active{position:fixed;inset:0;z-index:40;margin:0;border-radius:0;padding:12px 16px;display:flex;flex-direction:column;overflow:hidden;}
+  #cor-app #panel-tracker.tr-full .registry-head{margin-bottom:8px;flex:0 0 auto;}
+  #cor-app #panel-tracker.tr-full .small-note.tr-tip{display:none;}
+  #cor-app #panel-tracker.tr-full .table-scroll{max-height:none !important;flex:1 1 auto;min-height:0;margin-top:6px !important;}
   #cor-app .table-scroll{max-height:560px;overflow:auto;border:1px solid var(--paper-line);border-radius:10px;}
   #cor-app .table-scroll table{font-size:12px;}
   #cor-app .table-scroll thead th{position:sticky;top:0;background:var(--card);z-index:2;}
@@ -549,9 +553,10 @@
         </div>
         <div class="toolbar-right">
           <span class="small-note" id="tr-count" style="margin:0;"></span>
+          <button class="secondary" id="tr-fullscreen-btn" type="button" title="Show the Task Tracker over the whole screen (Esc to close)">⛶ Full screen</button>
         </div>
       </div>
-      <div class="small-note">Tip: search or filter first before scrolling — this is over 5,000 tasks for the whole 2026 client roster.</div>
+      <div class="small-note tr-tip">Tip: search or filter first before scrolling — this is over 5,000 tasks for the whole 2026 client roster.</div>
       <div class="table-scroll" style="margin-top:10px;" id="tracker-table"></div>
     </div>
 
@@ -3253,7 +3258,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const el = document.getElementById('tracker-table');
     if(!el || el.offsetParent === null) return; // tab not visible right now
     const top = el.getBoundingClientRect().top + window.scrollY;
-    el.style.maxHeight = `calc(100vh - ${Math.round(top)}px - 24px)`;
+    // never smaller than ~320px (on a short window the filters used to leave only a sliver of table; the page scrolls instead)
+    el.style.maxHeight = `max(320px, calc(100vh - ${Math.round(top)}px - 24px))`;
   }
   window.addEventListener('resize', sizeTrackerTable);
 
@@ -4739,6 +4745,15 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
     return {plan, unmatched};
   }
+  // Task Tracker full-screen mode (table fills the whole window; Esc or the button closes it)
+  (function(){
+    const panel = document.getElementById('panel-tracker'), btn = document.getElementById('tr-fullscreen-btn');
+    if(!panel || !btn) return;
+    const set = on=>{ panel.classList.toggle('tr-full', on); btn.textContent = on ? '✕ Exit full screen' : '⛶ Full screen'; document.body.style.overflow = on ? 'hidden' : ''; };
+    btn.addEventListener('click', ()=> set(!panel.classList.contains('tr-full')));
+    document.addEventListener('keydown', e=>{ if(e.key === 'Escape' && panel.classList.contains('tr-full') && !document.querySelector('.modal-backdrop')) set(false); });
+    document.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click', ()=>{ if(panel.classList.contains('tr-full')) set(false); }));
+  })();
   // ---- Task clean-up: Done by + Date but still PENDING, and duplicate tasks (same client + form + normalised period)
   let tidyRows = [], tidyUnchecked = new Set();
   function tidyPlan(){
