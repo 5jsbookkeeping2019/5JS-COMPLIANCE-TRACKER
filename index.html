@@ -864,7 +864,7 @@
       <div class="small-note" id="undo-tasks-summary" style="margin-top:8px;"></div>
       <button class="secondary" id="undo-tasks-load-btn" style="margin-top:8px;">Check which tasks can be removed</button>
       <button class="secondary" id="undo-tasks-apply-btn" style="margin-top:8px;" disabled>Remove these tasks</button>
-      <h3 style="margin-top:30px;">Import ITR 2025 (1701 / 1702 annual) into the Task Tracker</h3>
+      <h3 style="margin-top:30px;">Import ITR 2025 (1701 / 1702 annual) into the Task Tracker <span style="font-size:11px;font-weight:400;color:var(--ink-soft);">· version v4 (progress + result shown under the table)</span></h3>
       <div class="small-note">One-time import of the “ITR 2025” list (238 clients, 1701 / 1702 for tax year 2025, filed 2026). For every matched client (by TIN) it creates the annual task <b>TY 2025 (filed 2026)</b> — form 1701 for individuals, 1702 for corporations — with the list’s Tax Due and <b>every remark in Notes</b> (if the task already has notes, the remark is added after them). <b>DONE …</b> remarks become Done (with the date, and “DONE BY &lt;name&gt;” as Done by); <b>PAID …</b> become Done + Paid (the Done date is the same as the payment date); everything else (FOR PAYMENT, FOR PRINT, FOR SEND TO ERWIN, …) stays Pending with the remark as a note. If the client already has that annual task, only its <b>empty</b> fields are filled — nothing typed is overwritten (existing notes are kept and the remark is appended). Clients whose status is NO / CLOSED are listed but un-ticked. Tick / untick clients as needed.</div>
       <div class="table-scroll" style="margin-top:12px;max-width:1100px;max-height:420px;" id="itr-import-table"></div>
       <div class="small-note" id="itr-import-summary" style="margin-top:8px;"></div>
@@ -2756,13 +2756,25 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     keys.forEach(k => { if(CLIENT_COL_MAP[k]) row[CLIENT_COL_MAP[k]] = (c[k]===undefined || c[k]==='') ? null : c[k]; });
     return row;
   }
+  // Month periods were typed in different spellings over time ("SEPT 2026",
+  // "SEP 2026", "SEPTEMBER 2026") which showed as separate entries in the
+  // Period filter. Use the filing calendar's own spelling for every month.
+  const PERIOD_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUNE','JULY','AUGUST','SEPT','OCT','NOV','DEC'];
+  const PERIOD_MONTH_FULL = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
+  function normPeriodLabel(p){
+    const m = String(p==null?'':p).trim().match(/^([A-Za-z]{3,9})\.?\s+(\d{4})$/);
+    if(!m) return p;
+    const w = m[1].toUpperCase();
+    const i = PERIOD_MONTH_FULL.findIndex(full => w.length>=3 && full.startsWith(w) || (w==='SEPT' && full==='SEPTEMBER'));
+    return i < 0 ? p : PERIOD_MONTHS[i] + ' ' + m[2];
+  }
   function mapTaskFromDb(row){
     return {
       id: row.id,
       clientId: row.client_id,
       form: row.form,
       freq: row.frequency,
-      period: row.period,
+      period: normPeriodLabel(row.period),
       due: row.due_date,
       status: row.status || 'PENDING',
       doneBy: row.done_by || '',
@@ -4743,12 +4755,15 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const btn = document.getElementById('itr-import-apply-btn');
     const todo = itrPlan.filter(p=>!itrUnchecked.has(p.idx) && (!p.existing || Object.keys(itrRowPatch(p)).length));
     if(!todo.length) return;
-    if(!confirm(`Import ${todo.length} client(s) into the Task Tracker (${todo.filter(p=>!p.existing).length} new task(s), ${todo.filter(p=>p.existing).length} existing task(s) to fill)?`)) return;
+    const box = document.getElementById('itr-import-errors');
     btn.disabled = true;
-    let created = 0, filled = 0, failed = 0; const errMsgs = [];
+    let created = 0, filled = 0, failed = 0, doneN = 0; const errMsgs = [];
+    const setProgress = ()=>{ if(box){ box.style.color = 'var(--ink-soft)'; box.textContent = `Importing… ${doneN} / ${todo.length} client(s)`; } };
+    setProgress();
     const fail = (p, step, error)=>{ console.error('ITR import', step, error); failed++; if(errMsgs.length < 6) errMsgs.push(`${p.c.NAME||p.name} (${step}): ${(error && (error.message || error.details || error.code)) || 'unknown error'}`); };
     const mapK = {tax_due:'taxDue', notes:'notes', done_by:'doneBy', done_date:'doneDate', payment_status:'paymentStatus', payment_date:'paymentDate', status:'status'};
     for(const p of todo){
+      doneN++; if(doneN % 5 === 0) setProgress();
       try{
         const patch = itrRowPatch(p);
         let t = p.existing, olds = {};
@@ -4766,19 +4781,31 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
           olds = {tax_due:t.taxDue, notes:t.notes, done_by:t.doneBy, done_date:t.doneDate, payment_status:t.paymentStatus, payment_date:t.paymentDate, status:t.status};
           filled++;
         }
-        // details: one field at a time, so a single rejected column cannot block the others
-        for(const k of Object.keys(patch)){
-          if(patch[k]===null || patch[k]===undefined) continue;
-          const { error } = await sb.from('cor_tasks').update({[k]: patch[k]}).eq('id', t.id);
-          if(error){ fail(p, k, error); continue; }
-          t[mapK[k]] = patch[k];
-          logFieldAudit('cor_tasks_audit','record_id',t.id,k,k.replace(/_/g,' ')+' (ITR 2025 import)',olds[k],patch[k]);
+        // details: all fields in ONE update (fast); if the database rejects that, one field at a time so a single bad column cannot block the others
+        const keys = Object.keys(patch).filter(k=>patch[k]!==null && patch[k]!==undefined);
+        const applyLocal = k=>{ t[mapK[k]] = patch[k]; logFieldAudit('cor_tasks_audit','record_id',t.id,k,k.replace(/_/g,' ')+' (ITR 2025 import)',olds[k],patch[k]); };
+        if(keys.length){
+          const body = {}; keys.forEach(k=>{ body[k] = patch[k]; });
+          const r1 = await sb.from('cor_tasks').update(body).eq('id', t.id).select('id');
+          if(!r1.error && r1.data && r1.data.length){ keys.forEach(applyLocal); }
+          else {
+            for(const k of keys){
+              const { data: upd, error } = await sb.from('cor_tasks').update({[k]: patch[k]}).eq('id', t.id).select('id');
+              if(error){ fail(p, k, error); continue; }
+              if(!upd || !upd.length){ fail(p, k, {message:'the database accepted the request but changed no row (usually a permission / row-level-security block)'}); continue; }
+              applyLocal(k);
+            }
+          }
         }
       }catch(err){ fail(p, 'unexpected', err); }
     }
-    toast(`ITR 2025 import: ${created} task(s) created, ${filled} filled${failed?`, ${failed} problem(s) — see the message under the table`:''}.`);
+    const resultLine = `ITR 2025 import finished: ${created} task(s) created, ${filled} existing task(s) filled, ${failed} problem(s).`;
+    toast(resultLine);
     renderItrImport();
-    if(errMsgs.length){ const box = document.getElementById('itr-import-errors'); if(box) box.innerHTML = '<b>Some rows failed. Database message(s):</b><br>' + errMsgs.map(esc).join('<br>'); } else { const box = document.getElementById('itr-import-errors'); if(box) box.innerHTML = ''; }
+    if(box){
+      box.style.color = failed ? 'var(--rust,#b3402a)' : 'var(--forest,#2f6b3a)';
+      box.innerHTML = '<b>' + esc(resultLine) + '</b>' + (errMsgs.length ? '<br>Database message(s):<br>' + errMsgs.map(esc).join('<br>') : '');
+    }
     renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
   });
   function renderRestoreNATool(){
