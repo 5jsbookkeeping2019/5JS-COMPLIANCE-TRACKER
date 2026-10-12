@@ -864,6 +864,12 @@
       <div class="small-note" id="undo-tasks-summary" style="margin-top:8px;"></div>
       <button class="secondary" id="undo-tasks-load-btn" style="margin-top:8px;">Check which tasks can be removed</button>
       <button class="secondary" id="undo-tasks-apply-btn" style="margin-top:8px;" disabled>Remove these tasks</button>
+      <h3 style="margin-top:30px;">Check BIR e-filing receipts (Yahoo Mail) against the Task Tracker</h3>
+      <div class="small-note">Shows which clients already have a <b>&ldquo;Tax Return Receipt Confirmation&rdquo;</b> email from BIR (eBIRForms) for a form and period. In Yahoo Mail search the form + period, e.g. <span class="mono">1601Cv2018-092026</span> (form, then month + year; for quarterly forms use the last month of the quarter, e.g. 092026 for Q3), scroll to load every result, press <b>Ctrl+A, Ctrl+C</b> and paste it below. The TIN is read from each attachment name (<span class="mono">…TIN…-1601Cv2018-092026.xml</span>) and matched to the Client Registry. This only <b>reports</b> &mdash; it does not change any task.</div>
+      <textarea id="rcpt-paste" rows="6" style="width:100%;max-width:900px;margin-top:8px;" placeholder="Paste the Yahoo Mail search result here…"></textarea>
+      <div style="margin-top:6px;"><button class="secondary" id="rcpt-check-btn">Check receipts</button> <span id="rcpt-group-wrap" style="margin-left:8px;"></span> <label style="margin-left:8px;font-size:12px;">Show <select id="rcpt-show"><option value="all">all</option><option value="missing">no receipt yet</option><option value="found">receipt found</option><option value="mismatch">receipt found but task still Pending</option></select></label> <button class="secondary" id="rcpt-copy-btn" disabled>Copy clients without receipt</button></div>
+      <div class="small-note" id="rcpt-summary" style="margin-top:8px;"></div>
+      <div class="table-scroll" style="margin-top:8px;max-width:1000px;max-height:420px;" id="rcpt-table"></div>
       <h3 style="margin-top:30px;">Import ITR 2025 (1701 / 1702 annual) into the Task Tracker <span style="font-size:11px;font-weight:400;color:var(--ink-soft);">· version v4 (progress + result shown under the table)</span></h3>
       <div class="small-note">One-time import of the “ITR 2025” list (238 clients, 1701 / 1702 for tax year 2025, filed 2026). For every matched client (by TIN) it creates the annual task <b>TY 2025 (filed 2026)</b> — form 1701 for individuals, 1702 for corporations — with the list’s Tax Due and <b>every remark in Notes</b> (if the task already has notes, the remark is added after them). <b>DONE …</b> remarks become Done (with the date, and “DONE BY &lt;name&gt;” as Done by); <b>PAID …</b> become Done + Paid (the Done date is the same as the payment date); everything else (FOR PAYMENT, FOR PRINT, FOR SEND TO ERWIN, …) stays Pending with the remark as a note. If the client already has that annual task, only its <b>empty</b> fields are filled — nothing typed is overwritten (existing notes are kept and the remark is appended). Clients whose status is NO / CLOSED are listed but un-ticked. Tick / untick clients as needed.</div>
       <div class="table-scroll" style="margin-top:12px;max-width:1100px;max-height:420px;" id="itr-import-table"></div>
@@ -3197,7 +3203,19 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function initTrackerFilters(){
     const forms = Array.from(new Set(tasks.map(t=>t.form))).sort();
     trFormFilter.innerHTML = '<option value="">All forms</option>' + forms.map(f=>`<option value="${esc(f)}">${esc(f)}</option>`).join('');
-    const periods = Array.from(new Set(tasks.map(t=>t.period))).sort();
+    // Period list in calendar order: JAN..DEC of each year, then Q1..Q4, then tax years (TY)
+    const periodSortKey = p=>{
+      const u = String(p||'').trim().toUpperCase();
+      let m = u.match(/^([A-Z]+)\.?\s+(\d{4})$/);
+      if(m && !/^Q\d$/.test(m[1])){ const i = PERIOD_MONTH_FULL.findIndex(f=>f.startsWith(m[1]) || (m[1]==='SEPT' && f==='SEPTEMBER')); if(i>=0) return [0, +m[2], i]; }
+      m = u.match(/^Q([1-4])\s+(\d{4})$/); if(m) return [1, +m[2], +m[1]];
+      m = u.match(/^TY\s+(\d{4})/); if(m) return [2, +m[1], 0];
+      return [3, 0, 0];
+    };
+    const periods = Array.from(new Set(tasks.map(t=>t.period))).sort((a,b)=>{
+      const ka = periodSortKey(a), kb = periodSortKey(b);
+      return (ka[0]-kb[0]) || (ka[1]-kb[1]) || (ka[2]-kb[2]) || String(a).localeCompare(String(b));
+    });
     trPeriodFilter.innerHTML = '<option value="">All periods</option>' + periods.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('');
     // Client Status (CLIENT?) filter -- e.g. "0 FILING" or "FOR CLOSURE" --
     // so staff can hide just the tasks belonging to clients in statuses
@@ -4702,6 +4720,62 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
     return {plan, unmatched};
   }
+  // ---- Check BIR e-filing receipts (pasted from Yahoo Mail) against the task list ----
+  let rcptGroups = {}, rcptRows = [];
+  function rcptPeriodKey(t){
+    // task period -> "MMYYYY" the way eBIRForms names its file
+    const per = String(t.period||'').trim().toUpperCase();
+    let m = per.match(/^Q([1-4])\s+(\d{4})$/); if(m) return String(m[1]*3).padStart(2,'0') + m[2];
+    m = per.match(/^TY\s+(\d{4})/); if(m) return '12' + m[1];
+    m = per.match(/^([A-Z]+)\.?\s+(\d{4})$/);
+    if(m){ const i = PERIOD_MONTH_FULL.findIndex(f=> f.startsWith(m[1]) || (m[1]==='SEPT' && f==='SEPTEMBER')); if(i>=0) return String(i+1).padStart(2,'0') + m[2]; }
+    return '';
+  }
+  function rcptParse(text){
+    const groups = {}, seen = new Set();
+    const re = /(\d{9})\d{0,6}\s*-\s*(\d{4}[A-Z]{0,2})v[\d.]+\s*-\s*(\d{2})(\d{4})/gi;
+    let m;
+    while((m = re.exec(text))){
+      const form = m[2].toUpperCase(), key = form + '|' + m[3] + m[4];
+      (groups[key] = groups[key] || {form, mmyyyy: m[3]+m[4], tins: new Set(), emails: 0}).emails++;
+      groups[key].tins.add(m[1]);
+    }
+    return groups;
+  }
+  function rcptRender(){
+    const sel = document.getElementById('rcpt-group'), summary = document.getElementById('rcpt-summary'), area = document.getElementById('rcpt-table'), copy = document.getElementById('rcpt-copy-btn');
+    const g = sel && rcptGroups[sel.value];
+    if(!g){ area.innerHTML=''; summary.textContent='No receipt file names like "…TIN…-1601Cv2018-092026.xml" were found in the pasted text.'; copy.disabled = true; return; }
+    const show = document.getElementById('rcpt-show').value;
+    const isActive = c => !/^(NO|CLOSED)$/.test(String(c['CLIENT?']||'').trim().toUpperCase());
+    const byClient = new Map(clients.map(c=>[c._id, c]));
+    rcptRows = tasks.filter(t=> String(t.form).toUpperCase() === g.form && rcptPeriodKey(t) === g.mmyyyy && t.status !== 'NA' && byClient.get(t.clientId) && isActive(byClient.get(t.clientId)))
+      .map(t=>{ const c = byClient.get(t.clientId); return {t, c, found: g.tins.has(tinDigits9(c.TIN))}; })
+      .sort((a,b)=> (a.found - b.found) || String(a.c.NAME||'').localeCompare(String(b.c.NAME||'')));
+    const foundCount = rcptRows.filter(r=>r.found).length, missing = rcptRows.filter(r=>!r.found);
+    const mismatch = rcptRows.filter(r=>r.found && r.t.status !== 'DONE');
+    const taskTins = new Set(rcptRows.map(r=>tinDigits9(r.c.TIN)));
+    const noTask = [...g.tins].filter(x=>!taskTins.has(x));
+    const shown = rcptRows.filter(r=> show==='all' || (show==='missing' && !r.found) || (show==='found' && r.found) || (show==='mismatch' && r.found && r.t.status !== 'DONE'));
+    summary.innerHTML = `<b>${esc(g.form)} · ${g.mmyyyy.slice(0,2)}/${g.mmyyyy.slice(2)}</b>: ${g.emails} receipt email(s) from ${g.tins.size} TIN(s). Tasks of this form/period: ${rcptRows.length} &mdash; <b style="color:var(--moss,#2f7d4f);">${foundCount} with receipt</b>, <b style="color:var(--rust,#b3402a);">${missing.length} no receipt yet</b>, ${mismatch.length} with receipt but task not yet Done.`
+      + (noTask.length ? `<br>${noTask.length} receipt TIN(s) have no matching task for this form/period (not in Registry, inactive, N/A or no task): <span class="mono">${esc(noTask.join(', '))}</span>` : '');
+    area.innerHTML = `<table><thead><tr><th>Client ID</th><th>Client</th><th>TIN</th><th>Task status</th><th>BIR receipt</th></tr></thead><tbody>${shown.map(r=>`<tr><td class="mono">${esc(r.c['CLIENT ID NO.']||'')}</td><td>${esc(r.c.NAME||'')}</td><td class="mono">${esc(r.c.TIN||'')}</td><td>${esc(r.t.status)}${r.t.doneBy?' · '+esc(r.t.doneBy):''}${r.t.doneDate?' '+esc(r.t.doneDate):''}</td><td style="font-weight:600;color:${r.found?'var(--moss,#2f7d4f)':'var(--rust,#b3402a)'};">${r.found?'✓ received':'✗ none yet'}${r.found && r.t.status!=='DONE' ? ' <span style="font-weight:400;color:var(--ink-soft);">(task still '+esc(r.t.status)+')</span>':''}</td></tr>`).join('')}</tbody></table>`;
+    copy.disabled = !missing.length;
+  }
+  document.getElementById('rcpt-check-btn').addEventListener('click', ()=>{
+    const text = document.getElementById('rcpt-paste').value;
+    rcptGroups = rcptParse(text);
+    const keys = Object.keys(rcptGroups).sort((a,b)=> rcptGroups[b].emails - rcptGroups[a].emails);
+    const wrap = document.getElementById('rcpt-group-wrap');
+    wrap.innerHTML = keys.length ? 'Form / period <select id="rcpt-group">' + keys.map(k=>`<option value="${esc(k)}">${esc(rcptGroups[k].form)} ${rcptGroups[k].mmyyyy.slice(0,2)}/${rcptGroups[k].mmyyyy.slice(2)} (${rcptGroups[k].emails} email${rcptGroups[k].emails===1?'':'s'})</option>`).join('') + '</select>' : '';
+    const sel = document.getElementById('rcpt-group'); if(sel) sel.addEventListener('change', rcptRender);
+    rcptRender();
+  });
+  document.getElementById('rcpt-show').addEventListener('change', rcptRender);
+  document.getElementById('rcpt-copy-btn').addEventListener('click', async ()=>{
+    const list = rcptRows.filter(r=>!r.found).map(r=> (r.c['CLIENT ID NO.']||'') + '\t' + (r.c.NAME||'') + '\t' + (r.c.TIN||'')).join('\n');
+    try{ await navigator.clipboard.writeText(list); toast('Copied '+rcptRows.filter(r=>!r.found).length+' client(s) without receipt.'); }catch(e){ toast('Could not copy — select the table instead.'); }
+  });
   function itrRowPatch(p){
     // values to write: for a new task everything; for an existing task only its EMPTY fields
     const t = p.existing, cls = p.cls, patch = {};
