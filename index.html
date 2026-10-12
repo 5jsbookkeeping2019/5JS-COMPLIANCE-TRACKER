@@ -870,7 +870,7 @@
       <div style="margin-top:6px;"><button class="secondary" id="rcpt-check-btn">Check receipts</button> <span id="rcpt-group-wrap" style="margin-left:8px;"></span> <label style="margin-left:8px;font-size:12px;">Show <select id="rcpt-show"><option value="all">all</option><option value="missing">no receipt yet</option><option value="found">receipt found</option><option value="mismatch">receipt found but task still Pending</option></select></label> <button class="secondary" id="rcpt-copy-btn" disabled>Copy clients without receipt</button></div>
       <div class="small-note" id="rcpt-summary" style="margin-top:8px;"></div>
       <div class="table-scroll" style="margin-top:8px;max-width:1000px;max-height:420px;" id="rcpt-table"></div>
-      <h3 style="margin-top:30px;">Import ITR 2025 (1701 / 1702 annual) into the Task Tracker <span style="font-size:11px;font-weight:400;color:var(--ink-soft);">· version v4 (progress + result shown under the table)</span></h3>
+      <h3 style="margin-top:30px;">Import ITR 2025 (1701 / 1702 annual) into the Task Tracker <span style="font-size:11px;font-weight:400;color:var(--ink-soft);">· version v5 (works without payment columns)</span></h3>
       <div class="small-note">One-time import of the “ITR 2025” list (238 clients, 1701 / 1702 for tax year 2025, filed 2026). For every matched client (by TIN) it creates the annual task <b>TY 2025 (filed 2026)</b> — form 1701 for individuals, 1702 for corporations — with the list’s Tax Due and <b>every remark in Notes</b> (if the task already has notes, the remark is added after them). <b>DONE …</b> remarks become Done (with the date, and “DONE BY &lt;name&gt;” as Done by); <b>PAID …</b> become Done + Paid (the Done date is the same as the payment date); everything else (FOR PAYMENT, FOR PRINT, FOR SEND TO ERWIN, …) stays Pending with the remark as a note. If the client already has that annual task, only its <b>empty</b> fields are filled — nothing typed is overwritten (existing notes are kept and the remark is appended). Clients whose status is NO / CLOSED are listed but un-ticked. Tick / untick clients as needed.</div>
       <div class="table-scroll" style="margin-top:12px;max-width:1100px;max-height:420px;" id="itr-import-table"></div>
       <div class="small-note" id="itr-import-summary" style="margin-top:8px;"></div>
@@ -4831,7 +4831,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(!todo.length) return;
     const box = document.getElementById('itr-import-errors');
     btn.disabled = true;
-    let created = 0, filled = 0, failed = 0, doneN = 0; const errMsgs = [];
+    let created = 0, filled = 0, failed = 0, doneN = 0, payMissing = false; const errMsgs = [];
     const setProgress = ()=>{ if(box){ box.style.color = 'var(--ink-soft)'; box.textContent = `Importing… ${doneN} / ${todo.length} client(s)`; } };
     setProgress();
     const fail = (p, step, error)=>{ console.error('ITR import', step, error); failed++; if(errMsgs.length < 6) errMsgs.push(`${p.c.NAME||p.name} (${step}): ${(error && (error.message || error.details || error.code)) || 'unknown error'}`); };
@@ -4860,8 +4860,16 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         const applyLocal = k=>{ t[mapK[k]] = patch[k]; logFieldAudit('cor_tasks_audit','record_id',t.id,k,k.replace(/_/g,' ')+' (ITR 2025 import)',olds[k],patch[k]); };
         if(keys.length){
           const body = {}; keys.forEach(k=>{ body[k] = patch[k]; });
-          const r1 = await sb.from('cor_tasks').update(body).eq('id', t.id).select('id');
-          if(!r1.error && r1.data && r1.data.length){ keys.forEach(applyLocal); }
+          let r1 = await sb.from('cor_tasks').update(body).eq('id', t.id).select('id');
+          let usedKeys = keys;
+          // the live cor_tasks table has no payment_status / payment_date column yet -> save everything else, report it once
+          if(r1.error && /payment_(status|date)/i.test(String(r1.error.message||''))){
+            payMissing = true;
+            usedKeys = keys.filter(k=>k!=='payment_status' && k!=='payment_date');
+            if(usedKeys.length){ const b2 = {}; usedKeys.forEach(k=>{ b2[k] = patch[k]; }); r1 = await sb.from('cor_tasks').update(b2).eq('id', t.id).select('id'); }
+            else r1 = {error:null, data:[{}]};
+          }
+          if(!r1.error && r1.data && r1.data.length){ usedKeys.forEach(applyLocal); }
           else {
             for(const k of keys){
               const { data: upd, error } = await sb.from('cor_tasks').update({[k]: patch[k]}).eq('id', t.id).select('id');
@@ -4878,7 +4886,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     renderItrImport();
     if(box){
       box.style.color = failed ? 'var(--rust,#b3402a)' : 'var(--forest,#2f6b3a)';
-      box.innerHTML = '<b>' + esc(resultLine) + '</b>' + (errMsgs.length ? '<br>Database message(s):<br>' + errMsgs.map(esc).join('<br>') : '');
+      box.innerHTML = '<b>' + esc(resultLine) + '</b>' + (errMsgs.length ? '<br>Database message(s):<br>' + errMsgs.map(esc).join('<br>') : '')
+        + (payMissing ? '<br><span style="color:var(--rust,#b3402a);"><b>Payment Status / Payment Date were NOT saved:</b> the database table has no such columns yet. Run <b>cor_tasks_payment_columns_migration.sql</b> once in the Supabase SQL Editor, hard-refresh this page, then press &ldquo;Preview&rdquo; and &ldquo;Import ticked clients&rdquo; again &mdash; everything else is already saved and only the empty payment fields get filled.</span>' : '');
     }
     renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
   });
