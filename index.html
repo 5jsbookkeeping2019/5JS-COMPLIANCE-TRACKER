@@ -2364,9 +2364,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
     if(salesRow){
       for(let q=1;q<=4;q++){
-        st.vals['q'+q+'_sales'] = salesRow['q'+q+'_sales'];
-        st.vals['q'+q+'_exp'] = salesRow['q'+q+'_expenses'];
-        if(q<=3) st.refIT[q] = salesRow['q'+q+'_it_tax_due'];
+        // the figures exactly as the Sales Summary tab shows them (incl. VAT-worksheet values and 0-filing zeros)
+        st.vals['q'+q+'_sales'] = salesShownAmt(salesRow, 'q'+q+'_sales');
+        st.vals['q'+q+'_exp'] = salesShownAmt(salesRow, 'q'+q+'_expenses');
+        if(q<=3) st.refIT[q] = salesShownAmt(salesRow, 'q'+q+'_it_tax_due');
       }
     }
     // 2307s received for this client (matched by TIN) for that year, per quarter
@@ -2413,10 +2414,38 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // Not edited by hand -> re-read the Sales Summary / 2307 figures every time the tab is opened,
     // so expenses or sales that were just updated elsewhere show up here. Hand-typed numbers are kept.
     if(!taxopt || !taxopt.dirty) taxoptLoad(); else renderTaxoptResults();
+    // then quietly re-read the database, in case another edit never reached this page's copy
+    const before = JSON.stringify(salesSummary);
+    taxoptFetchFresh().then(ok=>{
+      if(!ok || JSON.stringify(salesSummary) === before) return;
+      const tabActive = document.getElementById('panel-taxopt') && document.getElementById('panel-taxopt').classList.contains('active');
+      if(tabActive && (!taxopt || !taxopt.dirty)) taxoptLoad();
+    });
   }
   toEl.client.addEventListener('change', taxoptLoad);
   toEl.year.addEventListener('change', taxoptLoad);
-  document.getElementById('taxopt-reload-btn').addEventListener('click', taxoptLoad);
+  // Read the Sales Summary / VAT worksheet / 2307 figures straight from the database (not only the copy held in memory)
+  async function taxoptFetchFresh(){
+    try{
+      const [sd, vd, wd] = await Promise.all([
+        fetchAllRows('cor_sales_summary'),
+        fetchAllRows('cor_vat_worksheet').catch(()=>null),
+        fetchAllRows('cor_2307_received').catch(()=>null),
+      ]);
+      salesSummary = mapSalesSummaryFromDb(sd);
+      if(vd) vatWorksheet = vd;
+      if(wd) sawtEntries = mapSawtFromDb(wd);
+      return true;
+    }catch(err){ console.error(err); return false; }
+  }
+  document.getElementById('taxopt-reload-btn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('taxopt-reload-btn'), label = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Reloading…';
+    const fresh = await taxoptFetchFresh();
+    btn.disabled = false; btn.textContent = label;
+    taxoptLoad();
+    toast(fresh ? 'Reloaded from the Sales Summary and 2307 figures (latest saved data).' : 'Could not reach the database — reloaded from the data already on this page.');
+  });
   toEl.kind.addEventListener('change', renderTaxoptForm);
   toEl.thru.addEventListener('change', renderTaxoptResults);
   toEl.basis.addEventListener('change', renderTaxoptResults);
