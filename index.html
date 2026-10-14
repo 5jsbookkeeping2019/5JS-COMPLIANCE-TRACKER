@@ -869,6 +869,17 @@
       <div class="small-note" id="undo-tasks-summary" style="margin-top:8px;"></div>
       <button class="secondary" id="undo-tasks-load-btn" style="margin-top:8px;">Check which tasks can be removed</button>
       <button class="secondary" id="undo-tasks-apply-btn" style="margin-top:8px;" disabled>Remove these tasks</button>
+      <div id="staff-access-section">
+      <h3 style="margin-top:30px;">Staff access — who can log in</h3>
+      <div class="small-note">Only emails on this list can use the tracker after they log in with the link sent to their email. <b>Staff</b> = no Credentials tab and cannot delete clients / sales rep names; <b>Admin</b> = full access (and can edit this list). Emails are saved in lowercase. You cannot remove or demote yourself here, so you can never lock yourself out. <span style="color:var(--ink-soft);">If saving fails, run <b>cor_staff_management_migration.sql</b> once in the Supabase SQL Editor.</span></div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <input class="search-input" id="staff-new-email" type="email" placeholder="email of the new staff, e.g. john@gmail.com" style="min-width:280px;">
+        <select class="filter" id="staff-new-role"><option value="staff">Staff</option><option value="admin">Admin</option></select>
+        <button class="secondary" id="staff-add-btn">Add to the list</button>
+      </div>
+      <div class="table-scroll" style="margin-top:12px;max-width:640px;max-height:320px;" id="staff-table"></div>
+      <div class="small-note" id="staff-status" style="margin-top:8px;"></div>
+      </div>
       <h3 style="margin-top:30px;">Task clean-up: &ldquo;Pending&rdquo; tasks that are already done, and duplicate tasks</h3>
       <div class="small-note"><b>1) Done by + Date typed but Status still Pending</b> &mdash; staff typed who did it and the date, but the Status dropdown was never changed to Done, so the task still shows as Pending / Overdue. <b>2) Duplicate tasks</b> &mdash; two tasks for the same client + form + period (e.g. one &ldquo;SEPTEMBER 2026&rdquo; that staff marked Done, and a second &ldquo;SEPT 2026&rdquo; created later that is still Pending). A duplicate is only offered for removal when it is completely untouched (Pending, nothing typed) and another task of the same client/form/period exists.</div>
       <div class="table-scroll" style="margin-top:12px;max-width:1000px;max-height:340px;" id="tidy-table"></div>
@@ -4754,6 +4765,50 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     document.addEventListener('keydown', e=>{ if(e.key === 'Escape' && panel.classList.contains('tr-full') && !document.querySelector('.modal-backdrop')) set(false); });
     document.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click', ()=>{ if(panel.classList.contains('tr-full')) set(false); }));
   })();
+  // ---- Staff access (admins only): add / change / remove the emails in cor_authorized_staff
+  let staffList = [];
+  function staffStatus(msg, bad){ const el = document.getElementById('staff-status'); if(el){ el.style.color = bad ? 'var(--rust,#b3402a)' : 'var(--ink-soft)'; el.textContent = msg; } }
+  function staffErrText(err){ const m = String((err && (err.message || err.details)) || 'unknown error'); return m + ' — run cor_staff_management_migration.sql in the Supabase SQL Editor (once), then try again.'; }
+  function renderStaffList(){
+    const area = document.getElementById('staff-table'); if(!area) return;
+    const me = String(currentUserEmail||'').toLowerCase();
+    area.innerHTML = staffList.length ? `<table><thead><tr><th>Email</th><th>Role</th><th></th></tr></thead><tbody>${staffList.map(r=>{ const mine = String(r.email||'').toLowerCase() === me;
+      return `<tr><td>${esc(r.email)}${mine?' <span style="color:var(--ink-soft);">(you)</span>':''}</td><td><select class="inline-status staff-role" data-email="${esc(r.email)}"${mine?' disabled title="You cannot change your own role"':''}><option value="staff"${r.role==='staff'?' selected':''}>Staff</option><option value="admin"${r.role==='admin'||!r.role?' selected':''}>Admin</option></select></td><td>${mine?'':`<button class="tiny staff-remove" data-email="${esc(r.email)}">Remove</button>`}</td></tr>`; }).join('')}</tbody></table>` : '<div class="small-note">No rows could be read.</div>';
+  }
+  async function loadStaffList(){
+    if(!isAdmin() || !sb) return;
+    const { data, error } = await sb.from('cor_authorized_staff').select('email, role').order('email');
+    if(error){ staffStatus('Could not read the staff list: ' + staffErrText(error), true); return; }
+    staffList = data || []; renderStaffList();
+    staffStatus(staffList.length + ' email(s) on the list.');
+  }
+  document.getElementById('staff-add-btn').addEventListener('click', async ()=>{
+    if(!isAdmin()) return;
+    const inp = document.getElementById('staff-new-email'), role = document.getElementById('staff-new-role').value;
+    const email = String(inp.value||'').trim().toLowerCase();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ staffStatus('Please enter a valid email address.', true); return; }
+    if(email === String(currentUserEmail||'').toLowerCase()){ staffStatus('That is your own email — you are already on the list.', true); return; }
+    const { data, error } = await sb.from('cor_authorized_staff').upsert({email, role}, {onConflict:'email'}).select('email');
+    if(error || !data || !data.length){ staffStatus('Could not save: ' + staffErrText(error || {message:'the database changed no row (permission)'}), true); return; }
+    inp.value = ''; toast(email + ' added as ' + role + '.');
+    await loadStaffList(); staffStatus(email + ' can now log in (as ' + role + '). Ask them to request a new login link.');
+  });
+  document.getElementById('staff-table').addEventListener('change', async e=>{
+    if(!e.target.classList.contains('staff-role') || !isAdmin()) return;
+    const email = e.target.dataset.email, role = e.target.value;
+    const { data, error } = await sb.from('cor_authorized_staff').update({role}).eq('email', email).select('email');
+    if(error || !data || !data.length){ staffStatus('Could not change the role: ' + staffErrText(error || {message:'the database changed no row (permission)'}), true); await loadStaffList(); return; }
+    toast(email + ' is now ' + role + '.'); await loadStaffList();
+  });
+  document.getElementById('staff-table').addEventListener('click', async e=>{
+    const b = e.target.closest('.staff-remove'); if(!b || !isAdmin()) return;
+    const email = b.dataset.email;
+    if(String(email).toLowerCase() === String(currentUserEmail||'').toLowerCase()){ staffStatus('You cannot remove yourself.', true); return; }
+    if(!confirm('Remove ' + email + ' from the list? They will no longer be able to use the tracker.')) return;
+    const { data, error } = await sb.from('cor_authorized_staff').delete().eq('email', email).select('email');
+    if(error || !data || !data.length){ staffStatus('Could not remove: ' + staffErrText(error || {message:'the database changed no row (permission)'}), true); return; }
+    toast(email + ' removed.'); await loadStaffList();
+  });
   // ---- Task clean-up: Done by + Date but still PENDING, and duplicate tasks (same client + form + normalised period)
   let tidyRows = [], tidyUnchecked = new Set();
   function tidyPlan(){
@@ -8089,6 +8144,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function applyRoleVisibility(){
     const credsTabBtn = document.querySelector('.tab-btn[data-tab="creds"]');
     if(credsTabBtn) credsTabBtn.style.display = isAdmin() ? '' : 'none';
+    const staffSec = document.getElementById('staff-access-section'); if(staffSec) staffSec.style.display = isAdmin() ? '' : 'none';
+    if(isAdmin()) loadStaffList();
     // Opened straight onto #creds by someone who may not see it -> go to the first menu instead.
     if(!isAdmin() && credsTabBtn && credsTabBtn.classList.contains('active')){ activateTab('calendar'); try{ history.replaceState(null, '', '#calendar'); }catch(err){} }
   }
