@@ -680,6 +680,13 @@
           <span class="small-note" id="vat-count" style="margin:0;"></span>
         </div>
       </div>
+      <div class="filter-row" id="vat-cross-add" style="margin:8px 0 2px;align-items:center;gap:6px;flex-wrap:wrap;" title="For a Non-VAT client that reached ₱3,000,000 this year: it is not on this tab yet because its Tax Type is Non-VAT. Pick it here and the month it crossed — it is moved onto this tab for the year (Sales Summary Tax Type → VAT) with the percentage-tax / VAT split.">
+        <span class="small-note" style="margin:0;"><b>Non-VAT client that crossed ₱3M:</b></span>
+        <input class="search-input" id="vat-cross-client" list="vat-cross-list" placeholder="type client ID or name" style="min-width:230px;">
+        <datalist id="vat-cross-list"></datalist>
+        <select class="filter" id="vat-cross-month"><option value="">crossed ₱3M in…</option></select>
+        <button class="secondary" id="vat-cross-btn">Move to VAT tab</button>
+      </div>
       <div class="small-note">One row per VAT client (Sales Summary rows tagged VAT for the chosen year). Type each month's <b>vatable Net Sales</b>, <b>VAT-Exempt</b>, <b>Zero-Rated</b> and <b>Net Purchase</b> (you can type a formula starting with <b>=</b>, like in Excel). <b>VAT Due = Net Sales × 12% − Net Purchase × 12% − Tax Paid + Carry-in</b> (same as your Excel). Each quarter's Sales (vatable + exempt + zero-rated), Expenses (Net Purchase + any <b>Non-VAT Exp</b> you add here) and VAT Due flow automatically into the <b>Sales Summary</b> and the <b>2550Q task's Tax Due</b> in the Task Tracker. A quarter turns <b>READY FOR ENCODING</b> (signal for whoever prepares the SLSP / VAT Relief) once all 3 months have both Net Sales and Net Purchase filled in (0 counts); type who encoded it in <b>Relief done by</b> to mark it done. <b>Carry-in</b> fills itself in (last quarter's negative VAT Due = unused credit); type a number to override, e.g. Q1's credit from last year (negative number, same as the Excel). <b>Finished quarters are locked</b> (grey, read-only) so filed figures can't be changed by mistake — use the lock button above to lock a quarter after it's filed, or unlock it for a correction.</div>
       <div class="table-scroll" style="margin-top:10px;" id="vat-table"></div>
     </div>
@@ -2376,32 +2383,93 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     renderVat();
     toast(val===null ? 'Percentage-tax part is automatic again.' : 'Percentage-tax part saved — VAT part and Tax Due updated.');
   }, true);
-  vatTable.addEventListener('change', async e=>{
-    const sel = e.target.closest('.vat-start-sel');
-    if(!sel) return;
-    e.stopImmediatePropagation();
-    const tr = sel.closest('tr[data-key]'), idNo = tr.dataset.idno, year = Number(vatYearFilter.value);
-    const val = sel.value === '' ? null : Number(sel.value);
+  // Save "crossed ₱3M in (month)" for client+year, then fix the tasks and push the Tax Due. Returns the toast text, or null when it could not be saved.
+  async function saveVatStartMonth(idNo, year, val){
     let ws;
     try { ws = await ensureVatWs(idNo, year); }
-    catch(err){ console.error(err); toast('Could not save — the VAT Worksheet table may not be set up yet (run cor_vat_worksheet_migration.sql in Supabase).'); renderVat(); return; }
+    catch(err){ console.error(err); toast('Could not save — the VAT Worksheet table may not be set up yet (run cor_vat_worksheet_migration.sql in Supabase).'); return null; }
     const oldVal = ws.vat_start_month === undefined ? null : ws.vat_start_month;
     const stamp = {updated_at: new Date().toISOString(), updated_by: currentUserEmail};
     const { error } = await sb.from('cor_vat_worksheet').update({vat_start_month: val, ...stamp}).eq('id', ws.id);
     if(error){
       console.error(error);
       toast('Could not save the VAT start month (' + (error.message||'unknown error') + ') — run cor_vat_start_month_migration.sql in the Supabase SQL Editor first.');
-      renderVat(); return;
+      return null;
     }
     ws.vat_start_month = val; ws.updated_at = stamp.updated_at; ws.updated_by = stamp.updated_by;
     logFieldAudit('cor_vat_worksheet_audit', 'record_id', ws.id, 'vat_start_month', 'VAT starts (month)', oldVal===null?null:VAT_MONTH_NAMES[oldVal-1], val===null?null:VAT_MONTH_NAMES[val-1]);
     const t = await applyVatSplitTasks(idNo, year);   // first create / remove the tasks...
     await syncVatLinks(ws);                            // ...then push the Tax Due (VAT + percentage tax) to them and to the Sales Summary
-    renderVat();
     const lockedQs = vatYearCalc(vatEffectiveWs(idNo, year, ws)).filter(qc=>qc.dueAny && quarterIsLocked(year, qc.q)).map(qc=>'Q'+qc.q);
-    toast((val ? `VAT starts ${VAT_MONTH_NAMES[val-1]} ${year}: ${t.created} task(s) created, ${t.removed} removed, Tax Due updated.` : `VAT start month cleared — the whole of ${year} is VAT again.`)
-      + (lockedQs.length ? ` ${lockedQs.join(', ')} ${lockedQs.length>1?'are':'is'} locked, so the Sales Summary figures of ${lockedQs.length>1?'those quarters were':'that quarter was'} not changed — unlock (Lock button on this tab), then press "Sync" to update.` : ''));
+    return (val ? `Crossed ₱3M in ${VAT_MONTH_NAMES[val-1]} ${year}: ${t.created} task(s) created, ${t.removed} removed, Tax Due updated.` : `Start month cleared — the whole of ${year} is VAT again.`)
+      + (lockedQs.length ? ` ${lockedQs.join(', ')} ${lockedQs.length>1?'are':'is'} locked, so the Sales Summary figures of ${lockedQs.length>1?'those quarters were':'that quarter was'} not changed — unlock (Lock button on this tab), then press "Sync" to update.` : '');
+  }
+  vatTable.addEventListener('change', async e=>{
+    const sel = e.target.closest('.vat-start-sel');
+    if(!sel) return;
+    e.stopImmediatePropagation();
+    const tr = sel.closest('tr[data-key]'), idNo = tr.dataset.idno, year = Number(vatYearFilter.value);
+    const msg = await saveVatStartMonth(idNo, year, sel.value === '' ? null : Number(sel.value));
+    renderVat();
+    if(msg) toast(msg);
   }, true);
+
+  // ---- Move a Non-VAT client that reached ₱3M onto the VAT tab ----
+  const vatCrossClient = document.getElementById('vat-cross-client'), vatCrossMonth = document.getElementById('vat-cross-month');
+  vatCrossMonth.innerHTML = '<option value="">crossed ₱3M in…</option>' + VAT_MONTH_NAMES.map((n,i)=>`<option value="${i+1}">${n}</option>`).join('');
+  function vatCrossCandidates(year){
+    const onTab = new Set(vatRowsForYear(year).rows.map(e=>e.key));
+    return clients.filter(c=>{
+      const id = String(c['CLIENT ID NO.']||'').trim();
+      if(!id || onTab.has(id.toUpperCase()) || clientIsBranch(c)) return false;
+      return !vatIsNoLonger({client_id_no:id});
+    });
+  }
+  function refreshVatCrossList(){
+    const year = Number(vatYearFilter.value) || new Date().getFullYear();
+    document.getElementById('vat-cross-list').innerHTML = vatCrossCandidates(year).map(c=>`<option value="${esc(c['CLIENT ID NO.'])} — ${esc(c.NAME||'')}"></option>`).join('');
+  }
+  vatCrossClient.addEventListener('focus', refreshVatCrossList);
+  document.getElementById('vat-cross-btn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('vat-cross-btn');
+    const year = Number(vatYearFilter.value) || new Date().getFullYear();
+    const month = Number(vatCrossMonth.value);
+    const typed = String(vatCrossClient.value||'').trim().toUpperCase();
+    if(!typed){ toast('Type the client first.'); return; }
+    if(!month){ toast('Pick the month the client crossed ₱3,000,000.'); return; }
+    const cands = vatCrossCandidates(year);
+    const idPart = typed.split('—')[0].trim();
+    let c = cands.find(x=> String(x['CLIENT ID NO.']).trim().toUpperCase() === idPart);
+    if(!c){ const byName = cands.filter(x=> String(x.NAME||'').toUpperCase().includes(typed)); if(byName.length===1) c = byName[0]; else if(byName.length>1){ toast('More than one client matches — type the Client ID.'); return; } }
+    if(!c){ toast('That client was not found — or it is already on the VAT tab for ' + year + '.'); return; }
+    const idNo = String(c['CLIENT ID NO.']).trim();
+    if(!confirm(`${c.NAME||idNo}: move to the VAT tab for ${year}, crossed ₱3,000,000 in ${VAT_MONTH_NAMES[month-1]}?\n\n• Sales Summary Tax Type for ${year} becomes VAT\n• Months before ${VAT_MONTH_NAMES[month-1]} stay percentage tax (2551Q); ${VAT_MONTH_NAMES[month-1]} is split at ₱3,000,000; later months are VAT (2550Q)\n• Type the monthly sales (Jan onward) on this tab.`)) return;
+    btn.disabled = true;
+    try {
+      // 1. this year's Sales Summary row -> Tax Type VAT (created when the client has none yet)
+      let row = salesSummary.find(r=> String(r.client_id_no||'').trim().toUpperCase() === idNo.toUpperCase() && Number(r.year) === year);
+      const stamp = {updated_at: new Date().toISOString(), updated_by: currentUserEmail};
+      if(row){
+        const oldTt = row.tax_type;
+        const { error } = await sb.from('cor_sales_summary').update({tax_type:'VAT', ...stamp}).eq('id', row._id);
+        if(error){ console.error(error); toast('Could not change the Sales Summary Tax Type (' + (error.message||'unknown error') + ').'); return; }
+        row.tax_type = 'VAT'; row.updated_at = stamp.updated_at; row.updated_by = stamp.updated_by;
+        logFieldAudit('cor_sales_summary_audit', 'record_id', row._id, 'tax_type', 'Tax Type (crossed ₱3M — moved to VAT tab)', oldTt, 'VAT');
+      } else {
+        const insertRow = {client_id_no:idNo, year, name:c.NAME||null, tin:c.TIN||null, trade_name:c['TRADE NAME']||null, tax_type:'VAT', client_status:c['CLIENT?']||null, agent:c['SALES REPRESENTATIVE']||null};
+        const { data, error } = await sb.from('cor_sales_summary').insert(insertRow).select().single();
+        if(error){ console.error(error); toast('Could not create the Sales Summary row (' + (error.message||'unknown error') + ').'); return; }
+        salesSummary.push(mapSalesSummaryFromDb([data])[0]);
+      }
+      // 2. start month + split tasks + Tax Due
+      const msg = await saveVatStartMonth(idNo, year, month);
+      initSalesSummaryFilters();
+      if(document.getElementById('sales-table')) renderSalesSummary();
+      vatCrossClient.value = ''; vatCrossMonth.value = '';
+      renderVat();
+      toast(`${c.NAME||idNo} is now on the VAT tab for ${year}. ` + (msg||''));
+    } finally { btn.disabled = false; }
+  });
   function VAT_FIELD_LABEL(field){
     let m = /^m(\d+)_(net_sales|vat_exempt|zero_rated|net_purchase)$/.exec(field);
     if(m) return VAT_MONTH_NAMES[Number(m[1])-1] + ' ' + VAT_MONTH_FIELDS.find(([k])=>k===m[2])[1];
