@@ -1474,10 +1474,32 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const PT_RATE = 0.03;
   function vatStartOf(ws){ const n = Number(ws && ws.vat_start_month); return (n>=1 && n<=12) ? Math.floor(n) : 0; }
   // 'vat' (every month of the quarter is VAT) | 'pt' (none is) | 'split' (percentage tax first, then VAT)
+  // (the month the client crossed P3M is itself split by amount, so a quarter that contains it is 'split')
   function vatQuarterMode(start, q){
     if(!start) return 'vat';
     const first = (q-1)*3+1, last = q*3;
-    return start <= first ? 'vat' : (start > last ? 'pt' : 'split');
+    return start < first ? 'vat' : (start > last ? 'pt' : 'split');
+  }
+  // The month the client crossed P3,000,000 ("VAT starts" month) is split by amount: the sales that still fit under the
+  // P3,000,000 (the balance left after the earlier months' sales) stay percentage tax; the excess is VAT. The percentage-tax
+  // part can be typed over (vat_split_pt_amount) when the auto figure is not what was filed. Only Net Sales of that month
+  // is split (VAT-exempt / zero-rated sales never carry percentage tax); all of that month's Net Purchase counts as VAT input.
+  const VAT_THRESHOLD = 3000000;
+  function vatSplitInfo(ws){
+    const start = vatStartOf(ws);
+    if(!start) return null;
+    let cum = 0;
+    for(let m=1; m<start; m++) cum += (vatNum(ws['m'+m+'_net_sales'])||0) + (vatNum(ws['m'+m+'_vat_exempt'])||0) + (vatNum(ws['m'+m+'_zero_rated'])||0);
+    const room = Math.max(0, VAT_THRESHOLD - cum);
+    const sales = vatNum(ws['m'+start+'_net_sales']);
+    const manual = vatNum(ws.vat_split_pt_amount);
+    let pt = null, vat = null;
+    if(sales !== null){
+      const cap = Math.max(0, sales);
+      pt = vatRound(Math.min(cap, Math.max(0, manual!==null ? manual : room)));
+      vat = vatRound(sales - pt);
+    }
+    return {start, cum: vatRound(cum), room: vatRound(room), sales, pt, vat, manual: manual!==null};
   }
   // All 4 quarters' figures for one worksheet row. Blank (null) means "nothing
   // typed yet", never a misleading 0.
@@ -1498,16 +1520,30 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const out = [];
     let prevDueRaw = 0;
     for(let q=1; q<=4; q++){
-      const start = vatStartOf(ws), mode = vatQuarterMode(start, q), vFrom = start || 1;
-      const lastPre = start ? Math.min(q*3, start-1) : 0;          // last month of this quarter that is still percentage-tax
-      const sales = vatMonthSum(ws,q,'net_sales',vFrom), exempt = vatMonthSum(ws,q,'vat_exempt');
-      const zero = vatMonthSum(ws,q,'zero_rated'), purch = vatMonthSum(ws,q,'net_purchase',vFrom);
-      // percentage-tax months (before the VAT start): base = all their sales, tax = 3%
-      let ptBase = null;
-      if(mode !== 'vat'){
-        const a = vatMonthSum(ws,q,'net_sales',1,lastPre), b = vatMonthSum(ws,q,'vat_exempt',1,lastPre), c = vatMonthSum(ws,q,'zero_rated',1,lastPre);
-        ptBase = (a===null && b===null && c===null) ? null : vatRound((a||0)+(b||0)+(c||0));
+      const start = vatStartOf(ws), split = vatSplitInfo(ws);
+      let mode = vatQuarterMode(start, q);
+      const exempt = vatMonthSum(ws,q,'vat_exempt'), zero = vatMonthSum(ws,q,'zero_rated');
+      // month by month: which part is VAT (12%) and which is still percentage tax (3%)
+      let sales = null, purch = null, ptBase = null;
+      const addTo = (cur, v)=> v===null ? cur : (cur===null ? v : cur + v);
+      for(let m=(q-1)*3+1; m<=q*3; m++){
+        const ns = vatNum(ws['m'+m+'_net_sales']), ex = vatNum(ws['m'+m+'_vat_exempt']), zr = vatNum(ws['m'+m+'_zero_rated']), np = vatNum(ws['m'+m+'_net_purchase']);
+        if(!start || m > start){ sales = addTo(sales, ns); purch = addTo(purch, np); }
+        else if(m === start){
+          sales = addTo(sales, split.vat); purch = addTo(purch, np);
+          ptBase = addTo(ptBase, split.pt);
+        } else if(ns!==null || ex!==null || zr!==null){ ptBase = addTo(ptBase, (ns||0)+(ex||0)+(zr||0)); }
       }
+      if(sales!==null) sales = vatRound(sales);
+      if(purch!==null) purch = vatRound(purch);
+      if(ptBase!==null) ptBase = vatRound(ptBase);
+      if(mode === 'split'){
+        // the month that crossed P3M turned out to be all VAT (no room left) -> the quarter is plain VAT; or all of it still fits -> percentage tax only
+        if(ptBase!==null && ptBase===0) mode = 'vat';
+        else if(ptBase!==null && ptBase>0 && !(sales>0) && !(purch>0)) mode = 'pt';
+      }
+      if(mode === 'vat'){ ptBase = null; }
+      if(mode === 'pt'){ sales = null; purch = null; }
       const ptDue = ptBase===null ? null : vatRound(ptBase*PT_RATE);
       // every month's net sales (not only the VAT months) counts for the Sales Summary / income tax
       const allSales = vatMonthSum(ws,q,'net_sales'), allPurch = vatMonthSum(ws,q,'net_purchase');
@@ -1528,6 +1564,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         outputVat, inputVat,
         vatDue: (mode !== 'pt' && (sales!==null || purch!==null)) ? dueRaw : null,
         mode, ptBase, ptDue,
+        cross: (split && start>=(q-1)*3+1 && start<=q*3) ? split : null,
         salesTotal: (allSales===null && exempt===null && zero===null) ? null : vatRound((allSales||0)+(exempt||0)+(zero||0)),
         expensesTotal: (allPurch===null && nonVat===null) ? null : vatRound((allPurch||0)+(nonVat||0)),
         complete, doneBy,
@@ -2168,7 +2205,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       for(let i=0;i<3;i++){ const m = m0+i+1; VAT_MONTH_FIELDS.forEach(([f])=>{ inputs += `<td>${numInput('m'+m+'_'+f, ws['m'+m+'_'+f])}</td>`; }); }
       return `<tr data-key="${esc(e.key)}" data-idno="${esc(e.idNo)}">
         <td class="frozen-col" style="left:0;width:230px;min-width:230px;"><b>${esc(e.name||'(not in Client Registry)')}</b><div style="color:var(--ink-soft);font-size:10.5px;">${esc(e.idNo)} · TIN ${esc(fmtTin(e.tin))}${e.trade?' · '+esc(e.trade):''}${e.zero?' · <b style="color:var(--gold);">'+esc(String(resolveSalesClientStatus(e.salesRow||{client_id_no:e.idNo})).toUpperCase())+' — all ₱0</b>':''}</div>
-          <div style="margin-top:3px;font-size:10.5px;color:var(--ink-soft);" title="Only for a client that crossed the ₱3,000,000 VAT threshold part-way through ${year}: the months before are Non-VAT (3% percentage tax, form 2551Q), from this month on it is VAT (form 2550Q). Leave on “all year” for a client that was VAT the whole year.">VAT starts <select class="vat-start-sel" style="font-size:11px;"${e.zero?' disabled':''}><option value="">all year (VAT)</option>${VAT_MONTH_NAMES.map((n,i)=>`<option value="${i+1}"${vatStartOf(e.ws)===i+1?' selected':''}>${n}</option>`).join('')}</select>${vatStartOf(e.ws) ? ` · <b>Q${q}: ${qc.mode==='pt'?'percentage tax only':qc.mode==='split'?'percentage tax + VAT':'VAT'}</b>` : ''}</div></td>
+          <div style="margin-top:3px;font-size:10.5px;color:var(--ink-soft);" title="Only for a client that crossed the ₱3,000,000 VAT threshold part-way through ${year}. Pick the month it crossed: the months before are Non-VAT (3% percentage tax, form 2551Q); in that month the sales that still fit under ₱3,000,000 stay percentage tax and the excess is VAT (form 2550Q); the months after are VAT. Leave on “all year” for a client that was VAT the whole year.">Crossed ₱3M in <select class="vat-start-sel" style="font-size:11px;"${e.zero?' disabled':''}><option value="">— (all year VAT)</option>${VAT_MONTH_NAMES.map((n,i)=>`<option value="${i+1}"${vatStartOf(e.ws)===i+1?' selected':''}>${n}</option>`).join('')}</select>${vatStartOf(e.ws) ? ` · <b>Q${q}: ${qc.mode==='pt'?'percentage tax only':qc.mode==='split'?'percentage tax + VAT':'VAT'}</b>` : ''}</div>${qc.cross ? `<div class="vat-cross-info" style="margin-top:3px;font-size:10.5px;color:var(--ink-soft);line-height:1.5;" title="The month that crossed ₱3,000,000 is split by amount: sales up to the ₱3,000,000 balance = percentage tax (3%, 2551Q), the excess = VAT (12%, 2550Q). Type the ₱ amount in the box to override the automatic split; clear it to go back to automatic.">${VAT_MONTH_NAMES[qc.cross.start-1]}: earlier months ₱${fmtVatMoney(qc.cross.cum)} → room under ₱3M ₱${fmtVatMoney(qc.cross.room)}<br>% tax part <input class="inline-text vat-split-pt mono" style="width:92px;text-align:right;font-size:11px;" placeholder="auto ${esc(fmtVatMoney(vatSplitInfo(Object.assign({}, ws, {vat_split_pt_amount:null})).pt||0))}" value="${qc.cross.manual ? esc(fmtNumInput(ws.vat_split_pt_amount)) : ''}"${e.zero||qLocked?' disabled':''}> · VAT part ₱${fmtVatMoney(qc.cross.vat||0)}</div>` : ''}</td>
         ${inputs}
         <td>${numInput('q'+q+'_tax_paid', ws['q'+q+'_tax_paid'])}</td>
         <td>${numInput('q'+q+'_carry_in', ws['q'+q+'_carry_in'], ` placeholder="auto ${esc(fmtNumInput(qc.carryAuto)||'0')}" title="Leave blank for automatic (last quarter's unused credit). Type a number to override, negative = credit."`)}</td>
@@ -2274,7 +2311,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   });
   // ---- Client that crossed the VAT threshold part-way through the year: "VAT starts" month ----
   // Which of 2551Q (percentage tax) / 2550Q (VAT) a quarter needs, from the VAT start month.
-  function vatFormsForQuarter(start, q){ const m = vatQuarterMode(start, q); return m==='pt' ? ['2551Q'] : m==='vat' ? ['2550Q'] : ['2551Q','2550Q']; }
+  function vatFormsForQuarter(ws, q){
+    const calc = vatYearCalc(ws || {}, false)[q-1];
+    return calc.mode==='pt' ? ['2551Q'] : calc.mode==='vat' ? ['2550Q'] : ['2551Q','2550Q'];
+  }
   // Tasks of a split client: create the missing 2551Q / 2550Q tasks, list the untouched ones that no longer apply.
   function vatSplitTaskPlan(idNo, year){
     const client = findClientByIdNo(idNo), ws = vatWsFor(idNo, year);
@@ -2287,7 +2327,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     tasks.forEach(t=>{
       if(t.clientId !== client._id || !['2550Q','2551Q'].includes(String(t.form).toUpperCase())) return;
       const m = new RegExp('^Q([1-4]) '+year+'$').exec(String(t.period||'').trim()); if(!m) return;
-      if(!vatFormsForQuarter(start, Number(m[1])).includes(String(t.form).toUpperCase()) && taskIsUntouched(t)) out.remove.push(t);
+      if(!vatFormsForQuarter(ws, Number(m[1])).includes(String(t.form).toUpperCase()) && taskIsUntouched(t)) out.remove.push(t);
     });
     return out;
   }
@@ -2308,6 +2348,34 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
     return {created, removed};
   }
+  // Typed override of the percentage-tax part of the month that crossed ₱3,000,000 (blank = automatic)
+  vatTable.addEventListener('change', async e=>{
+    const inp = e.target.closest('.vat-split-pt');
+    if(!inp) return;
+    e.stopImmediatePropagation();
+    const tr = inp.closest('tr[data-key]'), idNo = tr.dataset.idno, year = Number(vatYearFilter.value);
+    const raw = String(inp.value||'').replace(/[,\s₱]/g,'');
+    const val = raw === '' ? null : Number(raw);
+    if(val !== null && (!isFinite(val) || val < 0)){ toast('Type a positive amount (or clear the box for automatic).'); renderVat(); return; }
+    let ws;
+    try { ws = await ensureVatWs(idNo, year); }
+    catch(err){ console.error(err); toast('Could not save — the VAT Worksheet table may not be set up yet.'); renderVat(); return; }
+    const oldVal = ws.vat_split_pt_amount === undefined ? null : ws.vat_split_pt_amount;
+    if(oldVal === val){ renderVat(); return; }
+    const stamp = {updated_at: new Date().toISOString(), updated_by: currentUserEmail};
+    const { error } = await sb.from('cor_vat_worksheet').update({vat_split_pt_amount: val, ...stamp}).eq('id', ws.id);
+    if(error){
+      console.error(error);
+      toast('Could not save the percentage-tax amount (' + (error.message||'unknown error') + ') — run cor_vat_start_month_migration.sql in the Supabase SQL Editor first.');
+      renderVat(); return;
+    }
+    ws.vat_split_pt_amount = val; ws.updated_at = stamp.updated_at; ws.updated_by = stamp.updated_by;
+    logFieldAudit('cor_vat_worksheet_audit', 'record_id', ws.id, 'vat_split_pt_amount', 'Percentage-tax part of the ₱3M month', oldVal, val);
+    await applyVatSplitTasks(idNo, year);
+    await syncVatLinks(ws);
+    renderVat();
+    toast(val===null ? 'Percentage-tax part is automatic again.' : 'Percentage-tax part saved — VAT part and Tax Due updated.');
+  }, true);
   vatTable.addEventListener('change', async e=>{
     const sel = e.target.closest('.vat-start-sel');
     if(!sel) return;
@@ -4720,7 +4788,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // A client that became VAT part-way through a year: percentage tax (2551Q) before, VAT (2550Q) from the VAT start month,
     // regardless of what the Forms list says.
     const splitStart = {};
-    vatWorksheet.forEach(w=>{ if(String(w.client_id_no||'').trim().toUpperCase() === String(client['CLIENT ID NO.']||'').trim().toUpperCase() && vatStartOf(w)) splitStart[Number(w.year)] = vatStartOf(w); });
+    vatWorksheet.forEach(w=>{ if(String(w.client_id_no||'').trim().toUpperCase() === String(client['CLIENT ID NO.']||'').trim().toUpperCase() && vatStartOf(w)) splitStart[Number(w.year)] = w; });
     const formOk = r=>{
       const f = String(r.form).toUpperCase(), m = /^Q([1-4]) (\d{4})$/.exec(r.period);
       if((f === '2550Q' || f === '2551Q') && m && splitStart[Number(m[2])]) return vatFormsForQuarter(splitStart[Number(m[2])], Number(m[1])).includes(f);
