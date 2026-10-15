@@ -1586,10 +1586,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       prevDueRaw = dueRaw;
     }
     // Total business tax of each quarter (what goes to the Sales Summary "Tax Due" column): VAT only, percentage tax only,
-    // or both added together for the quarter in which the client became VAT.
+    // or both added together for the quarter in which the client became VAT (a negative VAT Due is not deducted from the percentage tax).
     out.forEach(qc=>{
       qc.dueAny = qc.vatDue!==null || qc.ptDue!==null;
-      qc.dueTotal = qc.mode==='pt' ? qc.ptDue : qc.mode==='vat' ? qc.vatDue : ((qc.vatDue===null || qc.ptDue===null) ? null : vatRound(qc.vatDue + qc.ptDue));
+      qc.dueTotal = qc.mode==='pt' ? qc.ptDue : qc.mode==='vat' ? qc.vatDue : ((qc.vatDue===null || qc.ptDue===null) ? null : vatRound(Math.max(0, qc.vatDue) + qc.ptDue));   // a negative VAT Due (excess input VAT) is a credit carried to the next quarter — it is never netted against the percentage tax
     });
     return out;
   }
