@@ -1605,7 +1605,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const m = /^q([1-4])_(sales|expenses|pt_tax_due)$/.exec(key);
     if(!m) return undefined;
     const qc = calc[Number(m[1])-1];
-    if(m[2]==='pt_tax_due') return !qc.dueAny ? undefined : (qc.complete && qc.dueTotal!==null ? qc.dueTotal : '');
+    // A quarter that is still all percentage tax (before the client crossed P3M) may have only its total known, not every month:
+    // until the VAT tab has all 3 months, its Tax Due stays typeable on the Sales Summary (it is replaced once the months are complete).
+    if(m[2]==='pt_tax_due') return !qc.dueAny ? undefined : (qc.complete && qc.dueTotal!==null ? qc.dueTotal : (qc.mode==='pt' ? undefined : ''));
     const v = m[2]==='sales' ? qc.salesTotal : qc.expensesTotal;
     return v===null ? undefined : v;
   }
@@ -1789,7 +1791,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       calc.forEach(qc=>{
         // A locked (finished) quarter's Sales Summary figures are never rewritten by a sync.
         if(quarterIsLocked(ws.year, qc.q)) return;
-        [['q'+qc.q+'_sales', qc.salesTotal], ['q'+qc.q+'_expenses', qc.expensesTotal], ['q'+qc.q+'_pt_tax_due', !qc.dueAny ? null : (qc.complete && qc.dueTotal!==null ? qc.dueTotal : 'WAIT')]].forEach(([k,v])=>{
+        [['q'+qc.q+'_sales', qc.salesTotal], ['q'+qc.q+'_expenses', qc.expensesTotal], ['q'+qc.q+'_pt_tax_due', !qc.dueAny ? null : (qc.complete && qc.dueTotal!==null ? qc.dueTotal : (qc.mode==='pt' ? null : 'WAIT'))]].forEach(([k,v])=>{
           if(v === null) return;
           const cur = row[k];
           if(v === 'WAIT'){   // not complete on the VAT tab yet: the Tax Due must not show
