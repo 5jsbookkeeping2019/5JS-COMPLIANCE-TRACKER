@@ -1461,10 +1461,23 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const VAT_MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   function vatNum(v){ if(v===null || v===undefined || v==='') return null; const n = Number(v); return isFinite(n) ? n : null; }
   function vatRound(n){ return Math.round(n*100)/100; }
-  function vatMonthSum(ws, q, field){
+  // lo / hi = first / last month (1-12) to include; default = the whole quarter
+  function vatMonthSum(ws, q, field, lo, hi){
     let any = false, sum = 0;
-    for(let m=(q-1)*3+1; m<=q*3; m++){ const n = vatNum(ws['m'+m+'_'+field]); if(n!==null){ any = true; sum += n; } }
+    const a = Math.max((q-1)*3+1, lo||1), b = Math.min(q*3, hi||12);
+    for(let m=a; m<=b; m++){ const n = vatNum(ws['m'+m+'_'+field]); if(n!==null){ any = true; sum += n; } }
     return any ? vatRound(sum) : null;
+  }
+  // A client that crosses the P3,000,000 VAT threshold part-way through the year: from the month stored in
+  // vat_start_month the months are VAT, the months before it are Non-VAT (3% percentage tax, form 2551Q).
+  // 0 = no split (the whole year is VAT, exactly as before).
+  const PT_RATE = 0.03;
+  function vatStartOf(ws){ const n = Number(ws && ws.vat_start_month); return (n>=1 && n<=12) ? Math.floor(n) : 0; }
+  // 'vat' (every month of the quarter is VAT) | 'pt' (none is) | 'split' (percentage tax first, then VAT)
+  function vatQuarterMode(start, q){
+    if(!start) return 'vat';
+    const first = (q-1)*3+1, last = q*3;
+    return start <= first ? 'vat' : (start > last ? 'pt' : 'split');
   }
   // All 4 quarters' figures for one worksheet row. Blank (null) means "nothing
   // typed yet", never a misleading 0.
@@ -1485,8 +1498,19 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const out = [];
     let prevDueRaw = 0;
     for(let q=1; q<=4; q++){
-      const sales = vatMonthSum(ws,q,'net_sales'), exempt = vatMonthSum(ws,q,'vat_exempt');
-      const zero = vatMonthSum(ws,q,'zero_rated'), purch = vatMonthSum(ws,q,'net_purchase');
+      const start = vatStartOf(ws), mode = vatQuarterMode(start, q), vFrom = start || 1;
+      const lastPre = start ? Math.min(q*3, start-1) : 0;          // last month of this quarter that is still percentage-tax
+      const sales = vatMonthSum(ws,q,'net_sales',vFrom), exempt = vatMonthSum(ws,q,'vat_exempt');
+      const zero = vatMonthSum(ws,q,'zero_rated'), purch = vatMonthSum(ws,q,'net_purchase',vFrom);
+      // percentage-tax months (before the VAT start): base = all their sales, tax = 3%
+      let ptBase = null;
+      if(mode !== 'vat'){
+        const a = vatMonthSum(ws,q,'net_sales',1,lastPre), b = vatMonthSum(ws,q,'vat_exempt',1,lastPre), c = vatMonthSum(ws,q,'zero_rated',1,lastPre);
+        ptBase = (a===null && b===null && c===null) ? null : vatRound((a||0)+(b||0)+(c||0));
+      }
+      const ptDue = ptBase===null ? null : vatRound(ptBase*PT_RATE);
+      // every month's net sales (not only the VAT months) counts for the Sales Summary / income tax
+      const allSales = vatMonthSum(ws,q,'net_sales'), allPurch = vatMonthSum(ws,q,'net_purchase');
       const taxPaid = vatNum(ws['q'+q+'_tax_paid']), carryManual = vatNum(ws['q'+q+'_carry_in']), nonVat = vatNum(ws['q'+q+'_nonvat_expenses']);
       const carryAuto = q===1 ? 0 : Math.min(0, prevDueRaw);
       const carryIn = carryManual!==null ? carryManual : carryAuto;
@@ -1494,19 +1518,30 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const dueRaw = vatRound((sales||0)*VAT_RATE - (purch||0)*VAT_RATE - (taxPaid||0) + carryIn);
       let complete = true;
       for(let m=(q-1)*3+1; m<=q*3; m++){
-        if(vatNum(ws['m'+m+'_net_sales'])===null || vatNum(ws['m'+m+'_net_purchase'])===null) complete = false;
+        const isPre = start && m < start;
+        // VAT months need Net Sales + Net Purchase; a percentage-tax month only needs its sales
+        if(vatNum(ws['m'+m+'_net_sales'])===null || (!isPre && vatNum(ws['m'+m+'_net_purchase'])===null)) complete = false;
       }
       const doneBy = String(ws['q'+q+'_relief_done_by']||'').trim();
       out.push({
         q, sales, exempt, zero, purch, taxPaid, nonVat, carryIn, carryAuto, carryIsAuto: carryManual===null,
         outputVat, inputVat,
-        vatDue: (sales!==null || purch!==null) ? dueRaw : null,
-        salesTotal: (sales===null && exempt===null && zero===null) ? null : vatRound((sales||0)+(exempt||0)+(zero||0)),
-        expensesTotal: (purch===null && nonVat===null) ? null : vatRound((purch||0)+(nonVat||0)),
-        complete, doneBy, relief: doneBy ? 'ENCODED' : (complete ? 'READY' : 'INCOMPLETE'),
+        vatDue: (mode !== 'pt' && (sales!==null || purch!==null)) ? dueRaw : null,
+        mode, ptBase, ptDue,
+        salesTotal: (allSales===null && exempt===null && zero===null) ? null : vatRound((allSales||0)+(exempt||0)+(zero||0)),
+        expensesTotal: (allPurch===null && nonVat===null) ? null : vatRound((allPurch||0)+(nonVat||0)),
+        complete, doneBy,
+        // a quarter that is all percentage tax has no VAT relief (SLSP) to encode
+        relief: mode === 'pt' ? 'NA' : (doneBy ? 'ENCODED' : (complete ? 'READY' : 'INCOMPLETE')),
       });
       prevDueRaw = dueRaw;
     }
+    // Total business tax of each quarter (what goes to the Sales Summary "Tax Due" column): VAT only, percentage tax only,
+    // or both added together for the quarter in which the client became VAT.
+    out.forEach(qc=>{
+      qc.dueAny = qc.vatDue!==null || qc.ptDue!==null;
+      qc.dueTotal = qc.mode==='pt' ? qc.ptDue : qc.mode==='vat' ? qc.vatDue : ((qc.vatDue===null || qc.ptDue===null) ? null : vatRound(qc.vatDue + qc.ptDue));
+    });
     return out;
   }
   // The Sales Summary cell value a VAT worksheet drives.
@@ -1521,7 +1556,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const m = /^q([1-4])_(sales|expenses|pt_tax_due)$/.exec(key);
     if(!m) return undefined;
     const qc = calc[Number(m[1])-1];
-    if(m[2]==='pt_tax_due') return qc.vatDue===null ? undefined : (qc.complete ? qc.vatDue : '');
+    if(m[2]==='pt_tax_due') return !qc.dueAny ? undefined : (qc.complete && qc.dueTotal!==null ? qc.dueTotal : '');
     const v = m[2]==='sales' ? qc.salesTotal : qc.expensesTotal;
     return v===null ? undefined : v;
   }
@@ -1705,7 +1740,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       calc.forEach(qc=>{
         // A locked (finished) quarter's Sales Summary figures are never rewritten by a sync.
         if(quarterIsLocked(ws.year, qc.q)) return;
-        [['q'+qc.q+'_sales', qc.salesTotal], ['q'+qc.q+'_expenses', qc.expensesTotal], ['q'+qc.q+'_pt_tax_due', qc.vatDue===null ? null : (qc.complete ? qc.vatDue : 'WAIT')]].forEach(([k,v])=>{
+        [['q'+qc.q+'_sales', qc.salesTotal], ['q'+qc.q+'_expenses', qc.expensesTotal], ['q'+qc.q+'_pt_tax_due', !qc.dueAny ? null : (qc.complete && qc.dueTotal!==null ? qc.dueTotal : 'WAIT')]].forEach(([k,v])=>{
           if(v === null) return;
           const cur = row[k];
           if(v === 'WAIT'){   // not complete on the VAT tab yet: the Tax Due must not show
@@ -1739,22 +1774,26 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
     const client = findClientByIdNo(ws.client_id_no);
     if(client){
+      // 2550Q (VAT) task gets the VAT part; 2551Q (percentage tax) task gets the 3% part (only for a client that became VAT part-way)
       for(const qc of calc){
-        if(qc.vatDue === null) continue;
-        const t = tasks.find(x=> x.clientId === client._id && x.form === '2550Q' && x.period === 'Q'+qc.q+' '+ws.year);
-        if(!t) continue;
-        let target = qc.vatDue;
-        if(!qc.complete){
-          // Half-finished on the VAT tab: take back a Tax Due we synced earlier, but never wipe a different figure someone typed in the Task Tracker.
-          if(cleared[qc.q] === undefined || t.taxDue === null || t.taxDue === undefined || Number(t.taxDue) !== cleared[qc.q]) continue;
-          target = null;
+        for(const [form, due] of [['2550Q', qc.vatDue], ['2551Q', qc.mode==='vat' ? null : qc.ptDue]]){
+          if(due === null) continue;
+          const t = tasks.find(x=> x.clientId === client._id && x.form === form && x.period === 'Q'+qc.q+' '+ws.year);
+          if(!t) continue;
+          let target = due;
+          if(!qc.complete){
+            // Half-finished on the VAT tab: take back a Tax Due we synced earlier, but never wipe a different figure someone typed in the Task Tracker.
+            if(cleared[qc.q] === undefined || t.taxDue === null || t.taxDue === undefined || Number(t.taxDue) !== cleared[qc.q]) continue;
+            if(qc.mode === 'split') continue;   // two tasks share the one cleared figure: leave them alone
+            target = null;
+          }
+          if(t.taxDue === target) continue;
+          const oldVal = t.taxDue;
+          t.taxDue = target;
+          const { error } = await sb.from('cor_tasks').update({tax_due: t.taxDue}).eq('id', t.id);
+          if(error){ console.error(error); t.taxDue = oldVal; toast('Warning: a '+form+' task\'s Tax Due could not be updated — please try again.'); }
+          else { result.tasks++; logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'tax_due', 'Tax Due (from VAT Worksheet)', oldVal, t.taxDue); }
         }
-        if(t.taxDue === target) continue;
-        const oldVal = t.taxDue;
-        t.taxDue = target;
-        const { error } = await sb.from('cor_tasks').update({tax_due: t.taxDue}).eq('id', t.id);
-        if(error){ console.error(error); t.taxDue = oldVal; toast('Warning: a 2550Q task\'s Tax Due could not be updated — please try again.'); }
-        else { result.tasks++; logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'tax_due', 'Tax Due (from VAT Worksheet)', oldVal, t.taxDue); }
       }
     }
     result.slsp += await syncVatReliefTask(ws.client_id_no, ws.year, calc);
@@ -2069,12 +2108,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(n===null || n===undefined) return '';
     return Number(n).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
   }
-  const VAT_RELIEF_LABEL = {READY:'READY FOR ENCODING', INCOMPLETE:'Incomplete', ENCODED:'Encoded'};
+  const VAT_RELIEF_LABEL = {READY:'READY FOR ENCODING', INCOMPLETE:'Incomplete', ENCODED:'Encoded', NA:'Percentage tax (not VAT yet)'};
   function vatCalcCells(qc){
     return {
       sales: fmtVatMoney(qc.sales), purch: fmtVatMoney(qc.purch),
       outputVat: qc.sales===null ? '' : fmtVatMoney(qc.outputVat), inputVat: qc.purch===null ? '' : fmtVatMoney(qc.inputVat),
       vatDue: fmtVatMoney(qc.vatDue), salesTotal: fmtVatMoney(qc.salesTotal), expensesTotal: fmtVatMoney(qc.expensesTotal),
+      ptDue: qc.mode==='vat' ? '' : fmtVatMoney(qc.ptDue), dueTotal: qc.mode==='vat' ? '' : fmtVatMoney(qc.dueTotal),
     };
   }
   function renderVat(){
@@ -2091,7 +2131,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const needle = (vatSearch.value||'').trim().toLowerCase();
     const reliefs = chkChecked(vatReliefFilter);
     const {rows: allRows, noClientId, hiddenNoLonger} = vatRowsForYear(year);
-    const counts = {READY:0, INCOMPLETE:0, ENCODED:0};
+    const counts = {READY:0, INCOMPLETE:0, ENCODED:0, NA:0};
     const shown = [];
     allRows.forEach(e=>{
       e.zero = vatClientIsZero(e.idNo, year);
@@ -2110,6 +2150,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const head = `<tr><th class="frozen-col" style="left:0;width:230px;min-width:230px;">Client</th>${monthTh}
       <th>Tax Paid<div style="font-size:9.5px;color:var(--ink-soft);">prev. months</div></th><th>Carry-in<div style="font-size:9.5px;color:var(--ink-soft);">credit (−)</div></th><th>Non-VAT Exp<div style="font-size:9.5px;color:var(--ink-soft);">annual only</div></th>
       <th>Total Net Sales</th><th>Total Net Purchase</th><th>Output VAT 12%</th><th>Input VAT 12%</th><th>VAT Due</th>
+      <th>% Tax 3%<div style="font-size:9.5px;color:var(--ink-soft);">months before VAT</div></th><th>Total Tax Due<div style="font-size:9.5px;color:var(--ink-soft);">% + VAT → Sales Summary</div></th>
       <th>→ Sales Summary Sales</th><th>→ Sales Summary Expenses</th><th>VAT Relief</th><th>Relief done by</th><th>Remarks</th><th></th></tr>`;
     const body = shown.map(e=>{
       const ws = vatEffectiveWs(e.idNo, year, e.ws);
@@ -2126,7 +2167,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       let inputs = '';
       for(let i=0;i<3;i++){ const m = m0+i+1; VAT_MONTH_FIELDS.forEach(([f])=>{ inputs += `<td>${numInput('m'+m+'_'+f, ws['m'+m+'_'+f])}</td>`; }); }
       return `<tr data-key="${esc(e.key)}" data-idno="${esc(e.idNo)}">
-        <td class="frozen-col" style="left:0;width:230px;min-width:230px;"><b>${esc(e.name||'(not in Client Registry)')}</b><div style="color:var(--ink-soft);font-size:10.5px;">${esc(e.idNo)} · TIN ${esc(fmtTin(e.tin))}${e.trade?' · '+esc(e.trade):''}${e.zero?' · <b style="color:var(--gold);">'+esc(String(resolveSalesClientStatus(e.salesRow||{client_id_no:e.idNo})).toUpperCase())+' — all ₱0</b>':''}</div></td>
+        <td class="frozen-col" style="left:0;width:230px;min-width:230px;"><b>${esc(e.name||'(not in Client Registry)')}</b><div style="color:var(--ink-soft);font-size:10.5px;">${esc(e.idNo)} · TIN ${esc(fmtTin(e.tin))}${e.trade?' · '+esc(e.trade):''}${e.zero?' · <b style="color:var(--gold);">'+esc(String(resolveSalesClientStatus(e.salesRow||{client_id_no:e.idNo})).toUpperCase())+' — all ₱0</b>':''}</div>
+          <div style="margin-top:3px;font-size:10.5px;color:var(--ink-soft);" title="Only for a client that crossed the ₱3,000,000 VAT threshold part-way through ${year}: the months before are Non-VAT (3% percentage tax, form 2551Q), from this month on it is VAT (form 2550Q). Leave on “all year” for a client that was VAT the whole year.">VAT starts <select class="vat-start-sel" style="font-size:11px;"${e.zero?' disabled':''}><option value="">all year (VAT)</option>${VAT_MONTH_NAMES.map((n,i)=>`<option value="${i+1}"${vatStartOf(e.ws)===i+1?' selected':''}>${n}</option>`).join('')}</select>${vatStartOf(e.ws) ? ` · <b>Q${q}: ${qc.mode==='pt'?'percentage tax only':qc.mode==='split'?'percentage tax + VAT':'VAT'}</b>` : ''}</div></td>
         ${inputs}
         <td>${numInput('q'+q+'_tax_paid', ws['q'+q+'_tax_paid'])}</td>
         <td>${numInput('q'+q+'_carry_in', ws['q'+q+'_carry_in'], ` placeholder="auto ${esc(fmtNumInput(qc.carryAuto)||'0')}" title="Leave blank for automatic (last quarter's unused credit). Type a number to override, negative = credit."`)}</td>
@@ -2136,6 +2178,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         <td class="num mono" data-calc="outputVat">${cells.outputVat}</td>
         <td class="num mono" data-calc="inputVat">${cells.inputVat}</td>
         <td class="num mono" data-calc="vatDue" style="font-weight:600;">${cells.vatDue}</td>
+        <td class="num mono" data-calc="ptDue">${cells.ptDue}</td>
+        <td class="num mono" data-calc="dueTotal" style="font-weight:600;">${cells.dueTotal}</td>
         <td class="num mono" data-calc="salesTotal" style="color:var(--ink-soft);">${cells.salesTotal}</td>
         <td class="num mono" data-calc="expensesTotal" style="color:var(--ink-soft);">${cells.expensesTotal}</td>
         <td><span class="vat-badge ${qc.relief.toLowerCase()}" data-calc="relief">${VAT_RELIEF_LABEL[qc.relief]}</span></td>
@@ -2144,7 +2188,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         <td>${e.ws ? '<button class="tiny history-vat-btn">History</button>' : ''}</td>
       </tr>`;
     }).join('');
-    vatTable.innerHTML = `<table><thead>${head}</thead><tbody>${body || `<tr><td colspan="26" style="text-align:center;color:var(--ink-soft);padding:24px;">No matching VAT clients.</td></tr>`}</tbody></table>`;
+    vatTable.innerHTML = `<table><thead>${head}</thead><tbody>${body || `<tr><td colspan="28" style="text-align:center;color:var(--ink-soft);padding:24px;">No matching VAT clients.</td></tr>`}</tbody></table>`;
   }
 
   // Refresh just the computed cells of one row in place (no re-render), so
@@ -2228,6 +2272,68 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(r.sales || r.tasks) toast(`VAT Due updated → Sales Summary${r.tasks ? ' + 2550Q task' : ''}.`);
     else if(r.slsp) toast('SLSP / VAT Relief task updated in the Task Tracker.');
   });
+  // ---- Client that crossed the VAT threshold part-way through the year: "VAT starts" month ----
+  // Which of 2551Q (percentage tax) / 2550Q (VAT) a quarter needs, from the VAT start month.
+  function vatFormsForQuarter(start, q){ const m = vatQuarterMode(start, q); return m==='pt' ? ['2551Q'] : m==='vat' ? ['2550Q'] : ['2551Q','2550Q']; }
+  // Tasks of a split client: create the missing 2551Q / 2550Q tasks, list the untouched ones that no longer apply.
+  function vatSplitTaskPlan(idNo, year){
+    const client = findClientByIdNo(idNo), ws = vatWsFor(idNo, year);
+    const out = {client, create: [], remove: []};
+    const start = vatStartOf(ws);
+    if(!client || !start) return out;
+    const st = String(client['CLIENT?']||'').trim().toUpperCase();
+    if(st === 'NO' || st === 'CLOSED' || clientIsBranch(client)) return out;
+    out.create = missingTasksFor(client, 'smart').list.filter(r=> ['2550Q','2551Q'].includes(String(r.form).toUpperCase()) && new RegExp('^Q[1-4] '+year+'$').test(r.period));
+    tasks.forEach(t=>{
+      if(t.clientId !== client._id || !['2550Q','2551Q'].includes(String(t.form).toUpperCase())) return;
+      const m = new RegExp('^Q([1-4]) '+year+'$').exec(String(t.period||'').trim()); if(!m) return;
+      if(!vatFormsForQuarter(start, Number(m[1])).includes(String(t.form).toUpperCase()) && taskIsUntouched(t)) out.remove.push(t);
+    });
+    return out;
+  }
+  async function applyVatSplitTasks(idNo, year){
+    const plan = vatSplitTaskPlan(idNo, year);
+    let created = 0, removed = 0;
+    if(plan.create.length) created = await createMissingTasksFor(plan.client, 'smart', plan.create);
+    if(plan.remove.length && confirm(`${plan.client.NAME||idNo}: ${plan.remove.length} task(s) no longer apply after the VAT start month and have nothing typed on them:\n` + plan.remove.map(t=>t.form+' '+t.period).join(', ') + '\n\nRemove them from the Task Tracker?')){
+      const ids = plan.remove.map(t=>t.id);
+      const { data, error } = await sb.from('cor_tasks').delete().in('id', ids).select('id');
+      if(error){ console.error(error); toast('Could not remove the old tasks (' + (error.message||'unknown error') + ').'); }
+      else {
+        const gone = new Set((data||[]).map(r=>r.id));
+        plan.remove.forEach(t=>{ if(gone.has(t.id)) logRowAudit('cor_tasks_audit','record_id',t.id,'delete',{form:t.form, period:t.period, due_date:t.due, client_id:t.clientId},null,[{field:'task', label:'Task removed (VAT start month set)', old:t.form+' '+t.period, new:null}]); });
+        for(let i=tasks.length-1;i>=0;i--) if(gone.has(tasks[i].id)) tasks.splice(i,1);
+        removed = gone.size;
+      }
+    }
+    return {created, removed};
+  }
+  vatTable.addEventListener('change', async e=>{
+    const sel = e.target.closest('.vat-start-sel');
+    if(!sel) return;
+    e.stopImmediatePropagation();
+    const tr = sel.closest('tr[data-key]'), idNo = tr.dataset.idno, year = Number(vatYearFilter.value);
+    const val = sel.value === '' ? null : Number(sel.value);
+    let ws;
+    try { ws = await ensureVatWs(idNo, year); }
+    catch(err){ console.error(err); toast('Could not save — the VAT Worksheet table may not be set up yet (run cor_vat_worksheet_migration.sql in Supabase).'); renderVat(); return; }
+    const oldVal = ws.vat_start_month === undefined ? null : ws.vat_start_month;
+    const stamp = {updated_at: new Date().toISOString(), updated_by: currentUserEmail};
+    const { error } = await sb.from('cor_vat_worksheet').update({vat_start_month: val, ...stamp}).eq('id', ws.id);
+    if(error){
+      console.error(error);
+      toast('Could not save the VAT start month (' + (error.message||'unknown error') + ') — run cor_vat_start_month_migration.sql in the Supabase SQL Editor first.');
+      renderVat(); return;
+    }
+    ws.vat_start_month = val; ws.updated_at = stamp.updated_at; ws.updated_by = stamp.updated_by;
+    logFieldAudit('cor_vat_worksheet_audit', 'record_id', ws.id, 'vat_start_month', 'VAT starts (month)', oldVal===null?null:VAT_MONTH_NAMES[oldVal-1], val===null?null:VAT_MONTH_NAMES[val-1]);
+    const t = await applyVatSplitTasks(idNo, year);   // first create / remove the tasks...
+    await syncVatLinks(ws);                            // ...then push the Tax Due (VAT + percentage tax) to them and to the Sales Summary
+    renderVat();
+    const lockedQs = vatYearCalc(vatEffectiveWs(idNo, year, ws)).filter(qc=>qc.dueAny && quarterIsLocked(year, qc.q)).map(qc=>'Q'+qc.q);
+    toast((val ? `VAT starts ${VAT_MONTH_NAMES[val-1]} ${year}: ${t.created} task(s) created, ${t.removed} removed, Tax Due updated.` : `VAT start month cleared — the whole of ${year} is VAT again.`)
+      + (lockedQs.length ? ` ${lockedQs.join(', ')} ${lockedQs.length>1?'are':'is'} locked, so the Sales Summary figures of ${lockedQs.length>1?'those quarters were':'that quarter was'} not changed — unlock (Lock button on this tab), then press "Sync" to update.` : ''));
+  }, true);
   function VAT_FIELD_LABEL(field){
     let m = /^m(\d+)_(net_sales|vat_exempt|zero_rated|net_purchase)$/.exec(field);
     if(m) return VAT_MONTH_NAMES[Number(m[1])-1] + ' ' + VAT_MONTH_FIELDS.find(([k])=>k===m[2])[1];
@@ -4611,13 +4717,22 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const bk = clientBookkeepingIso(client);
     const cutoff = scope === 'upcoming' ? today : (bk || today);
     const have = new Set(tasks.filter(t=>t.clientId===client._id).map(t=>String(t.form).toUpperCase()+'|'+t.period));
+    // A client that became VAT part-way through a year: percentage tax (2551Q) before, VAT (2550Q) from the VAT start month,
+    // regardless of what the Forms list says.
+    const splitStart = {};
+    vatWorksheet.forEach(w=>{ if(String(w.client_id_no||'').trim().toUpperCase() === String(client['CLIENT ID NO.']||'').trim().toUpperCase() && vatStartOf(w)) splitStart[Number(w.year)] = vatStartOf(w); });
+    const formOk = r=>{
+      const f = String(r.form).toUpperCase(), m = /^Q([1-4]) (\d{4})$/.exec(r.period);
+      if((f === '2550Q' || f === '2551Q') && m && splitStart[Number(m[2])]) return vatFormsForQuarter(splitStart[Number(m[2])], Number(m[1])).includes(f);
+      return forms.has(f);
+    };
     const list = CALENDAR_REF.filter(r=>
-      forms.has(String(r.form).toUpperCase()) && r.due_date && !have.has(String(r.form).toUpperCase()+'|'+r.period) &&
+      formOk(r) && r.due_date && !have.has(String(r.form).toUpperCase()+'|'+r.period) &&
       (!end || r.due_date <= end) && r.due_date >= cutoff);
     return {list, formsBlank:false};
   }
-  async function createMissingTasksFor(client, scope){
-    const {list} = missingTasksFor(client, scope);
+  async function createMissingTasksFor(client, scope, listOverride){
+    const list = listOverride || missingTasksFor(client, scope).list;
     if(!list.length) return 0;
     const rows = list.map(r=>({client_id: client._id, form: r.form, frequency: r.frequency, period: r.period, due_date: r.due_date, status:'PENDING'}));
     let created = 0;
