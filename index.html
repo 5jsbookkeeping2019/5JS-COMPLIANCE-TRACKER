@@ -2174,7 +2174,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const VAT_RELIEF_LABEL = {READY:'READY FOR ENCODING', INCOMPLETE:'Incomplete', ENCODED:'Encoded', NA:'Percentage tax (not VAT yet)'};
   function vatCalcCells(qc){
     return {
-      sales: fmtVatMoney(qc.sales), purch: fmtVatMoney(qc.purch),
+      sales: fmtVatMoney(qc.sales), purch: fmtVatMoney(qc.purch), exempt: fmtVatMoney(qc.exempt), zero: fmtVatMoney(qc.zero),
       outputVat: qc.sales===null ? '' : fmtVatMoney(qc.outputVat), inputVat: qc.purch===null ? '' : fmtVatMoney(qc.inputVat),
       vatDue: fmtVatMoney(qc.vatDue), salesTotal: fmtVatMoney(qc.salesTotal), expensesTotal: fmtVatMoney(qc.expensesTotal),
       ptDue: qc.mode==='vat' ? '' : fmtVatMoney(qc.ptDue), dueTotal: qc.mode==='vat' ? '' : fmtVatMoney(qc.dueTotal),
@@ -2212,7 +2212,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const monthTh = [0,1,2].map(i=> VAT_MONTH_FIELDS.map(([,label])=>`<th><div style="font-size:9.5px;color:var(--ink-soft);">${VAT_MONTH_NAMES[m0+i]}</div>${esc(label)}</th>`).join('')).join('');
     const head = `<tr><th class="frozen-col" style="left:0;width:230px;min-width:230px;">Client</th>${monthTh}
       <th>Tax Paid<div style="font-size:9.5px;color:var(--ink-soft);">prev. months</div></th><th>Carry-in<div style="font-size:9.5px;color:var(--ink-soft);">credit (−)</div></th><th>Non-VAT Exp<div style="font-size:9.5px;color:var(--ink-soft);">annual only</div></th>
-      <th>Total Net Sales</th><th>Total Net Purchase</th><th>Output VAT 12%</th><th>Input VAT 12%</th><th>VAT Due</th>
+      <th>Total Net Sales</th><th>Total VAT-Exempt<div style="font-size:9.5px;color:var(--ink-soft);">quarter</div></th><th>Total Zero-Rated<div style="font-size:9.5px;color:var(--ink-soft);">quarter</div></th><th>Total Net Purchase</th><th>Output VAT 12%</th><th>Input VAT 12%</th><th>VAT Due</th>
       <th>% Tax 3%<div style="font-size:9.5px;color:var(--ink-soft);">months before VAT</div></th><th>Total Tax Due<div style="font-size:9.5px;color:var(--ink-soft);">% + VAT → Sales Summary</div></th>
       <th>→ Sales Summary Sales</th><th>→ Sales Summary Expenses</th><th>VAT Relief</th><th>Relief done by</th><th>Remarks</th><th></th></tr>`;
     const body = shown.map(e=>{
@@ -2237,6 +2237,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         <td>${numInput('q'+q+'_carry_in', ws['q'+q+'_carry_in'], ` placeholder="auto ${esc(fmtNumInput(qc.carryAuto)||'0')}" title="Leave blank for automatic (last quarter's unused credit). Type a number to override, negative = credit."`)}</td>
         <td>${numInput('q'+q+'_nonvat_expenses', ws['q'+q+'_nonvat_expenses'])}</td>
         <td class="num mono" data-calc="sales">${cells.sales}</td>
+        <td class="num mono" data-calc="exempt">${cells.exempt}</td>
+        <td class="num mono" data-calc="zero">${cells.zero}</td>
         <td class="num mono" data-calc="purch">${cells.purch}</td>
         <td class="num mono" data-calc="outputVat">${cells.outputVat}</td>
         <td class="num mono" data-calc="inputVat">${cells.inputVat}</td>
@@ -2251,7 +2253,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         <td>${e.ws ? '<button class="tiny history-vat-btn">History</button>' : ''}</td>
       </tr>`;
     }).join('');
-    vatTable.innerHTML = `<table><thead>${head}</thead><tbody>${body || `<tr><td colspan="28" style="text-align:center;color:var(--ink-soft);padding:24px;">No matching VAT clients.</td></tr>`}</tbody></table>`;
+    vatTable.innerHTML = `<table><thead>${head}</thead><tbody>${body || `<tr><td colspan="30" style="text-align:center;color:var(--ink-soft);padding:24px;">No matching VAT clients.</td></tr>`}</tbody></table>`;
   }
 
   // Refresh just the computed cells of one row in place (no re-render), so
