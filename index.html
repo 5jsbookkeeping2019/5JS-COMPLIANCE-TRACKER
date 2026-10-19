@@ -658,7 +658,7 @@
         <span class="small-note" style="margin:0;"><b>Quick check:</b></span>
         <select class="filter" id="sq-quarter" title="Which quarter to check"><option value="">Quarter…</option><option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option></select>
         <select class="filter" id="sq-tax" title="Percentage tax / VAT (PT) or income tax (IT)"><option value="pt">Percentage tax / VAT (PT)</option><option value="it">Income tax (IT)</option></select>
-        <select class="filter" id="sq-with" title="Which clients to list"><option value="sales">that have Sales</option><option value="due">that have a Tax Due (incl. 8% / ₱0 with sales)</option><option value="all">everyone (even no sales / ₱0)</option></select>
+        <select class="filter" id="sq-with" title="Which clients to list"><option value="sales">that have Sales typed (even ₱0)</option><option value="due">that have a Tax Due (incl. 8% / ₱0 with sales)</option><option value="all">everyone (even no sales / ₱0)</option></select>
         <select class="filter" id="sq-status" title="'Done' = the Remarks (Done by) cell of that quarter is filled in"><option value="">Done or not</option><option value="undone">NOT done yet (no Done-by remark)</option><option value="done">DONE (Done-by filled)</option></select>
         <button class="secondary" id="sq-clear">Clear</button>
         <span class="small-note" style="margin:0;">e.g. Q3 + PT + that have Sales + NOT done yet</span>
@@ -5861,7 +5861,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function salesQuickMatch(r){
     const n = sqQuarter.value; if(!n) return true;
     const tax = sqTax.value;
-    if(sqWith.value === 'sales'){ const v = salesShownAmt(r, 'q'+n+'_sales'); if(!(v !== null && !isNaN(v) && v > 0)) return false; }
+    if(sqWith.value === 'sales'){ const v = salesShownAmt(r, 'q'+n+'_sales'); if(!(v !== null && !isNaN(v))) return false; }   // anything typed counts, even 0
     else if(sqWith.value === 'due'){
       // a Tax Due, or an 8% / ₱0-Tax-Due client that still has sales this quarter (their return still has to be done and marked)
       const v = salesShownDue(r, 'q'+n+'_'+tax+'_tax_due');
