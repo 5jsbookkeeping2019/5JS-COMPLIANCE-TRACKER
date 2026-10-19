@@ -639,7 +639,7 @@
           <select class="filter" id="sales-taxoption-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="tax options"><option value="">All tax options</option></select>
           <select class="filter" id="sales-client-status-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="client statuses"><option value="">All client statuses</option></select>
           <select class="filter" id="sales-agent-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="sales reps"><option value="">All Sales Representatives</option></select>
-          <select class="filter" id="sales-missing-filter" data-chk="include" data-chk-noun="filters"><option value="">Show all (no field filter)</option></select>
+          <select class="filter" id="sales-missing-filter" data-chk="include" data-chk-noun="filters" title="Advanced: one specific field (missing / with a value / remarks)"><option value="">Show all (no field filter)</option></select>
           <select class="filter" id="sales-quarter-hl" title="Highlights that quarter's columns so data isn't typed into the wrong quarter" style="min-width:150px;">
             <option value="auto">Highlight: quarter being filed</option>
             <option value="1">Highlight: Q1</option><option value="2">Highlight: Q2</option>
@@ -653,6 +653,15 @@
         <div class="toolbar-right">
           <span class="small-note" id="sales-count" style="margin:0;"></span>
         </div>
+      </div>
+      <div class="filter-row" id="sales-quick" style="margin:8px 0 2px;align-items:center;gap:6px;flex-wrap:wrap;">
+        <span class="small-note" style="margin:0;"><b>Quick check:</b></span>
+        <select class="filter" id="sq-quarter" title="Which quarter to check"><option value="">Quarter…</option><option value="1">Q1</option><option value="2">Q2</option><option value="3">Q3</option><option value="4">Q4</option></select>
+        <select class="filter" id="sq-tax" title="Percentage tax / VAT (PT) or income tax (IT)"><option value="pt">Percentage tax / VAT (PT)</option><option value="it">Income tax (IT)</option></select>
+        <select class="filter" id="sq-with" title="Which clients to list"><option value="sales">that have Sales</option><option value="due">that have a Tax Due (incl. 8% / ₱0 with sales)</option><option value="all">everyone (even no sales / ₱0)</option></select>
+        <select class="filter" id="sq-status" title="'Done' = the Remarks (Done by) cell of that quarter is filled in"><option value="">Done or not</option><option value="undone">NOT done yet (no Done-by remark)</option><option value="done">DONE (Done-by filled)</option></select>
+        <button class="secondary" id="sq-clear">Clear</button>
+        <span class="small-note" style="margin:0;">e.g. Q3 + PT + that have Sales + NOT done yet</span>
       </div>
       <div class="small-note">Combined VAT and Non-VAT (NVAT) clients, per quarter — from the Sales Summary file. Edit any cell directly (same as Task Tracker) — saved automatically to the live database. Use the "Show all" dropdown to find who's still missing a value for a particular field (e.g. Q3 Sales) — this excludes actual "0" values (confirmed zero filing), blank only. There's no manual "Add client" here — the Client Registry is the source: every new client added there automatically gets its own row here (Client ID/Name/TIN/Trade Name already filled in), so the two always stay linked. When a new year starts, use "+ Add New Year" to build a fresh set of rows for every Active/0 Filing/For Closure/Annual Client that doesn't have an End of Service Date yet (i.e. still existing and not yet tagged as service-ended) — no need to do it one by one or wait for a new SQL script. <b>Finished quarters are locked:</b> every detail of a quarter (Sales, Expenses, PT / IT Due, remarks and payment notes) is read-only (grey) once that quarter is older than the one being filed so they can't be changed by mistake — use <b>🔒 Quarter locks</b> to lock a quarter right after it's filed, or to unlock one when an amended return needs a correction.</div>
       <datalist id="sales-client-id-options"></datalist>
@@ -1136,8 +1145,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const boxes = Array.from(panel.querySelectorAll('.filter-row input.search-input, .filter-row input.filter'))
       .filter(i=> !i.type || i.type === 'text' || i.type === 'search');
     boxes.forEach(i=>{ i.value = ''; });
-    if(sels[0]) sels[0].dispatchEvent(new Event('change', {bubbles:true}));
-    if(boxes[0]) boxes[0].dispatchEvent(new Event('input', {bubbles:true}));
+    panel.querySelectorAll('#sales-quick select').forEach(el=>{ el.selectedIndex = 0; });   // Sales Summary quick check
+    // tell EVERY cleared control (not just the first) so each tab re-renders from the cleared state
+    sels.forEach(sel=>{ const st = CHK_FILTERS.get(sel); if(st) st.internal = true; sel.dispatchEvent(new Event('change', {bubbles:true})); if(st) st.internal = false; });
+    boxes.forEach(i=> i.dispatchEvent(new Event('input', {bubbles:true})));
+    panel.querySelectorAll('#sales-quick select').forEach(el=> el.dispatchEvent(new Event('change', {bubbles:true})));
   }
   ['calendar','tracker','registry','sales','vat','tax2307','sawt','report'].forEach(name=>{
     const panel = document.getElementById('panel-'+name); if(!panel) return;
@@ -5842,6 +5854,28 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if((m = /^norem:(.+)$/.exec(mf))){ const v = salesShownDue(r, m[1]); return v !== null && v > 0 && salesRemarkKeys(m[1]).every(k=>salesBlank(r[k])); }
     return salesBlank(r[mf]);
   }
+  // Quick check: quarter + PT/IT + (has sales | has Tax Due) + (not done | done), where "done" = that quarter's Remarks (Done by) is filled.
+  const sqQuarter = document.getElementById('sq-quarter'), sqTax = document.getElementById('sq-tax'), sqWith = document.getElementById('sq-with'), sqStatus = document.getElementById('sq-status');
+  function salesQuickMatch(r){
+    const n = sqQuarter.value; if(!n) return true;
+    const tax = sqTax.value;
+    if(sqWith.value === 'sales'){ const v = salesShownAmt(r, 'q'+n+'_sales'); if(!(v !== null && !isNaN(v) && v > 0)) return false; }
+    else if(sqWith.value === 'due'){
+      // a Tax Due, or an 8% / ₱0-Tax-Due client that still has sales this quarter (their return still has to be done and marked)
+      const v = salesShownDue(r, 'q'+n+'_'+tax+'_tax_due');
+      const hasDue = v !== null && !isNaN(v) && v > 0;
+      const s = salesShownAmt(r, 'q'+n+'_sales');
+      const zeroDueWithSales = tax === 'pt' && v === 0 && s !== null && !isNaN(s) && s > 0;
+      if(!hasDue && !zeroDueWithSales) return false;
+    }
+    // sqWith === 'all': every row (even ₱0 Tax Due / no sales)
+    const done = !salesBlank(r['q'+n+'_'+tax+'_remarks']);
+    if(sqStatus.value === 'undone' && done) return false;
+    if(sqStatus.value === 'done' && !done) return false;
+    return true;
+  }
+  [sqQuarter, sqTax, sqWith, sqStatus].forEach(el=> el.addEventListener('change', renderSalesSummary));
+  document.getElementById('sq-clear').addEventListener('click', ()=>{ sqQuarter.value=''; sqStatus.value=''; sqWith.value='sales'; sqTax.value='pt'; renderSalesSummary(); });
   salesMissingFilter.innerHTML = '<option value="">Show all (no field filter)</option>' +
     `<optgroup label="Missing a value">${SALES_NUMERIC_COLS.map(([key,label])=>`<option value="${esc(key)}">Missing: ${esc(label)}</option>`).join('')}</optgroup>` +
     `<optgroup label="With a value (greater than ₱0)">${SALES_AMOUNT_COLS.map(([key,label])=>`<option value="with:${esc(key)}">With ${esc(label)}</option>`).join('')}</optgroup>` +
@@ -6011,6 +6045,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(!chkPass(salesClientStatusFilter, resolveSalesClientStatus(r))) return false;
       if(!chkPass(salesAgentFilter, r.agent)) return false;
       if(mfs.length && !mfs.some(mf=> salesMissingMatch(r, mf))) return false;
+      if(!salesQuickMatch(r)) return false;
       if(q){
         const hay = (r.name+' '+r.tin+' '+(r.trade_name||'')+' '+(r.client_id_no||'')).toLowerCase();
         if(!hay.includes(q)) return false;
