@@ -661,6 +661,8 @@
         <select class="filter" id="sq-tax" title="Percentage tax / VAT (PT) or income tax (IT)"><option value="pt">Percentage tax / VAT (PT)</option><option value="it">Income tax (IT)</option></select>
         <select class="filter" id="sq-with" title="Which clients to list"><option value="sales">that have Sales typed (even ₱0)</option><option value="due">that have a Tax Due (incl. 8% / ₱0 with sales)</option><option value="all">everyone (even no sales / ₱0)</option></select>
         <select class="filter" id="sq-status" title="'Done' = the Remarks (Done by) cell of that quarter is filled in"><option value="">Done or not</option><option value="undone">NOT done yet (no Done-by remark)</option><option value="done">DONE (Done-by filled)</option></select>
+        <input class="search-input" id="sq-by" list="sq-by-list" placeholder="Done by… (e.g. JB)" title="Only rows whose Remarks (Done by) contain this text — e.g. JB. With no quarter picked, it looks in every quarter." style="min-width:150px;max-width:170px;">
+        <datalist id="sq-by-list"></datalist>
         <button class="secondary" id="sq-clear">Clear</button>
         <span class="small-note" style="margin:0;">e.g. Q3 + PT + that have Sales + NOT done yet</span>
       </div>
@@ -5881,8 +5883,24 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
   // Quick check: quarter + PT/IT + (has sales | has Tax Due) + (not done | done), where "done" = that quarter's Remarks (Done by) is filled.
   const sqQuarter = document.getElementById('sq-quarter'), sqTax = document.getElementById('sq-tax'), sqWith = document.getElementById('sq-with'), sqStatus = document.getElementById('sq-status');
+  const sqBy = document.getElementById('sq-by');
+  sqBy.addEventListener('input', renderSalesSummary);
+  // names that appear after "DONE BY" in the remarks, as suggestions
+  function refreshSqByList(){
+    const names = new Set();
+    salesSummary.forEach(r=>{ for(let q=1;q<=4;q++) ['pt','it'].forEach(t=>{ const m = /done\s*by\s+([A-Za-z]+)/i.exec(String(r['q'+q+'_'+t+'_remarks']||'')); if(m) names.add(m[1].toUpperCase()); }); });
+    document.getElementById('sq-by-list').innerHTML = Array.from(names).sort().map(n=>`<option value="${esc(n)}">`).join('');
+  }
+  sqBy.addEventListener('focus', refreshSqByList);
   function salesQuickMatch(r){
-    const n = sqQuarter.value; if(!n) return true;
+    const by = String(sqBy.value||'').trim().toLowerCase();
+    const n = sqQuarter.value;
+    if(!n){
+      // no quarter picked: only the "Done by" text can filter -- look in every quarter's remark of the chosen tax
+      if(!by) return true;
+      return [1,2,3,4].some(k=> String(r['q'+k+'_'+sqTax.value+'_remarks']||'').toLowerCase().includes(by));
+    }
+    if(by && !String(r['q'+n+'_'+sqTax.value+'_remarks']||'').toLowerCase().includes(by)) return false;
     const tax = sqTax.value;
     if(sqWith.value === 'sales'){ const v = salesShownAmt(r, 'q'+n+'_sales'); if(!(v !== null && !isNaN(v))) return false; }   // anything typed counts, even 0
     else if(sqWith.value === 'due'){
@@ -5900,7 +5918,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return true;
   }
   [sqQuarter, sqTax, sqWith, sqStatus].forEach(el=> el.addEventListener('change', renderSalesSummary));
-  document.getElementById('sq-clear').addEventListener('click', ()=>{ sqQuarter.value=''; sqStatus.value=''; sqWith.value='sales'; sqTax.value='pt'; renderSalesSummary(); });
+  document.getElementById('sq-clear').addEventListener('click', ()=>{ sqBy.value=''; sqQuarter.value=''; sqStatus.value=''; sqWith.value='sales'; sqTax.value='pt'; renderSalesSummary(); });
   salesMissingFilter.innerHTML = '<option value="">Show all (no field filter)</option>' +
     `<optgroup label="Missing a value">${SALES_NUMERIC_COLS.map(([key,label])=>`<option value="${esc(key)}">Missing: ${esc(label)}</option>`).join('')}</optgroup>` +
     `<optgroup label="With a value (greater than ₱0)">${SALES_AMOUNT_COLS.map(([key,label])=>`<option value="with:${esc(key)}">With ${esc(label)}</option>`).join('')}</optgroup>` +
