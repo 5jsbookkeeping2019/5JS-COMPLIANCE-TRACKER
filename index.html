@@ -427,6 +427,7 @@
   #cor-app .login-title{font-family:'IBM Plex Serif',serif;font-weight:700;font-size:19px;color:var(--brand);margin:0 0 14px;}
   #cor-app .login-sub{font-size:12.5px;color:var(--ink-soft);line-height:1.5;margin-bottom:18px;}
   #cor-app .login-status{font-size:12px;color:var(--ink-soft);margin-top:12px;min-height:1.2em;}
+#sales-table input.sales-cell[data-key="name"], #sales-table input.sales-cell[data-key$="_tax_due"]{cursor:copy;}
 </style>
 </head>
 <body>
@@ -5856,6 +5857,28 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if((m = /^norem:(.+)$/.exec(mf))){ const v = salesShownDue(r, m[1]); return v !== null && v > 0 && salesRemarkKeys(m[1]).every(k=>salesBlank(r[k])); }
     return salesBlank(r[mf]);
   }
+  // Click a client name or a Tax Due amount in the Sales Summary to copy it (for pasting into eBIRForms): the name as is,
+  // the amount as a plain number with 2 decimals (no commas / peso sign).
+  const SALES_COPY_KEYS = /^(name|q[1-4]_(pt|it)_tax_due|annual_1701_tax_due)$/;
+  async function copyText(txt){
+    try { await navigator.clipboard.writeText(txt); return true; } catch(e){}
+    try {
+      const ta = document.createElement('textarea'); ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select(); const ok = document.execCommand('copy'); ta.remove(); return ok;
+    } catch(e){ return false; }
+  }
+  document.getElementById('sales-table').addEventListener('click', async e=>{
+    const inp = e.target.closest('input.sales-cell'); if(!inp) return;
+    const key = inp.dataset.key; if(!SALES_COPY_KEYS.test(key||'')) return;
+    let txt = String(inp.value||'').trim(); if(!txt) return;
+    if(key !== 'name'){
+      const n = Number(txt.replace(/[₱,\s]/g,''));
+      if(!isFinite(n)) return;
+      txt = n.toFixed(2);
+    }
+    if(await copyText(txt)){ toast('Copied: ' + txt); if(inp.readOnly) inp.select(); }
+  });
+
   // Quick check: quarter + PT/IT + (has sales | has Tax Due) + (not done | done), where "done" = that quarter's Remarks (Done by) is filled.
   const sqQuarter = document.getElementById('sq-quarter'), sqTax = document.getElementById('sq-tax'), sqWith = document.getElementById('sq-with'), sqStatus = document.getElementById('sq-status');
   function salesQuickMatch(r){
