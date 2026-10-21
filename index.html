@@ -910,12 +910,12 @@
       <div class="small-note" id="staff-status" style="margin-top:8px;"></div>
       </div>
       <h3 style="margin-top:30px;">Task clean-up: &ldquo;Pending&rdquo; tasks that are already done, and duplicate tasks</h3>
-      <div class="small-note"><b>1) Done by + Date typed but Status still Pending</b> &mdash; staff typed who did it and the date, but the Status dropdown was never changed to Done, so the task still shows as Pending / Overdue. <b>2) Duplicate tasks</b> &mdash; two tasks for the same client + form + period (e.g. one &ldquo;SEPTEMBER 2026&rdquo; that staff marked Done, and a second &ldquo;SEPT 2026&rdquo; created later that is still Pending). A duplicate is only offered for removal when it is completely untouched (Pending, nothing typed) and another task of the same client/form/period exists.</div>
+      <div class="small-note"><b>1) Done by + Date typed but Status still Pending</b> &mdash; staff typed who did it and the date, but the Status dropdown was never changed to Done, so the task still shows as Pending / Overdue. <b>3) Tasks of a form the client does not have</b> (e.g. a 1601EQ task for a client without 0619E / 1601EQ in the Registry Forms) &mdash; listed only when nothing is typed on them. <b>2) Duplicate tasks</b> &mdash; two tasks for the same client + form + period (e.g. one &ldquo;SEPTEMBER 2026&rdquo; that staff marked Done, and a second &ldquo;SEPT 2026&rdquo; created later that is still Pending). A duplicate is only offered for removal when it is completely untouched (Pending, nothing typed) and another task of the same client/form/period exists.</div>
       <div class="table-scroll" style="margin-top:12px;max-width:1000px;max-height:340px;" id="tidy-table"></div>
       <div class="small-note" id="tidy-summary" style="margin-top:8px;"></div>
       <button class="secondary" id="tidy-load-btn" style="margin-top:8px;">Check tasks</button>
       <button class="secondary" id="tidy-done-btn" style="margin-top:8px;" disabled>Mark ticked as Done</button>
-      <button class="secondary" id="tidy-dup-btn" style="margin-top:8px;" disabled>Remove ticked duplicates</button>
+      <button class="secondary" id="tidy-dup-btn" style="margin-top:8px;" disabled>Remove ticked duplicates / not-in-Forms</button>
       <h3 style="margin-top:30px;">Check BIR e-filing receipts (Yahoo Mail) against the Task Tracker</h3>
       <div class="small-note">Shows which clients already have a <b>&ldquo;Tax Return Receipt Confirmation&rdquo;</b> email from BIR (eBIRForms) for a form and period. In Yahoo Mail search the form + period, e.g. <span class="mono">1601Cv2018-092026</span> (form, then month + year; for quarterly forms use the last month of the quarter, e.g. 092026 for Q3), scroll to load every result, press <b>Ctrl+A, Ctrl+C</b> and paste it below. The TIN is read from each attachment name (<span class="mono">…TIN…-1601Cv2018-092026.xml</span>) and matched to the Client Registry. This only <b>reports</b> &mdash; it does not change any task.</div>
       <textarea id="rcpt-paste" rows="6" style="width:100%;max-width:900px;margin-top:8px;" placeholder="Paste the Yahoo Mail search result here…"></textarea>
@@ -5143,6 +5143,21 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     tasks.forEach(t=>{
       if(t.status === 'PENDING' && String(t.doneBy||'').trim() && String(t.doneDate||'').trim()) rows.push({kind:'done', t, key:'d'+t.id});
     });
+    // untouched Pending tasks of a form the client does not have in its Registry Forms (e.g. a 1601EQ for a client without 0619E / 1601EQ)
+    const vocab = new Set();
+    clients.forEach(c=> parseFormsCsv(c.FORMS).forEach(f=> vocab.add(f.toUpperCase())));
+    tasks.forEach(t=>{
+      const c = clientById[t.clientId]; if(!c) return;
+      const st = String(c['CLIENT?']||'').trim().toUpperCase();
+      if(st === 'NO' || st === 'CLOSED' || clientIsBranch(c)) return;
+      const own = new Set(parseFormsCsv(c.FORMS).map(f=>f.toUpperCase()));
+      if(!own.size) return;
+      if(own.has('1701A')) own.add('1701');
+      const f = String(t.form).toUpperCase();
+      if(own.has(f) || !vocab.has(f) || t.status !== 'PENDING' || !taskIsUntouched(t)) return;
+      if(f === '2550Q' || f === '2551Q'){ const m = /(\d{4})$/.exec(String(t.period||'')); if(m && vatWorksheet.some(w=> Number(w.year) === Number(m[1]) && vatStartOf(w) && String(w.client_id_no||'').trim().toUpperCase() === String(c['CLIENT ID NO.']||'').trim().toUpperCase())) return; }
+      rows.push({kind:'noform', t, key:'n'+t.id});
+    });
     const groups = new Map();
     tasks.forEach(t=>{ const k = t.clientId+'|'+String(t.form).toUpperCase()+'|'+String(normPeriodLabel(t.period)).toUpperCase(); (groups.get(k) || groups.set(k, []).get(k)).push(t); });
     groups.forEach(list=>{
@@ -5160,14 +5175,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
   function renderTidy(){
     const area = document.getElementById('tidy-table'), summary = document.getElementById('tidy-summary');
-    const nd = tidyRows.filter(r=>r.kind==='done').length, nx = tidyRows.filter(r=>r.kind==='dup').length, nr = tidyRows.filter(r=>r.kind==='review').length;
-    const lab = {done:'Pending, but has Done by + Date', dup:'Duplicate (untouched)', review:'Duplicate with data on both — check manually'};
+    const nd = tidyRows.filter(r=>r.kind==='done').length, nx = tidyRows.filter(r=>r.kind==='dup').length, nn = tidyRows.filter(r=>r.kind==='noform').length, nr = tidyRows.filter(r=>r.kind==='review').length;
+    const lab = {done:'Pending, but has Done by + Date', dup:'Duplicate (untouched)', noform:'Form is not in this client\'s Forms (untouched)', review:'Duplicate with data on both — check manually'};
     area.innerHTML = tidyRows.length ? `<table><thead><tr><th style="width:34px;"></th><th>Client ID</th><th>Client</th><th>Form</th><th>Period</th><th>Status</th><th>Done by / date</th><th>Problem</th></tr></thead><tbody>${tidyRows.map(r=>{ const c = taskClient(r.t);
-      return `<tr><td>${r.kind==='review'?'':`<input type="checkbox" class="tidy-cb" data-k="${esc(r.key)}"${tidyUnchecked.has(r.key)?'':' checked'}>`}</td><td class="mono">${esc(c['CLIENT ID NO.']||'')}</td><td>${esc(c.NAME||'')}</td><td>${esc(r.t.form)}</td><td>${esc(r.t.period)}</td><td>${esc(r.t.status)}</td><td>${esc(r.t.doneBy||'')} ${esc(r.t.doneDate||'')}</td><td>${lab[r.kind]}</td></tr>`; }).join('')}</tbody></table>` : '<div class="small-note">Nothing found — no Pending task has Done by + Date, and there are no duplicate tasks.</div>';
-    summary.textContent = `${nd} task(s) Pending but already have Done by + Date; ${nx} untouched duplicate(s); ${nr} duplicate(s) with data on them (manual).`;
+      return `<tr><td>${r.kind==='review'?'':`<input type="checkbox" class="tidy-cb" data-k="${esc(r.key)}"${tidyUnchecked.has(r.key)?'':' checked'}>`}</td><td class="mono">${esc(c['CLIENT ID NO.']||'')}</td><td>${esc(c.NAME||'')}</td><td>${esc(r.t.form)}</td><td>${esc(r.t.period)}</td><td>${esc(r.t.status)}</td><td>${esc(r.t.doneBy||'')} ${esc(r.t.doneDate||'')}</td><td>${lab[r.kind]}</td></tr>`; }).join('')}</tbody></table>` : '<div class="small-note">Nothing found — no Pending task has Done by + Date, no duplicates, and no task of a form the client does not have.</div>';
+    summary.textContent = `${nd} task(s) Pending but already have Done by + Date; ${nx} untouched duplicate(s); ${nn} untouched task(s) of a form the client does not have; ${nr} duplicate(s) with data on them (manual).`;
     const on = k => tidyRows.some(r=>r.kind===k && !tidyUnchecked.has(r.key));
     document.getElementById('tidy-done-btn').disabled = !on('done');
-    document.getElementById('tidy-dup-btn').disabled = !on('dup');
+    document.getElementById('tidy-dup-btn').disabled = !(on('dup') || on('noform'));
   }
   document.getElementById('tidy-load-btn').addEventListener('click', ()=>{ tidyRows = tidyPlan(); tidyUnchecked.clear(); renderTidy(); });
   document.getElementById('tidy-table').addEventListener('change', e=>{
@@ -5191,9 +5206,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
   });
   document.getElementById('tidy-dup-btn').addEventListener('click', async ()=>{
-    const todo = tidyRows.filter(r=>r.kind==='dup' && !tidyUnchecked.has(r.key) && tasks.includes(r.t) && taskIsUntouched(r.t));
+    const todo = tidyRows.filter(r=>(r.kind==='dup' || r.kind==='noform') && !tidyUnchecked.has(r.key) && tasks.includes(r.t) && taskIsUntouched(r.t));
     if(!todo.length) return;
-    if(!confirm(`Remove ${todo.length} duplicate task(s)? Only untouched copies are removed; this cannot be undone.`)) return;
+    if(!confirm(`Remove ${todo.length} task(s) (duplicates / forms the client does not have)? Only tasks with nothing typed on them are removed; this cannot be undone.`)) return;
     const btn = document.getElementById('tidy-dup-btn'); btn.disabled = true;
     const ids = todo.map(r=>r.t.id), removed = new Set();
     for(let i=0;i<ids.length;i+=100){
@@ -5201,9 +5216,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(error){ console.error(error); toast('Could not remove the duplicates (' + (error.message||'unknown error') + ').'); break; }
       (data||[]).forEach(x=>removed.add(x.id));
     }
-    todo.forEach(r=>{ if(removed.has(r.t.id)) logRowAudit('cor_tasks_audit','record_id',r.t.id,'delete',{form:r.t.form, period:r.t.period, due_date:r.t.due, client_id:r.t.clientId},null,[{field:'task', label:'Task removed (duplicate)', old:r.t.form+' '+r.t.period, new:null}]); });
+    todo.forEach(r=>{ if(removed.has(r.t.id)) logRowAudit('cor_tasks_audit','record_id',r.t.id,'delete',{form:r.t.form, period:r.t.period, due_date:r.t.due, client_id:r.t.clientId},null,[{field:'task', label:'Task removed (duplicate / form not in the client\'s Forms)', old:r.t.form+' '+r.t.period, new:null}]); });
     for(let i=tasks.length-1;i>=0;i--) if(removed.has(tasks[i].id)) tasks.splice(i,1);
-    toast(removed.size ? `${removed.size} duplicate task(s) removed.` : 'The database did not remove them — your account may not be allowed to delete tasks.');
+    toast(removed.size ? `${removed.size} task(s) removed.` : 'The database did not remove them — your account may not be allowed to delete tasks.');
     tidyRows = tidyPlan(); tidyUnchecked.clear(); renderTidy();
     renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
   });
@@ -5965,22 +5980,30 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return true;
   }
   async function ensureSalesSummaryRowForClient(rec){
-    if(!isEligibleForAutoSalesSummary(rec)) return;
-    const year = new Date().getFullYear();
-    const already = salesSummary.some(s => s.client_id_no === rec['CLIENT ID NO.'] && Number(s.year) === year);
-    if(already) return;
-    const insertRow = {
-      client_id_no: rec['CLIENT ID NO.'],
-      year, name: rec.NAME || null, tin: rec.TIN || null,
-      trade_name: rec['TRADE NAME'] || null, tax_type: rec['TAX TYPE'] || null,
-      client_status: rec['CLIENT?'] || null,
-      agent: rec['SALES REPRESENTATIVE'] || null,
-    };
-    const { data, error } = await sb.from('cor_sales_summary').insert(insertRow).select().single();
-    if(error){ console.error(error); toast('Client saved, but there was an error creating the Sales Summary row — please try again from the Sales Summary tab.'); return; }
-    salesSummary.push(mapSalesSummaryFromDb([data])[0]);
+    // Every new Registry client gets a Sales Summary row automatically for the year it is ENTERED (this year). Only the Task
+    // Tracker tasks depend on WHEN they became a client. Clients marked NO / CLOSED are the only ones skipped.
+    if(!rec || !rec['CLIENT ID NO.']) return;
+    const st = String(rec['CLIENT?']||'').trim().toUpperCase();
+    if(st === 'NO' || st === 'CLOSED') return;
+    const cur = new Date().getFullYear();
+    const startYear = cur;
+    const id = String(rec['CLIENT ID NO.']).trim().toUpperCase();
+    const rows = [];
+    for(let y = startYear; y <= cur; y++){
+      if(salesSummary.some(r => String(r.client_id_no||'').trim().toUpperCase() === id && Number(r.year) === y)) continue;
+      rows.push({
+        client_id_no: rec['CLIENT ID NO.'], year: y, name: rec.NAME || null, tin: rec.TIN || null,
+        trade_name: rec['TRADE NAME'] || null, tax_type: rec['TAX TYPE'] || null,
+        client_status: rec['CLIENT?'] || null, agent: rec['SALES REPRESENTATIVE'] || null,
+      });
+    }
+    if(!rows.length) return;
+    const { data, error } = await sb.from('cor_sales_summary').insert(rows).select();
+    if(error){ console.error(error); toast('Client saved, but the Sales Summary row could not be created (' + (error.message||'unknown error') + ') — open the Sales Summary tab, search the client and press "Create the row".'); return; }
+    mapSalesSummaryFromDb(data||[]).forEach(m=>{ if(!salesSummary.some(x=>x._id===m._id)) salesSummary.push(m); });
     initSalesSummaryFilters();
     if(document.getElementById('sales-table')) renderSalesSummary();
+    toast('Sales Summary row added (' + rows.map(r=>r.year).join(', ') + ').');
   }
 
   // Bulk year-rollover: when a new filing year starts, this creates a
