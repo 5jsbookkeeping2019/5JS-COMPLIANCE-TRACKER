@@ -5169,7 +5169,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
     const groups = new Map();
     tasks.forEach(t=>{ const k = t.clientId+'|'+String(t.form).toUpperCase()+'|'+String(normPeriodLabel(t.period)).toUpperCase(); (groups.get(k) || groups.set(k, []).get(k)).push(t); });
-    groups.forEach(list=>{
+    groups.forEach((list,k)=>{
       if(list.length < 2) return;
       const keep = list.filter(t=>!taskIsUntouched(t));
       list.forEach(t=>{
@@ -5178,9 +5178,18 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       });
       if(!keep.length) return;
       // several tasks that all have data typed on them: cannot tell which to drop -> show for manual review only
-      if(keep.length > 1) keep.forEach(t=>rows.push({kind:'review', t, key:'r'+t.id}));
+      // (they now get a checkbox too: the one with the most data is marked KEEP, the others are suggested for removal)
+      if(keep.length > 1){
+        const score = t => (t.status==='DONE'?4:0) + (String(t.doneBy||'').trim()?2:0) + (String(t.doneDate||'').trim()?1:0) + (t.taxDue>0?1:0) + (t.paymentStatus?1:0) + (String(t.notes||'').trim()?1:0);
+        let best = keep[0]; keep.forEach(t=>{ if(score(t) > score(best)) best = t; });
+        keep.forEach(t=>rows.push({kind:'review', t, key:'r'+t.id, best: t===best, gk: String(k)}));
+      }
     });
     return rows;
+  }
+  function loadTidy(){
+    tidyRows = tidyPlan(); tidyUnchecked.clear();
+    tidyRows.forEach(r=>{ if(r.kind==='review' && r.best) tidyUnchecked.add(r.key); });   // the one to keep starts unticked
   }
   function tidyVisible(){
     const f = document.getElementById('tidy-form-filter').value, p = document.getElementById('tidy-period-filter').value;
@@ -5201,13 +5210,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const nd = vis.filter(r=>r.kind==='done').length, nx = vis.filter(r=>r.kind==='dup').length, nn = vis.filter(r=>r.kind==='noform').length, nr = vis.filter(r=>r.kind==='review').length;
     const lab = {done:'Pending, but has Done by + Date', dup:'Duplicate (untouched)', noform:'Form is not in this client\'s Forms (untouched)', review:'Duplicate with data on both — check manually'};
     area.innerHTML = vis.length ? `<table><thead><tr><th style="width:34px;"></th><th>Client ID</th><th>Client</th><th>Form</th><th>Period</th><th>Status</th><th>Done by / date</th><th>Problem</th></tr></thead><tbody>${vis.map(r=>{ const c = taskClient(r.t);
-      return `<tr><td>${r.kind==='review'?'':`<input type="checkbox" class="tidy-cb" data-k="${esc(r.key)}"${tidyUnchecked.has(r.key)?'':' checked'}>`}</td><td class="mono">${esc(c['CLIENT ID NO.']||'')}</td><td>${esc(c.NAME||'')}</td><td>${esc(r.t.form)}</td><td>${esc(r.t.period)}</td><td>${esc(r.t.status)}</td><td>${esc(r.t.doneBy||'')} ${esc(r.t.doneDate||'')}</td><td>${lab[r.kind]}</td></tr>`; }).join('')}</tbody></table>` : '<div class="small-note">Nothing found — no Pending task has Done by + Date, no duplicates, and no task of a form the client does not have.</div>';
-    summary.textContent = `${nd} task(s) Pending but already have Done by + Date; ${nx} untouched duplicate(s); ${nn} untouched task(s) of a form the client does not have; ${nr} duplicate(s) with data on them (manual).`;
+      return `<tr><td><input type="checkbox" class="tidy-cb" data-k="${esc(r.key)}"${tidyUnchecked.has(r.key)?'':' checked'}></td><td class="mono">${esc(c['CLIENT ID NO.']||'')}</td><td>${esc(c.NAME||'')}</td><td>${esc(r.t.form)}</td><td>${esc(r.t.period)}</td><td>${esc(r.t.status)}</td><td>${esc(r.t.doneBy||'')} ${esc(r.t.doneDate||'')}</td><td>${r.kind==='review' ? (r.best ? 'Duplicate with data — <b>KEEP</b> (has the most data)' : 'Duplicate with data — suggested to remove') : lab[r.kind]}</td></tr>`; }).join('')}</tbody></table>` : '<div class="small-note">Nothing found — no Pending task has Done by + Date, no duplicates, and no task of a form the client does not have.</div>';
+    summary.textContent = `${nd} task(s) Pending but already have Done by + Date; ${nx} untouched duplicate(s); ${nn} untouched task(s) of a form the client does not have; ${nr} duplicate(s) with data on them (the copy with the most data is unticked = KEEP; tick the rest to remove).`;
     const on = k => vis.some(r=>r.kind===k && !tidyUnchecked.has(r.key));
     document.getElementById('tidy-done-btn').disabled = !on('done');
-    document.getElementById('tidy-dup-btn').disabled = !(on('dup') || on('noform'));
+    document.getElementById('tidy-dup-btn').disabled = !(on('dup') || on('noform') || on('review'));
   }
-  document.getElementById('tidy-load-btn').addEventListener('click', ()=>{ tidyRows = tidyPlan(); tidyUnchecked.clear(); renderTidy(); });
+  document.getElementById('tidy-load-btn').addEventListener('click', ()=>{ loadTidy(); renderTidy(); });
   document.getElementById('tidy-table').addEventListener('change', e=>{
     if(!e.target.classList.contains('tidy-cb')) return;
     if(e.target.checked) tidyUnchecked.delete(e.target.dataset.k); else tidyUnchecked.add(e.target.dataset.k);
@@ -5225,13 +5234,20 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       r.t.status = 'DONE'; ok++;
     }
     toast(`${ok} task(s) marked Done.` + (bad ? ` ${bad} failed: ${msg}` : ''));
-    tidyRows = tidyPlan(); tidyUnchecked.clear(); renderTidy();
+    loadTidy(); renderTidy();
     renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
   });
   document.getElementById('tidy-dup-btn').addEventListener('click', async ()=>{
-    const todo = tidyVisible().filter(r=>(r.kind==='dup' || r.kind==='noform') && !tidyUnchecked.has(r.key) && tasks.includes(r.t) && taskIsUntouched(r.t));
+    let todo = tidyVisible().filter(r=>(r.kind==='dup' || r.kind==='noform' || r.kind==='review') && !tidyUnchecked.has(r.key) && tasks.includes(r.t) && (r.kind==='review' || taskIsUntouched(r.t)));
+    // never remove every copy of a duplicate group: the one marked KEEP stays if all of them were ticked
+    const reviewByGroup = {};
+    tidyRows.filter(r=>r.kind==='review').forEach(r=>{ (reviewByGroup[r.gk] = reviewByGroup[r.gk] || []).push(r); });
+    Object.keys(reviewByGroup).forEach(g=>{
+      const all = reviewByGroup[g], ticked = todo.filter(r=>r.kind==='review' && r.gk===g);
+      if(ticked.length === all.length){ const keepRow = all.find(r=>r.best) || all[0]; todo = todo.filter(r=>r!==keepRow); }
+    });
     if(!todo.length) return;
-    if(!confirm(`Remove ${todo.length} task(s) (duplicates / forms the client does not have)? Only tasks with nothing typed on them are removed; this cannot be undone.`)) return;
+    if(!confirm(`Remove ${todo.length} task(s) (duplicates / forms the client does not have)?${todo.some(r=>r.kind==='review') ? ' This includes duplicates that have data typed — the copy marked KEEP stays.' : ''} This cannot be undone.`)) return;
     const btn = document.getElementById('tidy-dup-btn'); btn.disabled = true;
     const ids = todo.map(r=>r.t.id), removed = new Set();
     for(let i=0;i<ids.length;i+=100){
@@ -5242,7 +5258,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     todo.forEach(r=>{ if(removed.has(r.t.id)) logRowAudit('cor_tasks_audit','record_id',r.t.id,'delete',{form:r.t.form, period:r.t.period, due_date:r.t.due, client_id:r.t.clientId},null,[{field:'task', label:'Task removed (duplicate / form not in the client\'s Forms)', old:r.t.form+' '+r.t.period, new:null}]); });
     for(let i=tasks.length-1;i>=0;i--) if(removed.has(tasks[i].id)) tasks.splice(i,1);
     toast(removed.size ? `${removed.size} task(s) removed.` : 'The database did not remove them — your account may not be allowed to delete tasks.');
-    tidyRows = tidyPlan(); tidyUnchecked.clear(); renderTidy();
+    loadTidy(); renderTidy();
     renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
   });
   // ---- Check BIR e-filing receipts (pasted from Yahoo Mail) against the task list ----
