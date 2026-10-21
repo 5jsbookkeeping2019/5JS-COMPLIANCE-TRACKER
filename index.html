@@ -876,7 +876,7 @@
       <h3 style="margin-top:30px;">Create Missing Tasks (Task Tracker / Filing Calendar)</h3>
       <div class="small-note">The Task Tracker and the Filing Calendar only show tasks that exist. A client added to the Registry gets its tasks automatically for the <b>upcoming</b> due dates when saved; use this tool for the rest (e.g. a client that was in the Registry and Sales Summary but never got tasks, or a Forms list that was filled in later). It creates, from the client's <b>Forms</b> list and the filing calendar, every task the client doesn't have yet — nothing existing is changed. Clients with status NO / CLOSED and Branch clients are skipped; filings due before the client&rsquo;s Bookkeeping start date (or before today when that date is blank) and after an End of Service Date are not created.</div>
       <div class="filter-row" style="margin-top:8px;"><select class="filter" id="missing-tasks-scope"><option value="smart">From the client&rsquo;s Bookkeeping start date (from today if blank)</option><option value="upcoming">Only due dates from today onwards</option></select></div>
-      <div class="table-scroll" style="margin-top:12px;max-width:900px;max-height:320px;" id="missing-tasks-table"></div>
+      <div class="table-scroll" style="margin-top:12px;max-width:1300px;max-height:420px;" id="missing-tasks-table"></div>
       <div class="small-note" id="missing-tasks-summary" style="margin-top:8px;"></div>
       <button class="secondary" id="missing-tasks-apply-btn" style="margin-top:8px;" disabled>Create missing tasks</button>
       <h3 style="margin-top:30px;">Undo Created Tasks (backward filings / branches)</h3>
@@ -4918,6 +4918,15 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
     return created;
   }
+  // "1701Q: Q3 2026, Q4 2026 · 1601C: OCT 2026, NOV 2026 ..." — which form + period each missing task is for
+  function missingPeriodsHtml(list){
+    const byForm = new Map();
+    list.forEach(r=>{ const f = String(r.form); (byForm.get(f) || byForm.set(f, []).get(f)).push(r); });
+    return [...byForm.entries()].map(([f, rs])=>{
+      rs.sort((a,b)=> String(a.due_date).localeCompare(String(b.due_date)));
+      return `<div><b>${esc(f)}</b>: ${esc(rs.map(r=>r.period).join(', '))}</div>`;
+    }).join('');
+  }
   const missingUnchecked = new Set();   // client _ids the user un-ticked in "Create Missing Tasks"
   function renderMissingTasksTool(){
     const area = document.getElementById('missing-tasks-table');
@@ -4929,7 +4938,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const blanks = res.filter(p=>p.formsBlank && !/^(NO|CLOSED)$/.test(String(p.c['CLIENT?']||'').trim().toUpperCase()) && !clientIsBranch(p.c));
     let h = '';
     if(plans.length){
-      h += `<table><thead><tr><th style="width:34px;"><input type="checkbox" id="missing-tasks-all" title="Select / unselect all"${plans.every(p=>!missingUnchecked.has(p.c._id))?' checked':''}></th><th>Client ID</th><th>Client</th><th>Status</th><th>Forms</th><th>Missing tasks</th></tr></thead><tbody>${plans.map(p=>`<tr><td><input type="checkbox" class="missing-tasks-cb" data-cid="${esc(p.c._id)}"${missingUnchecked.has(p.c._id)?'':' checked'}></td><td class="mono">${esc(p.c['CLIENT ID NO.']||'')}</td><td>${esc(p.c.NAME||'')}</td><td>${esc(p.c['CLIENT?']||'')}</td><td>${esc(p.c.FORMS||'')}</td><td class="num">${p.list.length}</td></tr>`).join('')}</tbody></table>`;
+      h += `<table><thead><tr><th style="width:34px;"><input type="checkbox" id="missing-tasks-all" title="Select / unselect all"${plans.every(p=>!missingUnchecked.has(p.c._id))?' checked':''}></th><th>Client ID</th><th>Client</th><th>Status</th><th>Forms</th><th>Missing tasks</th><th>Forms &amp; periods to be created</th></tr></thead><tbody>${plans.map(p=>`<tr><td><input type="checkbox" class="missing-tasks-cb" data-cid="${esc(p.c._id)}"${missingUnchecked.has(p.c._id)?'':' checked'}></td><td class="mono">${esc(p.c['CLIENT ID NO.']||'')}</td><td>${esc(p.c.NAME||'')}</td><td>${esc(p.c['CLIENT?']||'')}</td><td>${esc(p.c.FORMS||'')}</td><td class="num">${p.list.length}</td><td style="font-size:11px;line-height:1.5;min-width:260px;">${missingPeriodsHtml(p.list)}</td></tr>`).join('')}</tbody></table>`;
     } else h += '<div class="small-note">No client is missing tasks for the selected periods.</div>';
     if(blanks.length) h += `<div class="small-note" style="margin-top:10px;color:var(--rust,#b3402a);"><b>${blanks.length} active client(s) have an empty Forms list</b>, so no tasks can be made for them: ${esc(blanks.slice(0,40).map(p=>p.c.NAME||p.c['CLIENT ID NO.']).join('; '))}${blanks.length>40?' …':''}. Open them in the Client Registry and use “Auto-fill Forms”.</div>`;
     area.innerHTML = h;
