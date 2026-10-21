@@ -1463,11 +1463,23 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function isZeroStatusRow(rec){
     return ZERO_STATUSES.has(String(resolveSalesClientStatus(rec)||'').trim().toUpperCase());
   }
+  // Only the INCOMING filings of a zero-status client become zero: a quarter whose return is already past its due date
+  // (or that is locked = filed) keeps whatever was recorded. Quarter due dates: Q1 Apr 25, Q2 Jul 25, Q3 Oct 25, Q4 Jan 25 next year.
+  function quarterDueIso(year, q){ year = Number(year); return q < 4 ? year + '-' + ['04','07','10'][q-1] + '-25' : (year+1) + '-01-25'; }
+  function zeroQuarterApplies(year, q){
+    if(!year || !(q>=1 && q<=4)) return false;
+    const today = new Date().toISOString().slice(0,10);
+    return quarterDueIso(year, q) >= today && !quarterIsLocked(Number(year), q);
+  }
+  function zeroKeyApplies(rec, key){
+    const m = /^q([1-4])_/.exec(key);
+    return !!m && ZERO_STATUS_KEYS.includes(key) && isZeroStatusRow(rec) && zeroQuarterApplies(rec.year, Number(m[1]));
+  }
   // Changes needed to bring a row in line: [{key, oldVal, newVal:0}] (empty
   // if the row isn't a zero-status row or already holds all zeros).
   function zeroStatusChanges(rec){
     if(!isZeroStatusRow(rec)) return [];
-    return ZERO_STATUS_KEYS.filter(k=> !(rec[k]!==null && rec[k]!==undefined && rec[k]!=='' && Number(rec[k])===0)).map(k=>({key:k, oldVal:rec[k], newVal:0}));
+    return ZERO_STATUS_KEYS.filter(k=> zeroKeyApplies(rec,k)).filter(k=> !(rec[k]!==null && rec[k]!==undefined && rec[k]!=='' && Number(rec[k])===0)).map(k=>({key:k, oldVal:rec[k], newVal:0}));
   }
 
   // ===================== VAT WORKSHEET =====================
@@ -1630,18 +1642,24 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // ₱0 automatically (read-only) -- same rule as the Sales Summary. Only
   // "Relief done by" and Remarks stay typeable. Nothing is deleted: the
   // stored values are just overridden while the status is a zero status.
-  function vatClientIsZero(idNo, year){
+  // q given: is THAT quarter zero (zero status AND still incoming); without q: is any quarter of the year zero.
+  function vatClientIsZero(idNo, year, q){
     if(!idNo) return false;
     const k = vatKey(idNo, year);
     const row = salesSummary.find(r=> vatKey(r.client_id_no, r.year) === k);
-    return row ? isZeroStatusRow(row) : ZERO_STATUSES.has(String(resolveSalesClientStatus({client_id_no:idNo})||'').trim().toUpperCase());
+    const isZ = row ? isZeroStatusRow(row) : ZERO_STATUSES.has(String(resolveSalesClientStatus({client_id_no:idNo})||'').trim().toUpperCase());
+    if(!isZ) return false;
+    return q ? zeroQuarterApplies(year, q) : [1,2,3,4].some(x=>zeroQuarterApplies(year, x));
   }
   function vatEffectiveWs(idNo, year, ws){
     ws = ws || {};
     if(!vatClientIsZero(idNo, year)) return ws;
     const z = Object.assign({}, ws);
-    for(let m=1;m<=12;m++) VAT_MONTH_FIELDS.forEach(([f])=>{ z['m'+m+'_'+f] = 0; });
-    for(let q=1;q<=4;q++){ z['q'+q+'_tax_paid'] = 0; z['q'+q+'_carry_in'] = 0; z['q'+q+'_nonvat_expenses'] = 0; }
+    for(let q=1;q<=4;q++){
+      if(!vatClientIsZero(idNo, year, q)) continue;
+      for(let m=(q-1)*3+1;m<=q*3;m++) VAT_MONTH_FIELDS.forEach(([f])=>{ z['m'+m+'_'+f] = 0; });
+      z['q'+q+'_tax_paid'] = 0; z['q'+q+'_carry_in'] = 0; z['q'+q+'_nonvat_expenses'] = 0;
+    }
     return z;
   }
   function vatKey(idNo, year){ return String(idNo||'').trim().toUpperCase() + '|' + Number(year); }
@@ -1801,9 +1819,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const result = {sales:0, tasks:0, slsp:0};
     const cleared = {};   // quarter -> the half-finished Tax Due taken back off the Sales Summary row
     const row = salesSummary.find(r=> vatKey(r.client_id_no, r.year) === vatKey(ws.client_id_no, ws.year));
-    if(row && !isZeroStatusRow(row)){
+    if(row){
       const patch = {}, audits = [];
       calc.forEach(qc=>{
+        if(zeroKeyApplies(row, 'q'+qc.q+'_sales')) return;   // incoming quarter of a 0 FILING / FOR CLOSURE client stays 0
         // A locked (finished) quarter's Sales Summary figures are never rewritten by a sync.
         if(quarterIsLocked(ws.year, qc.q)) return;
         [['q'+qc.q+'_sales', qc.salesTotal], ['q'+qc.q+'_expenses', qc.expensesTotal], ['q'+qc.q+'_pt_tax_due', !qc.dueAny ? null : (qc.complete && qc.dueTotal!==null ? qc.dueTotal : (qc.mode==='pt' ? null : 'WAIT'))]].forEach(([k,v])=>{
@@ -1973,12 +1992,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const ptKey = 'q'+q+'_pt_tax_due', itKey = 'q'+q+'_it_tax_due';
       const hasSales = rec['q'+q+'_sales'] !== null && rec['q'+q+'_sales'] !== undefined && rec['q'+q+'_sales'] !== '';
       if(!(vcalc && vatSalesCellValue(vcalc, ptKey) !== undefined)){
-        let v = zero ? 0 : computePTTaxDue(rec, q);
+        const zq = zero && zeroQuarterApplies(rec.year, q);
+        let v = zq ? 0 : computePTTaxDue(rec, q);
         if(v === undefined) v = (rec[ptKey]===null || rec[ptKey]===undefined || rec[ptKey]==='') ? null : Number(rec[ptKey]);
-        if(v !== null && !isNaN(v) && (v !== 0 || zero || hasSales || Number(rec[ptKey])===0)) out[ptKey] = v;
+        if(v !== null && !isNaN(v) && (v !== 0 || zq || hasSales || Number(rec[ptKey])===0)) out[ptKey] = v;
       }
       if(q<=3){
-        const v = zero ? 0 : ((rec[itKey]===null || rec[itKey]===undefined || rec[itKey]==='') ? null : Number(rec[itKey]));
+        const v = (zero && zeroQuarterApplies(rec.year, q)) ? 0 : ((rec[itKey]===null || rec[itKey]===undefined || rec[itKey]==='') ? null : Number(rec[itKey]));
         if(v !== null && !isNaN(v)) out[itKey] = v;
       }
     }
@@ -2223,7 +2243,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const zeroTitle = ' readonly title="Automatically ₱0 — this client\'s status is 0 FILING / FOR CLOSURE. Change the Client Status to edit it." style="width:88px;text-align:right;background:var(--paper-line);color:var(--ink-soft);"';
       const lockTitle = ` readonly title="${esc(quarterLockedMsg(year, q))}" style="width:88px;text-align:right;background:var(--paper-line);color:var(--ink-soft);cursor:not-allowed;"`;
       const qLocked = quarterIsLocked(year, q);
-      const numInput = (field, value, extra)=> e.zero
+      const qZero = e.zero && vatClientIsZero(e.idNo, year, q);
+      const numInput = (field, value, extra)=> qZero
         ? `<input class="inline-text vat-cell mono" data-key="${field}" value="${esc(fmtNumInput(value))}"${zeroTitle}>`
         : qLocked
         ? `<input class="inline-text vat-cell mono" data-key="${field}" value="${esc(fmtNumInput(value))}"${lockTitle}>`
@@ -4812,6 +4833,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         // client is active again (or the end date moved later) -> undo the app's own earlier auto-N/A
         const back = await restoreAutoNATasks(clientById[rec._id] || rec);
         if(back) toast(`${back} task(s) ${rec.NAME? 'for '+rec.NAME+' ':''}put back to Pending (client is active).`);
+        const cl = clientById[rec._id] || rec;
+        const zeroed = await applyZeroStatusTasks(cl);
+        if(zeroed) toast(`${zeroed} future filing(s) ${rec.NAME? 'for '+rec.NAME+' ':''}set to Zero / No Transaction (status ${statusUpper}).`);
+        const unz = await restoreZeroStatusTasks(cl);
+        if(unz) toast(`${unz} task(s) ${rec.NAME? 'for '+rec.NAME+' ':''}put back to Pending (no longer zero-filing).`);
+        if(zeroed || unz) renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
       }
     });
   }
@@ -4851,6 +4878,43 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(st === 'NO' || st === 'CLOSED') return [];
     const end = String(client['END OF SERVICE DATE']||'').trim();
     return tasks.filter(t => t.clientId === client._id && t.status === 'NA' && AUTO_NA_NOTE_RE.test(t.notes||'') && (!end || t.due <= end));
+  }
+  // Client Status 0 FILING / FOR CLOSURE: the client is still filed until the Registry says CLOSED / NO, but every filing that is
+  // still ahead (not done, not N/A, due today or later) is a zero return -> status "Zero / No Transaction", Tax Due 0, with a
+  // marker in Notes. Changing the status back to something else undoes exactly those tasks (only the ones carrying the marker).
+  const ZERO_TASK_TAG = 'ZERO FILING — client status is ';
+  const zeroTagRe = /(?:^| · )ZERO FILING — client status is [^·]*?\./;
+  async function applyZeroStatusTasks(client){
+    const st = String(client['CLIENT?']||'').trim().toUpperCase();
+    if(!ZERO_STATUSES.has(st)) return 0;
+    const today = new Date().toISOString().slice(0,10);
+    const affected = tasks.filter(t=> t.clientId === client._id && t.status === 'PENDING' && String(t.due||'') >= today);
+    let n = 0;
+    for(const t of affected){
+      const tag = ZERO_TASK_TAG + st + '.';
+      const notes = String(t.notes||'').trim() ? t.notes + ' · ' + tag : tag;
+      const { error } = await sb.from('cor_tasks').update({status:'ZERO', tax_due:0, notes}).eq('id', t.id);
+      if(error){ console.error(error); toast('Could not mark the future filings as Zero (' + (error.message||'unknown error') + ').'); break; }
+      logFieldAudit('cor_tasks_audit','record_id', t.id, 'status', 'Status (auto zero: client status ' + st + ')', 'PENDING', 'ZERO');
+      t.status = 'ZERO'; t.taxDue = 0; t.notes = notes; n++;
+    }
+    return n;
+  }
+  async function restoreZeroStatusTasks(client){
+    const st = String(client['CLIENT?']||'').trim().toUpperCase();
+    if(ZERO_STATUSES.has(st)) return 0;
+    const affected = tasks.filter(t=> t.clientId === client._id && t.status === 'ZERO' && zeroTagRe.test(String(t.notes||'')));
+    let n = 0;
+    for(const t of affected){
+      const notes = String(t.notes||'').replace(zeroTagRe,'').trim();
+      const patch = {status:'PENDING', notes: notes || null};
+      if(Number(t.taxDue) === 0) patch.tax_due = null;
+      const { error } = await sb.from('cor_tasks').update(patch).eq('id', t.id);
+      if(error){ console.error(error); toast('Could not put the Zero tasks back to Pending (' + (error.message||'unknown error') + ').'); break; }
+      logFieldAudit('cor_tasks_audit','record_id', t.id, 'status', 'Status (restored: client no longer ' + 'zero-filing)', 'ZERO', 'PENDING');
+      t.status = 'PENDING'; t.notes = notes; if(patch.tax_due === null) t.taxDue = null; n++;
+    }
+    return n;
   }
   async function restoreAutoNATasks(client){
     const affected = restorableNATasksFor(client);
@@ -5479,14 +5543,17 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // closed. Already-DONE (and already-NA) tasks are left untouched. Safe to
   // re-run -- purely idempotent.
   async function applyInactiveClientNA(clientId, status, clientName){
-    const affected = tasks.filter(t => t.clientId === clientId && t.status !== 'DONE' && t.status !== 'NA');
+    // only the INCOMING filings (due today or later) go away; earlier ones (even unfinished) are left exactly as they were
+    const today = new Date().toISOString().slice(0,10);
+    const affected = tasks.filter(t => t.clientId === clientId && t.status !== 'DONE' && t.status !== 'NA' && String(t.due||'') >= today);
     if(!affected.length) return;
     const note = `N/A — client status is ${status}.`;
     const { error } = await sb.from('cor_tasks')
       .update({status:'NA', done_by:null, done_date:null, notes: note})
       .eq('client_id', clientId)
       .neq('status', 'DONE')
-      .neq('status', 'NA');
+      .neq('status', 'NA')
+      .gte('due_date', today);
     if(error){
       console.error(error);
       toast('Client saved, but there was an error marking tasks as N/A — please try again.');
@@ -5875,7 +5942,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // Tax, zero-status rows = 0, VAT quarters from the VAT Worksheet), not just
   // what happens to be stored -- so the filter matches what's on screen.
   function salesShownDue(r, key){
-    if(isZeroStatusRow(r) && ZERO_STATUS_KEYS.includes(key)) return 0;
+    if(zeroKeyApplies(r, key)) return 0;
     const pm = /^q([1-4])_pt_tax_due$/.exec(key);
     if(pm){
       const a = computePTTaxDue(r, pm[1]);
@@ -5902,7 +5969,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // (VAT clients: from the VAT Worksheet; 0 FILING / FOR CLOSURE rows: ₱0).
   const SALES_AMOUNT_COLS = SALES_NUMERIC_COLS.filter(([k])=> /^q[1-4]_(sales|expenses)$/.test(k));
   function salesShownAmt(r, key){
-    if(isZeroStatusRow(r) && ZERO_STATUS_KEYS.includes(key)) return 0;
+    if(zeroKeyApplies(r, key)) return 0;
     if(normalizeTaxType(r.tax_type)==='VAT' && r.client_id_no){
       const ws = vatWsFor(r.client_id_no, r.year);
       if(ws){ const v = vatSalesCellValue(vatYearCalc(ws), key); if(v !== undefined) return v === '' ? null : Number(v); }
@@ -6271,7 +6338,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         // 0 FILING / FOR CLOSURE rows: Sales and both Tax Due columns are
         // always ₱0 for every quarter (see ZERO_STATUS_KEYS) -- wins over
         // the Non-VAT 3% / VAT Worksheet auto-computations below.
-        const isZeroAuto = rowIsZeroStatus && ZERO_STATUS_KEYS.includes(key);
+        const isZeroAuto = rowIsZeroStatus && zeroKeyApplies(r, key);
         // VAT clients: once the VAT Worksheet has figures for a quarter, that
         // quarter's Sales / Expenses / 2550Q Tax Due come from the worksheet
         // (locked here -- edit them in the VAT Worksheet tab instead).
