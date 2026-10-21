@@ -911,6 +911,11 @@
       </div>
       <h3 style="margin-top:30px;">Task clean-up: &ldquo;Pending&rdquo; tasks that are already done, and duplicate tasks</h3>
       <div class="small-note"><b>1) Done by + Date typed but Status still Pending</b> &mdash; staff typed who did it and the date, but the Status dropdown was never changed to Done, so the task still shows as Pending / Overdue. <b>3) Tasks of a form the client does not have</b> (e.g. a 1601EQ task for a client without 0619E / 1601EQ in the Registry Forms) &mdash; listed only when nothing is typed on them. <b>2) Duplicate tasks</b> &mdash; two tasks for the same client + form + period (e.g. one &ldquo;SEPTEMBER 2026&rdquo; that staff marked Done, and a second &ldquo;SEPT 2026&rdquo; created later that is still Pending). A duplicate is only offered for removal when it is completely untouched (Pending, nothing typed) and another task of the same client/form/period exists.</div>
+      <div class="filter-row" style="margin-top:10px;gap:6px;flex-wrap:wrap;">
+        <select class="filter" id="tidy-form-filter"><option value="">All forms</option></select>
+        <select class="filter" id="tidy-period-filter"><option value="">All periods</option></select>
+        <span class="small-note" style="margin:0;">Filters what is listed — and what the buttons below act on.</span>
+      </div>
       <div class="table-scroll" style="margin-top:12px;max-width:1000px;max-height:340px;" id="tidy-table"></div>
       <div class="small-note" id="tidy-summary" style="margin-top:8px;"></div>
       <button class="secondary" id="tidy-load-btn" style="margin-top:8px;">Check tasks</button>
@@ -4314,7 +4319,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // their 2303 (mirrors the same two items added to the Tax Engine Sheet).
     {label:'Other Compliance (per Line of Business)', forms:['Inventory List','Lessee Information Sheet']},
   ];
-  const FORMS_CASCADE = { '0619E':['1604E','QAP'], '1601C':['1604C','Alphalist'] };
+  // A client that has the form on the left automatically has the forms on the right too (Forms grid ticks them, and the
+  // Task Tracker / clean-up treat them as the client's forms even when an older record never had them ticked).
+  const FORMS_CASCADE = { '1701':['1701Q'], '1702':['1702Q'], '0619E':['1601EQ','1604E','QAP'], '1601C':['1604C','Alphalist'] };
   // Taxpayer Classification values that count as "Individual" for the
   // Tax-Type/Classification-driven auto-check rules below (same bucketing
   // used in the Tax Engine Sheet's hidden helper table).
@@ -4380,6 +4387,15 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
   const FORMS_GRID_KNOWN = new Set(FORMS_GRID_ROWS.flatMap(r=>r.forms).map(f=>f.toUpperCase()));
   function parseFormsCsv(csv){ return String(csv||'').split(',').map(s=>s.trim()).filter(Boolean); }
+  // The client's forms INCLUDING the ones that always come with another form (see FORMS_CASCADE) and SLSP for a VAT client.
+  function effectiveFormsSet(c){
+    const set = new Set(parseFormsCsv(c && c.FORMS).map(f=>f.toUpperCase()));
+    if(!set.size) return set;
+    if(set.has('1701A')) set.add('1701');
+    Object.keys(FORMS_CASCADE).forEach(k=>{ if(set.has(k.toUpperCase())) FORMS_CASCADE[k].forEach(d=> set.add(d.toUpperCase())); });
+    if(normalizeTaxType(c['TAX TYPE']) === 'VAT') set.add('SLSP');
+    return set;
+  }
   function formsGridHtml(formsCsv){
     const activeCodes = parseFormsCsv(formsCsv);
     const active = new Set(activeCodes.map(f=>f.toUpperCase()));
@@ -4869,9 +4885,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(!client) return {list:[], formsBlank:false};
     const st = String(client['CLIENT?']||'').trim().toUpperCase();
     if(st === 'NO' || st === 'CLOSED' || clientIsBranch(client)) return {list:[], formsBlank:false};
-    const forms = new Set(parseFormsCsv(client.FORMS).map(f=>f.toUpperCase()));
+    const forms = effectiveFormsSet(client);
     if(!forms.size) return {list:[], formsBlank:true};
-    if(forms.has('1701A')) forms.add('1701');
     const end = String(client['END OF SERVICE DATE']||'').trim();
     const today = new Date().toISOString().slice(0,10);
     const bk = clientBookkeepingIso(client);
@@ -5145,14 +5160,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
     // untouched Pending tasks of a form the client does not have in its Registry Forms (e.g. a 1601EQ for a client without 0619E / 1601EQ)
     const vocab = new Set();
-    clients.forEach(c=> parseFormsCsv(c.FORMS).forEach(f=> vocab.add(f.toUpperCase())));
+    clients.forEach(c=> effectiveFormsSet(c).forEach(f=> vocab.add(f)));
     tasks.forEach(t=>{
       const c = clientById[t.clientId]; if(!c) return;
       const st = String(c['CLIENT?']||'').trim().toUpperCase();
       if(st === 'NO' || st === 'CLOSED' || clientIsBranch(c)) return;
-      const own = new Set(parseFormsCsv(c.FORMS).map(f=>f.toUpperCase()));
+      const own = effectiveFormsSet(c);
       if(!own.size) return;
-      if(own.has('1701A')) own.add('1701');
       const f = String(t.form).toUpperCase();
       if(own.has(f) || !vocab.has(f) || t.status !== 'PENDING' || !taskIsUntouched(t)) return;
       if(f === '2550Q' || f === '2551Q'){ const m = /(\d{4})$/.exec(String(t.period||'')); if(m && vatWorksheet.some(w=> Number(w.year) === Number(m[1]) && vatStartOf(w) && String(w.client_id_no||'').trim().toUpperCase() === String(c['CLIENT ID NO.']||'').trim().toUpperCase())) return; }
@@ -5173,14 +5187,28 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     });
     return rows;
   }
+  function tidyVisible(){
+    const f = document.getElementById('tidy-form-filter').value, p = document.getElementById('tidy-period-filter').value;
+    return tidyRows.filter(r=> (!f || String(r.t.form) === f) && (!p || String(r.t.period) === p));
+  }
+  ['tidy-form-filter','tidy-period-filter'].forEach(id=> document.getElementById(id).addEventListener('change', ()=> renderTidy()));
   function renderTidy(){
     const area = document.getElementById('tidy-table'), summary = document.getElementById('tidy-summary');
-    const nd = tidyRows.filter(r=>r.kind==='done').length, nx = tidyRows.filter(r=>r.kind==='dup').length, nn = tidyRows.filter(r=>r.kind==='noform').length, nr = tidyRows.filter(r=>r.kind==='review').length;
+    // form / period dropdowns list what was found; keep the current pick when it is still there
+    const fSel = document.getElementById('tidy-form-filter'), pSel = document.getElementById('tidy-period-filter');
+    const fv = fSel.value, pv = pSel.value;
+    const forms = Array.from(new Set(tidyRows.map(r=>String(r.t.form)))).sort();
+    const periods = Array.from(new Set(tidyRows.map(r=>String(r.t.period)))).sort();
+    fSel.innerHTML = '<option value="">All forms</option>' + forms.map(f=>`<option value="${esc(f)}">${esc(f)}</option>`).join('');
+    pSel.innerHTML = '<option value="">All periods</option>' + periods.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('');
+    fSel.value = forms.includes(fv) ? fv : ''; pSel.value = periods.includes(pv) ? pv : '';
+    const vis = tidyVisible();
+    const nd = vis.filter(r=>r.kind==='done').length, nx = vis.filter(r=>r.kind==='dup').length, nn = vis.filter(r=>r.kind==='noform').length, nr = vis.filter(r=>r.kind==='review').length;
     const lab = {done:'Pending, but has Done by + Date', dup:'Duplicate (untouched)', noform:'Form is not in this client\'s Forms (untouched)', review:'Duplicate with data on both — check manually'};
-    area.innerHTML = tidyRows.length ? `<table><thead><tr><th style="width:34px;"></th><th>Client ID</th><th>Client</th><th>Form</th><th>Period</th><th>Status</th><th>Done by / date</th><th>Problem</th></tr></thead><tbody>${tidyRows.map(r=>{ const c = taskClient(r.t);
+    area.innerHTML = vis.length ? `<table><thead><tr><th style="width:34px;"></th><th>Client ID</th><th>Client</th><th>Form</th><th>Period</th><th>Status</th><th>Done by / date</th><th>Problem</th></tr></thead><tbody>${vis.map(r=>{ const c = taskClient(r.t);
       return `<tr><td>${r.kind==='review'?'':`<input type="checkbox" class="tidy-cb" data-k="${esc(r.key)}"${tidyUnchecked.has(r.key)?'':' checked'}>`}</td><td class="mono">${esc(c['CLIENT ID NO.']||'')}</td><td>${esc(c.NAME||'')}</td><td>${esc(r.t.form)}</td><td>${esc(r.t.period)}</td><td>${esc(r.t.status)}</td><td>${esc(r.t.doneBy||'')} ${esc(r.t.doneDate||'')}</td><td>${lab[r.kind]}</td></tr>`; }).join('')}</tbody></table>` : '<div class="small-note">Nothing found — no Pending task has Done by + Date, no duplicates, and no task of a form the client does not have.</div>';
     summary.textContent = `${nd} task(s) Pending but already have Done by + Date; ${nx} untouched duplicate(s); ${nn} untouched task(s) of a form the client does not have; ${nr} duplicate(s) with data on them (manual).`;
-    const on = k => tidyRows.some(r=>r.kind===k && !tidyUnchecked.has(r.key));
+    const on = k => vis.some(r=>r.kind===k && !tidyUnchecked.has(r.key));
     document.getElementById('tidy-done-btn').disabled = !on('done');
     document.getElementById('tidy-dup-btn').disabled = !(on('dup') || on('noform'));
   }
@@ -5191,7 +5219,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     renderTidy();
   });
   document.getElementById('tidy-done-btn').addEventListener('click', async ()=>{
-    const todo = tidyRows.filter(r=>r.kind==='done' && !tidyUnchecked.has(r.key) && r.t.status==='PENDING');
+    const todo = tidyVisible().filter(r=>r.kind==='done' && !tidyUnchecked.has(r.key) && r.t.status==='PENDING');
     if(!todo.length) return;
     const btn = document.getElementById('tidy-done-btn'); btn.disabled = true;
     let ok = 0, bad = 0, msg = '';
@@ -5206,7 +5234,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
   });
   document.getElementById('tidy-dup-btn').addEventListener('click', async ()=>{
-    const todo = tidyRows.filter(r=>(r.kind==='dup' || r.kind==='noform') && !tidyUnchecked.has(r.key) && tasks.includes(r.t) && taskIsUntouched(r.t));
+    const todo = tidyVisible().filter(r=>(r.kind==='dup' || r.kind==='noform') && !tidyUnchecked.has(r.key) && tasks.includes(r.t) && taskIsUntouched(r.t));
     if(!todo.length) return;
     if(!confirm(`Remove ${todo.length} task(s) (duplicates / forms the client does not have)? Only tasks with nothing typed on them are removed; this cannot be undone.`)) return;
     const btn = document.getElementById('tidy-dup-btn'); btn.disabled = true;
