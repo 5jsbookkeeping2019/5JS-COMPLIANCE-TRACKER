@@ -6106,7 +6106,39 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       ).join('');
     }
     if(!pool.length){
-      document.getElementById('sales-table').innerHTML = `<div class="small-note">${salesSummary.length? 'No matches for this search/filter.' : 'No data yet — run sales_summary_schema.sql and sales_summary_seed.sql in Supabase first.'}</div>`;
+      // Searching for a specific client and finding nothing: say WHY (hidden by a filter, or no row yet) and offer to create the row.
+      let why = '';
+      if(q){
+        const cands = clients.filter(c=> (String(c.NAME||'')+' '+String(c.TIN||'')+' '+String(c['TRADE NAME']||'')+' '+String(c['CLIENT ID NO.']||'')).toLowerCase().includes(q)).slice(0,4);
+        why = cands.map(c=>{
+          const id = String(c['CLIENT ID NO.']||'').trim();
+          const rows = salesSummary.filter(r=> id && String(r.client_id_no||'').trim().toUpperCase() === id.toUpperCase());
+          const yr = Number(chkSingle(salesYearFilter)) || new Date().getFullYear();
+          if(!rows.length) return `<div style="margin-top:6px;"><b>${esc(c.NAME||id)}</b> (${esc(id)}) is in the Client Registry but has <b>no Sales Summary row</b> yet. <button class="secondary sales-make-row" data-id="${esc(c._id)}" data-year="${yr}" style="padding:2px 10px;">Create the ${yr} row</button></div>`;
+          return rows.map(r=>{
+            const hidden = [];
+            if(!chkPass(salesYearFilter, r.year)) hidden.push('Year');
+            if(!chkPass(salesTaxTypeFilter, normalizeTaxType(r.tax_type))) hidden.push('Tax type');
+            if(!chkPass(salesTaxOptionFilter, normalizeTaxOption(r.tax_option))) hidden.push('Tax option');
+            if(!chkPass(salesClientStatusFilter, resolveSalesClientStatus(r))) hidden.push('Client status');
+            if(!chkPass(salesAgentFilter, r.agent)) hidden.push('Sales rep');
+            if(mfs.length && !mfs.some(mf=> salesMissingMatch(r, mf))) hidden.push('field filter');
+            if(!salesQuickMatch(r)) hidden.push('Quick check');
+            return `<div style="margin-top:6px;"><b>${esc(c.NAME||id)}</b> — the ${esc(r.year)} row exists but is hidden by the <b>${hidden.length ? hidden.join(', ') : 'search'}</b> filter. Press “✕ Clear filters”.</div>`;
+          }).join('');
+        }).join('');
+      }
+      document.getElementById('sales-table').innerHTML = `<div class="small-note">${salesSummary.length? 'No matches for this search/filter.' : 'No data yet — run sales_summary_schema.sql and sales_summary_seed.sql in Supabase first.'}${why}</div>`;
+      document.querySelectorAll('#sales-table .sales-make-row').forEach(btn=> btn.addEventListener('click', async ()=>{
+        const c = clientById[btn.dataset.id]; if(!c) return;
+        btn.disabled = true;
+        const row = {client_id_no:c['CLIENT ID NO.'], year:Number(btn.dataset.year), name:c.NAME||null, tin:c.TIN||null, trade_name:c['TRADE NAME']||null, tax_type:c['TAX TYPE']||null, client_status:c['CLIENT?']||null, agent:c['SALES REPRESENTATIVE']||null};
+        const { data, error } = await sb.from('cor_sales_summary').insert(row).select().single();
+        if(error){ console.error(error); toast('Could not create the Sales Summary row (' + (error.message||'unknown error') + ').'); btn.disabled = false; return; }
+        salesSummary.push(mapSalesSummaryFromDb([data])[0]);
+        initSalesSummaryFilters(); renderSalesSummary();
+        toast('Sales Summary row created for ' + (c.NAME||'the client') + '.');
+      }));
       return;
     }
     const hlQ = salesHighlightQuarter();
