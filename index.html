@@ -4382,13 +4382,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   }
   const FORMS_GRID_KNOWN = new Set(FORMS_GRID_ROWS.flatMap(r=>r.forms).map(f=>f.toUpperCase()));
   function parseFormsCsv(csv){ return String(csv||'').split(',').map(s=>s.trim()).filter(Boolean); }
-  // The client's forms INCLUDING the ones that always come with another form (see FORMS_CASCADE) and SLSP for a VAT client.
+  // The client's forms INCLUDING the ones that always come with another form (see FORMS_CASCADE) and SLSP + 2550Q for a VAT client.
   function effectiveFormsSet(c){
     const set = new Set(parseFormsCsv(c && c.FORMS).map(f=>f.toUpperCase()));
     if(!set.size) return set;
     if(set.has('1701A')) set.add('1701');
     Object.keys(FORMS_CASCADE).forEach(k=>{ if(set.has(k.toUpperCase())) FORMS_CASCADE[k].forEach(d=> set.add(d.toUpperCase())); });
-    if(normalizeTaxType(c['TAX TYPE']) === 'VAT') set.add('SLSP');
+    if(normalizeTaxType(c['TAX TYPE']) === 'VAT'){ set.add('SLSP'); set.add('2550Q'); }
     return set;
   }
   function formsGridHtml(formsCsv){
