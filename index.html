@@ -868,11 +868,6 @@
       </div>
       <div id="sales-relink-unresolved" style="margin-top:8px;"></div>
 
-      <h3 style="margin-top:30px;">Zero Out 0 FILING / FOR CLOSURE Rows</h3>
-      <div class="small-note">Sales Summary rows whose Client Status is <b>0 FILING</b> or <b>FOR CLOSURE</b> automatically show ₱0 for every quarter's Sales, 2550Q/2551Q Tax Due and 1701Q/1702Q IT Due (locked, like the other computed cells), and zero themselves the moment a row's status is changed to one of these. This one-time tool applies the same zeros to the rows that <i>already</i> have those statuses (older rows still hold whatever was typed before). Rows that currently hold a non-zero value are listed first so nothing real is overwritten by surprise.</div>
-      <div class="table-scroll" style="margin-top:12px;max-width:900px;max-height:320px;" id="zero-status-table"></div>
-      <div class="small-note" id="zero-status-summary" style="margin-top:8px;"></div>
-      <button class="secondary" id="zero-status-apply-btn" style="margin-top:8px;" disabled>Apply zeros</button>
       <h3 style="margin-top:30px;">Restore Tasks Wrongly Marked N/A</h3>
       <div class="small-note">When a client's status is set to NO / CLOSED, or an End of Service Date is entered, the app automatically marks their open tasks N/A. If the client later became active again (or the End of Service Date was removed / moved later), those tasks stayed N/A. This lists every ACTIVE client that still has tasks the app itself auto-marked N/A, and puts them back to Pending. (Tasks someone set to N/A by hand are left alone — change those from the Status dropdown in the Task Tracker.)</div>
       <div class="table-scroll" style="margin-top:12px;max-width:900px;max-height:320px;" id="restore-na-table"></div>
@@ -3343,7 +3338,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(tab === 'tax2307') renderEntries2307();
     if(tab === 'sawt') renderSawt();
     if(tab === 'report') renderReport();
-    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderZeroStatusTool(); renderRestoreNATool(); renderMissingTasksTool(); renderCredsAccessLog(); }
+    if(tab === 'settings'){ renderSalesReps(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderRestoreNATool(); renderMissingTasksTool(); renderCredsAccessLog(); }
   }
 
   // Jumps to another tab programmatically (reuses the same click handler
@@ -8034,7 +8029,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         }
       }
       initRegistryFilters(); initReportFilters(); initSalesSummaryFilters(); initEntries2307Filters(); initReassignTool(); initTtReassignTool(); initToReassignTool();
-      renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderZeroStatusTool();
+      renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable();
       const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
       if(activeTab==='registry') renderRegistry();
       if(activeTab==='sales') renderSalesSummary();
@@ -8200,56 +8195,6 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
        4. Both are set, but the Client ID hasn't actually been renumbered
           to "<Main Client ID>-B<n>" yet (run Branch Client ID Numbering
           above to fix this one). */
-
-  // ---- Zero Out 0 FILING / FOR CLOSURE rows (Settings) ----
-  function renderZeroStatusTool(){
-    const area = document.getElementById('zero-status-table');
-    const summary = document.getElementById('zero-status-summary');
-    const btn = document.getElementById('zero-status-apply-btn');
-    if(!area) return;
-    const plans = salesSummary.map(r=>({row:r, changes:zeroStatusChanges(r)})).filter(p=>p.changes.length);
-    const hasReal = p=> p.changes.some(c=> c.oldVal!==null && c.oldVal!==undefined && c.oldVal!=='' && Number(c.oldVal)!==0);
-    plans.sort((a,b)=> (hasReal(b)?1:0)-(hasReal(a)?1:0));
-    const realCount = plans.filter(hasReal).length;
-    if(!plans.length){
-      area.innerHTML = '<div class="small-note">Every 0 FILING / FOR CLOSURE row is already all zeros — nothing to apply.</div>';
-      summary.textContent = ''; btn.disabled = true; return;
-    }
-    const fmt = v=> (v===null||v===undefined||v==='') ? '(blank)' : fmtNumInput(v);
-    const rows = plans.slice(0,300).map(p=>{
-      const real = p.changes.filter(c=> c.oldVal!==null && c.oldVal!==undefined && c.oldVal!=='' && Number(c.oldVal)!==0);
-      const detail = real.length ? real.map(c=>`${SALES_SUMMARY_COLS.find(k=>k[0]===c.key)[1]}: ${fmt(c.oldVal)} → 0`).join('; ') : 'blank → 0';
-      return `<tr><td class="mono">${esc(p.row.client_id_no||'(blank)')}</td><td>${esc(p.row.name||'')}</td><td>${esc(p.row.year||'')}</td><td>${esc(resolveSalesClientStatus(p.row))}</td><td style="${real.length?'color:var(--critical);':''}">${esc(detail)}</td></tr>`;
-    }).join('');
-    area.innerHTML = `<table><thead><tr><th>Client ID</th><th>Client</th><th>Year</th><th>Status</th><th>What changes</th></tr></thead><tbody>${rows}</tbody></table>`;
-    summary.textContent = `${plans.length} row(s) will be set to zeros` + (realCount ? ` — ${realCount} of them currently hold non-zero values that will be replaced (listed first, in red).` : ' — none currently hold non-zero values.') + (plans.length>300 ? ' Showing the first 300.' : '');
-    btn.disabled = false;
-  }
-  document.getElementById('zero-status-apply-btn').addEventListener('click', async ()=>{
-    const btn = document.getElementById('zero-status-apply-btn');
-    const plans = salesSummary.map(r=>({row:r, changes:zeroStatusChanges(r)})).filter(p=>p.changes.length);
-    if(!plans.length) return;
-    if(!confirm(`Set every quarter's Sales, Tax Due and IT Due to ₱0 on ${plans.length} Sales Summary row(s) whose status is 0 FILING / FOR CLOSURE? Each change is saved to the row's history.`)) return;
-    btn.disabled = true;
-    let done = 0, failed = 0;
-    for(const p of plans){
-      const r = p.row, patch = {}, audits = p.changes.slice();
-      p.changes.forEach(c=>{ r[c.key] = 0; patch[c.key] = 0; });
-      const ts = computeSalesQuarterSum(r,'sales');
-      if(r.total_sales !== ts){ audits.push({key:'total_sales', oldVal:r.total_sales, newVal:ts}); r.total_sales = ts; patch.total_sales = ts; }
-      const ni = computeNetIncomeAuto(r);
-      if(ni !== undefined && r.net_income !== ni){ audits.push({key:'net_income', oldVal:r.net_income, newVal:ni}); r.net_income = ni; patch.net_income = ni; }
-      const stamp = {updated_at:new Date().toISOString(), updated_by:currentUserEmail};
-      Object.assign(patch, stamp); r.updated_at = stamp.updated_at; r.updated_by = stamp.updated_by;
-      const { error } = await sb.from('cor_sales_summary').update(patch).eq('id', r._id);
-      if(error){ console.error(error); failed++; continue; }
-      done++;
-      audits.forEach(a=> logFieldAudit('cor_sales_summary_audit','record_id', r._id, a.key, SALES_SUMMARY_COLS.find(c=>c[0]===a.key)[1]+' (auto-zero: 0 FILING / FOR CLOSURE)', a.oldVal, a.newVal));
-    }
-    toast(failed ? `${done} row(s) zeroed, ${failed} failed — please run it again.` : `${done} row(s) set to zeros.`);
-    renderZeroStatusTool();
-    renderSalesSummary();
-  });
 
   function auditBranchTags(){
     const issues = [];
@@ -8527,7 +8472,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     initToReassignTool();
     renderBranchRenumberTable();
     renderSalesRelinkTable();
-    renderBranchAuditTable(); renderZeroStatusTool();
+    renderBranchAuditTable();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
@@ -8556,7 +8501,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const idx = salesSummary.findIndex(r=>r._id===mapped._id);
       if(idx>=0) salesSummary[idx] = mapped; else salesSummary.push(mapped);
     }
-    initSalesSummaryFilters(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderZeroStatusTool();
+    initSalesSummaryFilters(); initReassignTool(); initTtReassignTool(); initToReassignTool(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
   function handleEntry2307Realtime(payload){
@@ -8602,7 +8547,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(idx>=0) clients[idx] = mapped; else clients.push(mapped);
       clientById[mapped._id] = mapped;
     }
-    initRegistryFilters(); initReportFilters(); initTrackerFilters(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable(); renderZeroStatusTool();
+    initRegistryFilters(); initReportFilters(); initTrackerFilters(); renderBranchRenumberTable(); renderSalesRelinkTable(); renderBranchAuditTable();
     renderActiveTab(document.querySelector('.tab-btn.active').dataset.tab);
   }
 
