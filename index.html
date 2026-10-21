@@ -1149,10 +1149,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       .filter(i=> !i.type || i.type === 'text' || i.type === 'search');
     boxes.forEach(i=>{ i.value = ''; });
     panel.querySelectorAll('#sales-quick select').forEach(el=>{ el.selectedIndex = 0; });   // Sales Summary quick check
-    // tell EVERY cleared control (not just the first) so each tab re-renders from the cleared state
-    sels.forEach(sel=>{ const st = CHK_FILTERS.get(sel); if(st) st.internal = true; sel.dispatchEvent(new Event('change', {bubbles:true})); if(st) st.internal = false; });
-    boxes.forEach(i=> i.dispatchEvent(new Event('input', {bubbles:true})));
-    panel.querySelectorAll('#sales-quick select').forEach(el=> el.dispatchEvent(new Event('change', {bubbles:true})));
+    // ONE re-render only (several in a row froze the page on big tables)
+    if(panel.id === 'panel-sales') salesShowAll = false;
+    if(sels[0]) sels[0].dispatchEvent(new Event('change', {bubbles:true}));
+    else if(boxes[0]) boxes[0].dispatchEvent(new Event('input', {bubbles:true}));
   }
   ['calendar','tracker','registry','sales','vat','tax2307','sawt','report'].forEach(name=>{
     const panel = document.getElementById('panel-'+name); if(!panel) return;
@@ -6075,6 +6075,8 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     }
   }
 
+  const SALES_ROW_CAP = 120;
+  let salesShowAll = false;
   function renderSalesSummary(){
     const q = (salesSearch.value||'').toLowerCase();
     // All checkbox filters (see CHK_FILTERS): Year / Tax Type / Tax Option /
@@ -6140,7 +6142,10 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     // so the total can't be edited out of sync with the actual quarterly
     // figures it's supposed to add up to.
     const COMPUTED_KEYS = new Set(['total_sales','total_expenses']);
-    const rows = pool.map(r=>{
+    // Showing hundreds of rows x ~90 editable cells freezes the browser, so only the first SALES_ROW_CAP rows are drawn
+    // until "Show all" is pressed (the filters above still work on all rows).
+    const shownPool = salesShowAll ? pool : pool.slice(0, SALES_ROW_CAP);
+    const rows = shownPool.map(r=>{
       const matched = r.client_id_no ? findClientByIdNo(r.client_id_no) : null;
       const rowIsZeroStatus = isZeroStatusRow(r);
       const vatWsRow = (normalizeTaxType(r.tax_type)==='VAT' && r.client_id_no) ? vatWsFor(r.client_id_no, r.year) : null;
@@ -6255,7 +6260,11 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       const deleteBtnHtml = isAdmin() ? `<button class="tiny delete-sales-btn" data-id="${esc(r._id)}">Delete</button>` : '';
       return `<tr data-id="${esc(r._id)}" title="${esc(editedTitle)}">${cells}<td><button class="tiny history-sales-btn" data-id="${esc(r._id)}">History</button></td><td>${deleteBtnHtml}</td></tr>`;
     }).join('');
-    document.getElementById('sales-table').innerHTML = `<table><thead><tr>${headRow}</tr></thead><tbody>${rows}</tbody></table>`;
+    const moreNote = shownPool.length < pool.length
+      ? `<div class="small-note" style="margin:8px 0;">Showing the first ${shownPool.length.toLocaleString()} of ${pool.length.toLocaleString()} rows (to keep the page fast) — narrow the filters, or <button class="secondary" id="sales-show-all-btn" style="padding:2px 10px;">Show all ${pool.length.toLocaleString()} rows</button> <span style="color:var(--ink-soft);">(can be slow)</span></div>` : '';
+    document.getElementById('sales-table').innerHTML = `${moreNote}<table><thead><tr>${headRow}</tr></thead><tbody>${rows}</tbody></table>`;
+    const showAllBtn = document.getElementById('sales-show-all-btn');
+    if(showAllBtn) showAllBtn.addEventListener('click', ()=>{ salesShowAll = true; showAllBtn.textContent = 'Loading…'; setTimeout(renderSalesSummary, 30); });
     document.querySelectorAll('#sales-table tbody tr').forEach(tr=>{
       const id = tr.dataset.id;
       const rec = salesSummary.find(x=>x._id===id);
