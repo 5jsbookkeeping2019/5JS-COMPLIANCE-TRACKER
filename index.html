@@ -7026,10 +7026,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function openPrintable2307(rec){
     // All entries sharing the same payor + payee + year + quarter go on
     // one certificate together (one certificate can list several ATC lines).
+    // Only entries covering the SAME month(s) as this one are put together: an October entry and a November entry of the
+    // same payee + quarter are separate certificates, so a certificate for November never carries October's amount / ATC.
+    const monthSig = r => [...activeMonthsInGroup([r])].sort().join(',');
     const group = entries2307.filter(r=>
       (r.payor_tin||r.payor_name) === (rec.payor_tin||rec.payor_name) &&
       (r.payee_tin||r.payee_name) === (rec.payee_tin||rec.payee_name) &&
-      r.period_year === rec.period_year && r.period_quarter === rec.period_quarter
+      r.period_year === rec.period_year && r.period_quarter === rec.period_quarter &&
+      monthSig(r) === monthSig(rec)
     );
     // Resolve Payor info live from the Client Registry match (same as the
     // on-screen table already does) rather than trusting only the stored
