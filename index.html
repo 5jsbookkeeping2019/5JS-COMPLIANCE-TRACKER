@@ -533,6 +533,7 @@
             <option value="N">With notes</option>
             <option value="NN">No notes</option>
           </select>
+          <select class="filter" id="tr-doneby-filter" data-chk="exclude" data-chk-blank="1" data-chk-noun="Done by"><option value="">All (Done by)</option></select>
           <select class="filter" id="tr-client-status-filter" data-chk="exclude" data-chk-noun="client statuses"><option value="">All client statuses</option></select>
           <select class="filter" id="tr-payment-filter" data-chk="include" data-chk-noun="payment">
             <option value="">All (payment)</option>
@@ -3554,10 +3555,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   const trClientStatusFilter = document.getElementById('tr-client-status-filter');
   const trPaymentFilter = document.getElementById('tr-payment-filter');
   const trStageFilter = document.getElementById('tr-stage-filter');
+  const trDoneByFilter = document.getElementById('tr-doneby-filter');
+  const trDoneByKey = t => String(t.doneBy||'').trim().toUpperCase();
   const trNotesPresenceFilter = document.getElementById('tr-notes-presence-filter');
   const trSortFilter = document.getElementById('tr-sort-filter');
   [trSearch, trNotesFilter].forEach(el=>el.addEventListener('input', renderTracker));
-  [trFormFilter, trPeriodFilter, trStatusFilter, trClientStatusFilter, trPaymentFilter, trStageFilter, trNotesPresenceFilter, trSortFilter].forEach(el=>el.addEventListener('change', renderTracker));
+  [trFormFilter, trPeriodFilter, trStatusFilter, trClientStatusFilter, trPaymentFilter, trStageFilter, trDoneByFilter, trNotesPresenceFilter, trSortFilter].forEach(el=>el.addEventListener('change', renderTracker));
 
   // Rebuilding the <select> options (needed whenever the task list changes,
   // e.g. a live update from another staff member) used to always reset the
@@ -3581,6 +3584,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       return (ka[0]-kb[0]) || (ka[1]-kb[1]) || (ka[2]-kb[2]) || String(a).localeCompare(String(b));
     });
     trPeriodFilter.innerHTML = '<option value="">All periods</option>' + periods.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('');
+    // Done by: every name typed in a task's Done by (upper-cased, so "arvi" and "ARVI" are one person); "(blank)" = nobody yet.
+    const doneBys = Array.from(new Set(tasks.map(trDoneByKey).filter(Boolean))).sort();
+    trDoneByFilter.innerHTML = '<option value="">All (Done by)</option>' + doneBys.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
     // Client Status (CLIENT?) filter -- e.g. "0 FILING" or "FOR CLOSURE" --
     // so staff can hide just the tasks belonging to clients in statuses
     // they don't want cluttering the list (zero-filers, clients winding
@@ -3623,6 +3629,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(!chkPass(trClientStatusFilter, taskClient(t)['CLIENT?'] || '__BLANK__')) return false;
       if(payfs.length && !payfs.some(v=>payMatch(t, v))) return false;
       if(!chkPass(trStageFilter, t.stage)) return false;
+      if(!chkPass(trDoneByFilter, trDoneByKey(t))) return false;
       const npf = chkChecked(trNotesPresenceFilter);
       if(npf.length === 1 && (npf[0]==='N') !== !!String(t.notes||'').trim()) return false;
       if(nq && !(t.notes||'').toLowerCase().includes(nq)) return false;
