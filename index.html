@@ -3760,7 +3760,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         e.target.title = formula ? 'Formula: '+formula : '';
         const { error } = await sb.from('cor_tasks').update({tax_due: t.taxDue}).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
-        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'tax_due', formula ? 'Tax Due (formula '+formula+')' : 'Tax Due', oldVal, t.taxDue);
+        else { logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'tax_due', formula ? 'Tax Due (formula '+formula+')' : 'Tax Due', oldVal, t.taxDue); ensureQapForTask(t); }
       });
       tr.querySelector('.donebyf').addEventListener('change', async e=>{
         const oldVal = t.doneBy;
@@ -4940,6 +4940,41 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   // scope 'smart' (default): only filings due on/after the client's Bookkeeping start date -- a client we took on
   // on Aug 20 has no earlier filings -- and, when that date is blank, only filings due from today. 'upcoming': due from today.
   // Branches are skipped (they usually have no tasks of their own).
+  // QAP (Quarterly Alphalist of Payees) is only needed for a quarter in which the client actually had Expanded Withholding Tax
+  // to pay: a 0619E (any month of the quarter) or the 1601EQ of that quarter with a Tax Due above 0.
+  function periodQuarterKey(period){
+    const p = String(period||'').trim();
+    let m = /^Q([1-4])\s+(\d{4})$/i.exec(p);
+    if(m) return {q:Number(m[1]), year:Number(m[2])};
+    m = /^([A-Za-z]{3,9})\.?\s+(\d{4})$/.exec(p);
+    if(!m) return null;
+    const w = m[1].toUpperCase(), i = PERIOD_MONTH_FULL.findIndex(full=> full.startsWith(w));
+    return i < 0 ? null : {q: Math.floor(i/3)+1, year:Number(m[2])};
+  }
+  function qapNeeded(clientId, qPeriod){
+    const k = periodQuarterKey(qPeriod);
+    if(!k) return true;
+    return tasks.some(t=>{
+      if(t.clientId !== clientId || t.status === 'NA' || !['0619E','1601EQ'].includes(String(t.form).toUpperCase()) || !(Number(t.taxDue) > 0)) return false;
+      const pk = periodQuarterKey(t.period);
+      return !!pk && pk.q === k.q && pk.year === k.year;
+    });
+  }
+  // A 0619E / 1601EQ just got a Tax Due above 0 -> make that quarter's QAP task if the client has QAP and it does not exist yet.
+  async function ensureQapForTask(t){
+    const f = String(t.form).toUpperCase();
+    if(!['0619E','1601EQ'].includes(f) || !(Number(t.taxDue) > 0)) return;
+    const k = periodQuarterKey(t.period); if(!k) return;
+    const client = clientById[t.clientId]; if(!client) return;
+    const st = String(client['CLIENT?']||'').trim().toUpperCase();
+    if(st === 'NO' || st === 'CLOSED' || !effectiveFormsSet(client).has('QAP')) return;
+    const qp = 'Q'+k.q+' '+k.year;
+    if(tasks.some(x=>x.clientId===t.clientId && String(x.form).toUpperCase()==='QAP' && x.period===qp)) return;
+    const ref = CALENDAR_REF.find(r=>String(r.form).toUpperCase()==='QAP' && r.period===qp);
+    if(!ref) return;
+    const made = await createMissingTasksFor(client, 'upcoming', [ref]);
+    if(made) toast('QAP '+qp+' task added for '+(client.NAME||'the client')+' (has Tax Due in '+f+').');
+  }
   function missingTasksFor(client, scope){
     if(!client) return {list:[], formsBlank:false};
     const st = String(client['CLIENT?']||'').trim().toUpperCase();
@@ -4962,6 +4997,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     };
     const list = CALENDAR_REF.filter(r=>
       formOk(r) && r.due_date && !have.has(String(r.form).toUpperCase()+'|'+r.period) &&
+      (String(r.form).toUpperCase() !== 'QAP' || qapNeeded(client._id, r.period)) &&
       (!end || r.due_date <= end) && r.due_date >= cutoff);
     return {list, formsBlank:false};
   }
@@ -5240,6 +5276,14 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(f === '2550Q' || f === '2551Q'){ const m = /(\d{4})$/.exec(String(t.period||'')); if(m && vatWorksheet.some(w=> Number(w.year) === Number(m[1]) && vatStartOf(w) && String(w.client_id_no||'').trim().toUpperCase() === String(c['CLIENT ID NO.']||'').trim().toUpperCase())) return; }
       rows.push({kind:'noform', t, key:'n'+t.id});
     });
+    // untouched QAP tasks of a quarter in which the client has no Tax Due in 0619E / 1601EQ
+    tasks.forEach(t=>{
+      if(String(t.form).toUpperCase() !== 'QAP' || t.status !== 'PENDING' || !taskIsUntouched(t)) return;
+      const c = clientById[t.clientId]; if(!c) return;
+      if(qapNeeded(t.clientId, t.period)) return;
+      if(rows.some(r=>r.t === t)) return;
+      rows.push({kind:'noform', t, key:'n'+t.id, why:'QAP, but no Tax Due in 0619E / 1601EQ this quarter (untouched)'});
+    });
     const groups = new Map();
     tasks.forEach(t=>{ const k = t.clientId+'|'+String(t.form).toUpperCase()+'|'+String(normPeriodLabel(t.period)).toUpperCase(); (groups.get(k) || groups.set(k, []).get(k)).push(t); });
     groups.forEach((list,k)=>{
@@ -5283,7 +5327,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     const nd = vis.filter(r=>r.kind==='done').length, nx = vis.filter(r=>r.kind==='dup').length, nn = vis.filter(r=>r.kind==='noform').length, nr = vis.filter(r=>r.kind==='review').length;
     const lab = {done:'Pending, but has Done by + Date', dup:'Duplicate (untouched)', noform:'Form is not in this client\'s Forms (untouched)', review:'Duplicate with data on both — check manually'};
     area.innerHTML = vis.length ? `<table><thead><tr><th style="width:34px;"></th><th>Client ID</th><th>Client</th><th>Form</th><th>Period</th><th>Status</th><th>Done by / date</th><th>Problem</th></tr></thead><tbody>${vis.map(r=>{ const c = taskClient(r.t);
-      return `<tr><td><input type="checkbox" class="tidy-cb" data-k="${esc(r.key)}"${tidyUnchecked.has(r.key)?'':' checked'}></td><td class="mono">${esc(c['CLIENT ID NO.']||'')}</td><td>${esc(c.NAME||'')}</td><td>${esc(r.t.form)}</td><td>${esc(r.t.period)}</td><td>${esc(r.t.status)}</td><td>${esc(r.t.doneBy||'')} ${esc(r.t.doneDate||'')}</td><td>${r.kind==='review' ? (r.best ? 'Duplicate with data — <b>KEEP</b> (has the most data)' : 'Duplicate with data — suggested to remove') : lab[r.kind]}</td></tr>`; }).join('')}</tbody></table>` : '<div class="small-note">Nothing found — no Pending task has Done by + Date, no duplicates, and no task of a form the client does not have.</div>';
+      return `<tr><td><input type="checkbox" class="tidy-cb" data-k="${esc(r.key)}"${tidyUnchecked.has(r.key)?'':' checked'}></td><td class="mono">${esc(c['CLIENT ID NO.']||'')}</td><td>${esc(c.NAME||'')}</td><td>${esc(r.t.form)}</td><td>${esc(r.t.period)}</td><td>${esc(r.t.status)}</td><td>${esc(r.t.doneBy||'')} ${esc(r.t.doneDate||'')}</td><td>${r.kind==='review' ? (r.best ? 'Duplicate with data — <b>KEEP</b> (has the most data)' : 'Duplicate with data — suggested to remove') : (r.why || lab[r.kind])}</td></tr>`; }).join('')}</tbody></table>` : '<div class="small-note">Nothing found — no Pending task has Done by + Date, no duplicates, and no task of a form the client does not have.</div>';
     summary.textContent = `${nd} task(s) Pending but already have Done by + Date; ${nx} untouched duplicate(s); ${nn} untouched task(s) of a form the client does not have; ${nr} duplicate(s) with data on them (the copy with the most data is unticked = KEEP; tick the rest to remove).`;
     const on = k => vis.some(r=>r.kind===k && !tidyUnchecked.has(r.key));
     document.getElementById('tidy-done-btn').disabled = !on('done');
@@ -7026,15 +7070,9 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
   function openPrintable2307(rec){
     // All entries sharing the same payor + payee + year + quarter go on
     // one certificate together (one certificate can list several ATC lines).
-    // Only entries covering the SAME month(s) as this one are put together: an October entry and a November entry of the
-    // same payee + quarter are separate certificates, so a certificate for November never carries October's amount / ATC.
-    const monthSig = r => [...activeMonthsInGroup([r])].sort().join(',');
-    const group = entries2307.filter(r=>
-      (r.payor_tin||r.payor_name) === (rec.payor_tin||rec.payor_name) &&
-      (r.payee_tin||r.payee_name) === (rec.payee_tin||rec.payee_name) &&
-      r.period_year === rec.period_year && r.period_quarter === rec.period_quarter &&
-      monthSig(r) === monthSig(rec)
-    );
+    // One certificate per register entry: Print 2307 produces ONLY what was typed on that entry's row (its own month(s), ATC and
+    // amounts). Other entries of the same payee / quarter -- another month, or another ATC -- print as their own certificates.
+    const group = [rec];
     // Resolve Payor info live from the Client Registry match (same as the
     // on-screen table already does) rather than trusting only the stored
     // snapshot on the row -- covers older/imported rows whose Client ID was
