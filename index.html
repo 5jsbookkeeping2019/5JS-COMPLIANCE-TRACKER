@@ -879,6 +879,9 @@
       <div class="table-scroll" style="margin-top:12px;max-width:1300px;max-height:420px;" id="missing-tasks-table"></div>
       <div class="small-note" id="missing-tasks-summary" style="margin-top:8px;"></div>
       <button class="secondary" id="missing-tasks-apply-btn" style="margin-top:8px;" disabled>Create missing tasks</button>
+      <h3 style="margin-top:30px;">SAWT tasks (from the “WITH 2307 CLAIM” note)</h3>
+      <div class="small-note">Type <b>WITH 2307 CLAIM</b> in the Notes of a client&rsquo;s 1701Q / 1702Q / 1701 / 1702 task when the 2307s received will be claimed as a tax credit on that return. A <b>SAWT</b> task (same client, same period and due date) then appears in the Task Tracker automatically; taking the note off puts the untouched SAWT task to N/A. This button checks every task at once (for notes typed before, or typed another way).</div>
+      <button class="secondary" id="sawt-sync-btn" style="margin-top:8px;">Create SAWT tasks from notes</button>
       <h3 style="margin-top:30px;">Undo Created Tasks (backward filings / branches)</h3>
       <div class="small-note">Lists tasks made by “Create Missing Tasks” (or by a new client being saved) that still have <b>nothing typed on them</b> (Pending, no Done by / date, notes, Tax Due, payment, stage or assignee) and should not exist: filings <b>due before the client&rsquo;s Bookkeeping start date</b> (or before today when that date is blank), and every such task of a <b>Branch</b> client. Tasks you already worked on, and the upcoming ones, are never listed. Removing is permanent (it is written to the history).</div>
       <div class="table-scroll" style="margin-top:12px;max-width:900px;max-height:320px;" id="undo-tasks-table"></div>
@@ -3781,7 +3784,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
         t.notes = e.target.value;
         const { error } = await sb.from('cor_tasks').update({notes: t.notes}).eq('id', t.id);
         if(error){ console.error(error); toast('Warning: this change was not saved to the database — please try again.'); }
-        else logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'notes', 'Notes', oldVal, t.notes);
+        else {
+          logFieldAudit('cor_tasks_audit', 'record_id', t.id, 'notes', 'Notes', oldVal, t.notes);
+          const r = await syncSawtForTask(t);
+          if(r > 0) toast('SAWT task added for ' + ((clientById[t.clientId]||{}).NAME || 'the client') + ' (' + t.period + ').');
+          else if(r < 0) toast('SAWT task for ' + ((clientById[t.clientId]||{}).NAME || 'the client') + ' (' + t.period + ') set to N/A (note removed).');
+        }
       });
       tr.querySelector('.payment-status-select').addEventListener('change', async e=>{
         const oldVal = t.paymentStatus;
@@ -4960,6 +4968,48 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       return !!pk && pk.q === k.q && pk.year === k.year;
     });
   }
+  // ---- SAWT to-do: staff type "WITH 2307 CLAIM" in the Notes of a client's 1701Q / 1702Q / 1701 / 1702 task when the 2307s
+  // received will be used as a tax credit on that return. That puts a SAWT task (same client, same period / due date) in the
+  // Task Tracker; taking the note off puts the untouched SAWT task to N/A again.
+  const SAWT_PARENT_FORMS = ['1701Q','1702Q','1701','1702'];
+  const sawtNoteRe = /with\s+2307\s+claim/i;
+  const SAWT_NA_NOTE = 'N/A — no "WITH 2307 CLAIM" note on the return.';
+  const isSawtParent = t => SAWT_PARENT_FORMS.includes(String(t.form).toUpperCase());
+  async function syncSawtForTask(t){
+    if(!isSawtParent(t)) return 0;
+    const client = clientById[t.clientId]; if(!client) return 0;
+    const existing = tasks.find(x=>x.clientId===t.clientId && String(x.form).toUpperCase()==='SAWT' && x.period===t.period);
+    const wants = sawtNoteRe.test(String(t.notes||'')) && t.status !== 'NA';
+    if(wants){
+      const st = String(client['CLIENT?']||'').trim().toUpperCase();
+      if(st === 'NO' || st === 'CLOSED') return 0;
+      if(existing){
+        if(existing.status === 'NA' && existing.notes === SAWT_NA_NOTE){
+          const note = 'From the "WITH 2307 CLAIM" note on the ' + t.form + ' task.';
+          const { error } = await sb.from('cor_tasks').update({status:'PENDING', notes: note}).eq('id', existing.id);
+          if(!error){ logFieldAudit('cor_tasks_audit','record_id', existing.id, 'status', 'Status (SAWT back: WITH 2307 CLAIM note)', 'NA', 'PENDING'); existing.status = 'PENDING'; existing.notes = note; return 1; }
+        }
+        return 0;
+      }
+      const note = 'From the "WITH 2307 CLAIM" note on the ' + t.form + ' task.';
+      const row = {client_id: t.clientId, form:'SAWT', frequency: t.freq || 'Quarterly', period: t.period, due_date: t.due, status:'PENDING', notes: note};
+      const { data, error } = await sb.from('cor_tasks').insert(row).select();
+      if(error){ console.error(error); toast('Could not create the SAWT task (' + (error.message||'unknown error') + ').'); return 0; }
+      (data||[]).forEach(r=>{ const m = mapTaskFromDb(r); if(!tasks.some(x=>x.id===m.id)) tasks.push(m); logFieldAudit('cor_tasks_audit','record_id', m.id, 'status', 'Task created (SAWT — WITH 2307 CLAIM note on ' + t.form + ')', null, 'PENDING'); });
+      return 1;
+    }
+    // note gone: an untouched SAWT task (only our own note on it) is put to N/A
+    if(existing && existing.status === 'PENDING' && !existing.doneBy && !existing.doneDate && /^From the "WITH 2307 CLAIM" note/.test(String(existing.notes||''))){
+      const { error } = await sb.from('cor_tasks').update({status:'NA', notes: SAWT_NA_NOTE}).eq('id', existing.id);
+      if(!error){ logFieldAudit('cor_tasks_audit','record_id', existing.id, 'status', 'Status (SAWT N/A: note removed)', 'PENDING', 'NA'); existing.status = 'NA'; existing.notes = SAWT_NA_NOTE; return -1; }
+    }
+    return 0;
+  }
+  async function syncSawtAll(){
+    let made = 0, off = 0;
+    for(const t of tasks.filter(isSawtParent)){ const r = await syncSawtForTask(t); if(r > 0) made += r; else if(r < 0) off++; }
+    return {made, off};
+  }
   // A 0619E / 1601EQ just got a Tax Due above 0 -> make that quarter's QAP task if the client has QAP and it does not exist yet.
   async function ensureQapForTask(t){
     const f = String(t.form).toUpperCase();
@@ -5057,6 +5107,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
       if(e.target.checked) missingUnchecked.delete(e.target.dataset.cid); else missingUnchecked.add(e.target.dataset.cid);
       renderMissingTasksTool();
     }
+  });
+  document.getElementById('sawt-sync-btn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('sawt-sync-btn'); btn.disabled = true;
+    const r = await syncSawtAll(); btn.disabled = false;
+    toast(r.made || r.off ? `${r.made} SAWT task(s) created / restored, ${r.off} put to N/A.` : 'Nothing to change — every “WITH 2307 CLAIM” note already has its SAWT task.');
+    if(r.made || r.off) renderActiveTab(document.querySelector('.tab-btn.active') ? document.querySelector('.tab-btn.active').dataset.tab : 'settings');
   });
   document.getElementById('missing-tasks-apply-btn').addEventListener('click', async ()=>{
     const btn = document.getElementById('missing-tasks-apply-btn');
