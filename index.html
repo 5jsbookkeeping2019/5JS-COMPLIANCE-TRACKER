@@ -2764,7 +2764,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     rows.push(['paid','Income tax actually paid this quarter (optional)']);
     const head = `<tr><th style="text-align:left;">Per quarter (not cumulative)</th>${[1,2,3,4].map(q=>`<th style="text-align:center;">Q${q}</th>`).join('')}</tr>`;
     const body = rows.map(([k,label])=>`<tr><td>${esc(label)}</td>${[1,2,3,4].map(q=>`<td style="text-align:center;">${inp('q'+q+'_'+k, k==='paid'?'auto':'')}</td>`).join('')}</tr>`).join('');
-    const refIT = st.hasSalesRow ? `<tr><td style="color:var(--ink-soft);">Sales Summary “IT Due” (for comparison)</td>${[1,2,3].map(q=>`<td class="num mono" style="color:var(--ink-soft);text-align:center;">${esc(fmtVatMoney(st.zero ? 0 : (st.refIT[q]===undefined||st.refIT[q]===null||st.refIT[q]==='' ? null : Number(st.refIT[q]))))}</td>`).join('')}<td></td></tr>` : '';
+    const refIT = st.hasSalesRow ? `<tr><td style="color:var(--ink-soft);">Sales Summary “IT Due” (for comparison)</td>${[1,2,3].map(q=>`<td class="num mono" style="color:var(--ink-soft);text-align:center;">${esc(fmtVatMoney((st.refIT[q]===undefined||st.refIT[q]===null||st.refIT[q]==='' ? null : Number(st.refIT[q]))))}</td>`).join('')}<td></td></tr>` : '';
     const chk = (a, label, checked, title)=> `<label style="display:inline-flex;align-items:center;gap:6px;margin-right:18px;font-size:12.5px;" title="${esc(title||'')}"><input type="checkbox" class="taxopt-as" data-a="${a}"${checked?' checked':''}>${esc(label)}</label>`;
     let assume = '';
     if(kind==='ind'){
@@ -2949,7 +2949,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     if(kind==='corp'){ qrows.push({cells:['MCIT 2% of gross income (annual only)', ...R.mcit]}); qrows.push({cells:['Annual income tax (higher of RCIT / MCIT)', ...R.annualTax]}); }
     qrows.push({cells:[`Tax due — ${form} for Q1–Q3; Q4 column = balance on annual ${annualForm}`, ...R.due], cls:'taxopt-best'});
     if(st.hasSalesRow){
-      const refCells = [1,2,3].map(q=>{ const v = st.zero ? 0 : (st.refIT[q]===undefined||st.refIT[q]===null||st.refIT[q]==='' ? null : Number(st.refIT[q])); return taxoptMoney(v); });
+      const refCells = [1,2,3].map(q=>{ const v = (st.refIT[q]===undefined||st.refIT[q]===null||st.refIT[q]==='' ? null : Number(st.refIT[q])); return taxoptMoney(v); });
       qrows.push({cells:['Sales Summary IT Due (what is recorded now)', ...refCells, '—'], style:'color:var(--ink-soft);'});
     }
     html += `<h3 style="margin:6px 0;">Quarterly income tax (${form}) — ${esc(kind==='corp' ? (qo==='OSD'?'OSD':'Itemized') : TAXOPT_OPT_LABEL[qo])}</h3>` +
