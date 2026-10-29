@@ -5453,19 +5453,17 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     return '';
   }
   function rcptParse(text){
-    const groups = {}, seen = new Set();
-    const re = /(\d{9})\d{0,6}\s*-\s*(\d{4}[A-Z]{0,2})v[\d.]+\s*-\s*(\d{2})(\d{4})/gi;
+    const groups = {};
+    // eBIRForms file names seen so far: "…TIN…-1601Cv2018-092026.xml" (MMYYYY), "…TIN…-1601EQ-2026Q3.xml" (YYYYQ#) and
+    // "…TIN…-2550Qv2024-122026Q3.xml" (a 12 + YYYY + Q#). A quarter (Q#) always means its last month: Q3 2026 = 09/2026.
+    const re = /(\d{9})\d{0,6}\s*-\s*(\d{4}[A-Z]{0,2})(?:v[\d.]+[A-Z]?)?\s*-\s*(\d{2})?(\d{4})(?:Q([1-4]))?(?:V\d+)?\s*\.xml/gi;
     let m;
     while((m = re.exec(text))){
-      const form = m[2].toUpperCase(), key = form + '|' + m[3] + m[4];
-      (groups[key] = groups[key] || {form, mmyyyy: m[3]+m[4], tins: new Set(), emails: 0}).emails++;
-      groups[key].tins.add(m[1]);
-    }
-    // quarterly forms are also named like "…TIN…-1601EQ-2026Q3.xml" (or "…-2026Q3V1.xml"): Q3 2026 = the 09/2026 group
-    const re2 = /(\d{9})\d{0,6}\s*-\s*(\d{4}[A-Z]{0,2})\s*-\s*(\d{4})Q([1-4])(?:V\d+)?\s*\.xml/gi;
-    while((m = re2.exec(text))){
-      const form = m[2].toUpperCase(), mm = String(Number(m[4])*3).padStart(2,'0'), key = form + '|' + mm + m[3];
-      (groups[key] = groups[key] || {form, mmyyyy: mm+m[3], tins: new Set(), emails: 0}).emails++;
+      const form = m[2].toUpperCase();
+      const mm = m[5] ? String(Number(m[5])*3).padStart(2,'0') : m[3];
+      if(!mm) continue;
+      const key = form + '|' + mm + m[4];
+      (groups[key] = groups[key] || {form, mmyyyy: mm+m[4], tins: new Set(), emails: 0}).emails++;
       groups[key].tins.add(m[1]);
     }
     return groups;
