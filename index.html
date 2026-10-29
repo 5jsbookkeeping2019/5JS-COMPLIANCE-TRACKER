@@ -921,7 +921,7 @@
       <button class="secondary" id="tidy-done-btn" style="margin-top:8px;" disabled>Mark ticked as Done</button>
       <button class="secondary" id="tidy-dup-btn" style="margin-top:8px;" disabled>Remove ticked duplicates / not-in-Forms</button>
       <h3 style="margin-top:30px;">Check BIR e-filing receipts (Yahoo Mail) against the Task Tracker</h3>
-      <div class="small-note">Shows which clients already have a <b>&ldquo;Tax Return Receipt Confirmation&rdquo;</b> email from BIR (eBIRForms) for a form and period. In Yahoo Mail search the form + period, e.g. <span class="mono">1601Cv2018-092026</span> (form, then month + year; for quarterly forms use the last month of the quarter, e.g. 092026 for Q3), scroll to load every result, press <b>Ctrl+A, Ctrl+C</b> and paste it below. The TIN is read from each attachment name (<span class="mono">…TIN…-1601Cv2018-092026.xml</span>) and matched to the Client Registry. This only <b>reports</b> &mdash; it does not change any task.</div>
+      <div class="small-note">Shows which clients already have a <b>&ldquo;Tax Return Receipt Confirmation&rdquo;</b> email from BIR (eBIRForms) for a form and period. In Yahoo Mail search the form + period, e.g. <span class="mono">1601Cv2018-092026</span> (form, then month + year; for quarterly forms use the last month of the quarter, e.g. 092026 for Q3), scroll to load every result, copy the page text and paste it below. <b>If Ctrl+A only selects the emails (Yahoo does that) and nothing gets copied:</b> press <b>F12</b> &rarr; <b>Console</b> tab &rarr; type <span class="mono">copy(document.body.innerText)</span> &rarr; Enter, then click the box below and press <b>Ctrl+V</b> . Another way: right-click an empty spot of the page &rarr; <b>Select all</b>, then Ctrl+C. The TIN is read from each attachment name (<span class="mono">…TIN…-1601Cv2018-092026.xml</span>) and matched to the Client Registry. This only <b>reports</b> &mdash; it does not change any task.</div>
       <textarea id="rcpt-paste" rows="6" style="width:100%;max-width:900px;margin-top:8px;" placeholder="Paste the Yahoo Mail search result here…"></textarea>
       <div style="margin-top:6px;"><button class="secondary" id="rcpt-check-btn">Check receipts</button> <span id="rcpt-group-wrap" style="margin-left:8px;"></span> <label style="margin-left:8px;font-size:12px;">Show <select id="rcpt-show"><option value="all">all</option><option value="missing">no receipt yet</option><option value="found">receipt found</option><option value="mismatch">receipt found but task still Pending</option></select></label> <button class="secondary" id="rcpt-copy-btn" disabled>Copy clients without receipt</button></div>
       <div class="small-note" id="rcpt-summary" style="margin-top:8px;"></div>
@@ -5459,6 +5459,13 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
     while((m = re.exec(text))){
       const form = m[2].toUpperCase(), key = form + '|' + m[3] + m[4];
       (groups[key] = groups[key] || {form, mmyyyy: m[3]+m[4], tins: new Set(), emails: 0}).emails++;
+      groups[key].tins.add(m[1]);
+    }
+    // quarterly forms are also named like "…TIN…-1601EQ-2026Q3.xml" (or "…-2026Q3V1.xml"): Q3 2026 = the 09/2026 group
+    const re2 = /(\d{9})\d{0,6}\s*-\s*(\d{4}[A-Z]{0,2})\s*-\s*(\d{4})Q([1-4])(?:V\d+)?\s*\.xml/gi;
+    while((m = re2.exec(text))){
+      const form = m[2].toUpperCase(), mm = String(Number(m[4])*3).padStart(2,'0'), key = form + '|' + mm + m[3];
+      (groups[key] = groups[key] || {form, mmyyyy: mm+m[3], tins: new Set(), emails: 0}).emails++;
       groups[key].tins.add(m[1]);
     }
     return groups;
